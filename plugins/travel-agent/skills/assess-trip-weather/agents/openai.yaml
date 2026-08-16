@@ -1,0 +1,4 @@
+interface:
+  display_name: "Assess Trip Weather"
+  short_description: "Translate verified weather into linked trip changes"
+  default_prompt: "Use $assess-trip-weather to interpret the Runtime-supplied WeatherEnvelope and assess weather-driven changes across this trip."

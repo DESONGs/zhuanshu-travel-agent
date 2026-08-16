@@ -1,0 +1,6 @@
+{
+  "miniprogramRoot": "./",
+  "projectname": "travel-agent-v1",
+  "description": "Travel Agent V1 支付宝小程序。提交前由授权主体填写真实 AppID 与 request domain。",
+  "appid": ""
+}

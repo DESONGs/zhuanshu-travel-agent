@@ -1,0 +1,8 @@
+{
+  "pages": ["pages/index/index"],
+  "window": {
+    "defaultTitle": "Travel Agent",
+    "titleBarColor": "#ffffff",
+    "backgroundColor": "#f7f8f9"
+  }
+}

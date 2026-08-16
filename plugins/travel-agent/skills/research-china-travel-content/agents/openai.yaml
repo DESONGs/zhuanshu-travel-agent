@@ -1,0 +1,4 @@
+interface:
+  display_name: "中国旅行内容研究"
+  short_description: "联动社交发现、地图与官方库存，形成可核验的中国旅行攻略证据"
+  default_prompt: "Use $research-china-travel-content to research this China trip with social discovery and verified sources."

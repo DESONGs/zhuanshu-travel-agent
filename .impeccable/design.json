@@ -1,0 +1,7 @@
+{
+  "sourceVisual": "design/reference/map-pulse-mobile.png",
+  "designDocument": "DESIGN.md",
+  "direction": "map-pulse",
+  "iconLibrary": "@phosphor-icons/react",
+  "assetPolicy": "generated-raster-for-brand-and-imagery; icon-library-for-functional-icons"
+}

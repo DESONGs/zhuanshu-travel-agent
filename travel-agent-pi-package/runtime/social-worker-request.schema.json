@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "social-worker-request-v1",
+  "type": "object",
+  "required": ["operation", "platform"],
+  "properties": {
+    "operation": { "enum": ["search_social_content", "read_social_content", "resolve_social_share_url"] },
+    "platform": { "enum": ["xiaohongshu", "douyin"] },
+    "query": { "type": "string", "maxLength": 160 },
+    "url": { "type": "string", "format": "uri" },
+    "limit": { "type": "integer", "minimum": 1, "maximum": 20 }
+  },
+  "additionalProperties": false
+}

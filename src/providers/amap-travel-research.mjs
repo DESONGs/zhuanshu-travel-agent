@@ -1,0 +1,988 @@
+import { createHash } from "node:crypto";
+import { accessibilityFeaturesForWalkType, amapWalkTypeMetadata } from "../contracts/mobility-contract.mjs";
+
+const AMAP_PLACE_ENDPOINT = "https://restapi.amap.com/v5/place/text";
+const AMAP_PLACE_V3_ENDPOINT = "https://restapi.amap.com/v3/place/text";
+const AMAP_GEOCODE_ENDPOINT = "https://restapi.amap.com/v3/geocode/geo";
+const AMAP_WEATHER_ENDPOINT = "https://restapi.amap.com/v3/weather/weatherInfo";
+const AMAP_STATIC_MAP_ENDPOINT = "https://restapi.amap.com/v3/staticmap";
+const AMAP_DRIVING_ENDPOINT = "https://restapi.amap.com/v5/direction/driving";
+const AMAP_WALKING_ENDPOINT = "https://restapi.amap.com/v5/direction/walking";
+const AMAP_TRANSIT_ENDPOINT = "https://restapi.amap.com/v5/direction/transit/integrated";
+const AMAP_PLACE_DOC = "https://lbs.amap.com/api/webservice/guide/api-advanced/newpoisearch";
+const AMAP_PLACE_V3_DOC = "https://lbs.amap.com/api/webservice/guide/api/search/";
+const AMAP_WEATHER_DOC = "https://lbs.amap.com/api/webservice/guide/api/weatherinfo";
+const AMAP_ROUTE_DOC = "https://lbs.amap.com/api/webservice/guide/api/newroute";
+const DEFAULT_DOMAINS = Object.freeze(["play", "food", "stay", "transport"]);
+
+const DOMAIN_SEARCH = Object.freeze({
+  play: { types: "110000|140000", label: "景点与文化体验" },
+  food: { types: "050000", label: "本地餐饮" },
+  stay: { types: "100000", label: "住宿" },
+  transport: { types: "150000", label: "交通设施" },
+});
+
+function text(value, limit = 500) {
+  if (Array.isArray(value)) return "";
+  return String(value ?? "").trim().slice(0, limit);
+}
+
+function numberOrNull(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function objectOrEmpty(value) {
+  return value && !Array.isArray(value) && typeof value === "object" ? value : {};
+}
+
+function unique(values) {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function safeHttpsUrl(value) {
+  try {
+    const url = new URL(String(value ?? ""));
+    return url.protocol === "https:" ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function shortHash(value) {
+  return createHash("sha256").update(String(value)).digest("hex").slice(0, 12);
+}
+
+function signedAmapParameters(values, apiSecret = "") {
+  const entries = Object.entries(values).map(([key, value]) => [key, String(value)]).sort(([left], [right]) => left.localeCompare(right, "en"));
+  const parameters = new URLSearchParams(entries);
+  const secret = text(apiSecret, 512);
+  if (secret) {
+    const signatureBase = `${entries.map(([key, value]) => `${key}=${value}`).join("&")}${secret}`;
+    parameters.set("sig", createHash("md5").update(signatureBase, "utf8").digest("hex"));
+  }
+  return parameters;
+}
+
+function providerError(code, details = {}) {
+  const error = new Error(code);
+  error.code = code;
+  error.details = details;
+  return error;
+}
+
+function amapStatusCode(infoCode) {
+  if (["10003", "10044", "10045"].includes(infoCode)) return "ACCOUNT_LIMITED";
+  if (["10004", "10014", "10015", "10019", "10020", "10021", "10029"].includes(infoCode)) return "RATE_LIMITED";
+  if (["10001", "10002", "10005", "10006", "10007", "10008", "10009", "10012", "10013", "10041"].includes(infoCode)) return "AUTH_REQUIRED";
+  return "SOURCE_UNAVAILABLE";
+}
+
+function isTransientQpsLimit(error) {
+  return error?.code === "RATE_LIMITED" && ["10014", "10015", "10019", "10020", "10021", "10029"].includes(String(error?.details?.infoCode ?? ""));
+}
+
+function navigationUrl(poi) {
+  const poiId = text(poi.id, 128);
+  if (poiId) {
+    const parameters = new URLSearchParams({ poiid: poiId, src: "travel-agent-v1", callnative: "0" });
+    return `https://uri.amap.com/marker?${parameters}`;
+  }
+  const location = text(poi.location, 80);
+  if (!/^\d{2,3}(?:\.\d+)?,\d{1,2}(?:\.\d+)?$/.test(location)) return null;
+  const parameters = new URLSearchParams({ position: location, name: text(poi.name, 120), src: "travel-agent-v1", coordinate: "gaode", callnative: "0" });
+  return `https://uri.amap.com/marker?${parameters}`;
+}
+
+function normalizePoi(poi, { domain, checkedAt, apiVersion = "v5" }) {
+  const business = Object.keys(objectOrEmpty(poi.business)).length ? objectOrEmpty(poi.business) : objectOrEmpty(poi.biz_ext);
+  const indoor = objectOrEmpty(poi.indoor);
+  const navi = objectOrEmpty(poi.navi);
+  const rawLocation = text(poi.location, 80);
+  const [longitude, latitude] = rawLocation.split(",").map(numberOrNull);
+  const providerPoiId = text(poi.id, 128) || `anonymous_${shortHash(`${domain}:${poi.name}:${poi.address}:${rawLocation}`)}`;
+  const sourceId = `amap:${providerPoiId}`;
+  const address = text(poi.address, 300);
+  const type = text(poi.type, 240);
+  const district = text(poi.adname, 120);
+  const facts = unique([
+    address,
+    type,
+    text(business.rating, 40) ? `高德评分 ${text(business.rating, 40)}` : null,
+    text(business.cost, 40) ? `参考消费 ${text(business.cost, 40)}` : null,
+    text(business.opentime_today, 160) ? `今日营业 ${text(business.opentime_today, 160)}` : null,
+  ]);
+  const claimId = `claim_${shortHash(`${sourceId}:${checkedAt}`)}`;
+  const entityId = `entity_${shortHash(sourceId)}`;
+  const media = (Array.isArray(poi.photos) ? poi.photos : []).map((photo) => ({
+    url: safeHttpsUrl(photo?.url),
+    title: text(photo?.title, 200),
+    source: "amap_web_service",
+  })).filter((photo) => photo.url).slice(0, 6);
+  const entrance = text(navi.entr_location, 80) || null;
+  const exit = text(navi.exit_location, 80) || null;
+  const indoorMap = text(indoor.indoor_map ?? poi.indoor_map, 8) === "1";
+  const mappedFacilities = [
+    ...(entrance ? [{ kind: "entrance", label: "入口位置", value: entrance }] : []),
+    ...(exit ? [{ kind: "exit", label: "出口位置", value: exit }] : []),
+    ...(indoorMap ? [{ kind: "indoor_map", label: "室内地图", value: "available" }] : []),
+  ].map((facility) => ({
+    ...facility,
+    status: "mapped_non_realtime",
+    realTime: false,
+    source: "amap_web_service",
+    checkedAt,
+    guidance: "地图资料仅表示已记录的位置或设施，不代表当前开放或正常运行，建议现场确认。",
+  }));
+  return {
+    candidateId: `${domain}_${shortHash(sourceId)}`,
+    domain,
+    title: text(poi.name, 200) || DOMAIN_SEARCH[domain].label,
+    summary: facts.join(" · ").slice(0, 900),
+    sourceId,
+    claimId,
+    entityId,
+    checkedAt,
+    media,
+    location: {
+      label: address || [text(poi.cityname, 120), district].filter(Boolean).join(" ") || null,
+      district: district || null,
+      city: text(poi.cityname, 120) || null,
+      citycode: text(poi.citycode, 20) || null,
+      adcode: text(poi.adcode, 20) || null,
+      coordinates: longitude != null && latitude != null ? { longitude, latitude, coordinateSystem: "GCJ-02" } : null,
+    },
+    operability: {
+      provider: "amap_web_service",
+      providerPoiId,
+      mobilityRole: domain === "transport" ? "transport_facility_poi" : "place",
+      type: type || null,
+      rating: text(business.rating, 40) || null,
+      priceHint: text(business.cost, 40) || null,
+      openToday: text(business.opentime_today, 160) || null,
+      openWeek: text(business.opentime_week, 300) || null,
+      businessArea: text(business.business_area, 120) || null,
+      entrance,
+      exit,
+      indoorMap,
+      mappedFacilities,
+      facilityEvidenceNature: mappedFacilities.length ? "map_reference_non_realtime" : "not_returned",
+      facilityLiveStatus: false,
+      ...(domain === "stay" ? {
+        lodgingDataNature: "amap_place_reference",
+        inventoryVerified: false,
+        hotelOfferStatus: "ota_offer_required",
+      } : {}),
+      navigationUrl: navigationUrl(poi),
+      researchDepth: apiVersion === "v5" ? "amap_poi_v5_enriched" : "amap_poi_v3_basic_fallback",
+    },
+    source: {
+      sourceId,
+      provider: "amap_web_service",
+      sourceType: "official_map_provider",
+      providerPoiId,
+      checkedAt,
+      documentationUrl: apiVersion === "v5" ? AMAP_PLACE_DOC : AMAP_PLACE_V3_DOC,
+      independenceGroup: sourceId,
+      commercialBias: "provider_ranking_unknown",
+    },
+    entity: {
+      entityId,
+      kind: domain === "food" ? "place_or_venue" : "place",
+      canonicalName: text(poi.name, 200),
+      providerRefs: [sourceId],
+    },
+    claim: {
+      claimId,
+      entityId,
+      kind: "provider_fact",
+      statement: facts.join(" · ").slice(0, 1000),
+      sourceRefs: [sourceId],
+      sourceIndependence: "single_provider",
+      commercialBias: "provider_ranking_unknown",
+      confidence: 0.8,
+      observedAt: checkedAt,
+    },
+  };
+}
+
+function isoDates(value) {
+  return [...String(value ?? "").matchAll(/\b(20\d{2}-\d{1,2}-\d{1,2})\b/g)].map((match) => {
+    const [year, month, day] = match[1].split("-").map(Number);
+    return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  });
+}
+
+function dateRange(value) {
+  const parsed = isoDates(value);
+  if (!parsed.length) return [];
+  const start = new Date(`${parsed[0]}T00:00:00.000Z`);
+  const end = new Date(`${parsed[1] ?? parsed[0]}T00:00:00.000Z`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) return [];
+  const dates = [];
+  for (let cursor = start; cursor <= end && dates.length < 60; cursor = new Date(cursor.getTime() + 86_400_000)) dates.push(cursor.toISOString().slice(0, 10));
+  return dates;
+}
+
+function maximumNumber(value) {
+  const numbers = String(value ?? "").match(/\d+(?:\.\d+)?/g)?.map(Number).filter(Number.isFinite) ?? [];
+  return numbers.length ? Math.max(...numbers) : null;
+}
+
+function normalizeForecast(payload, brief, checkedAt) {
+  const forecast = Array.isArray(payload?.forecasts) ? payload.forecasts[0] : null;
+  if (!forecast) return { schemaVersion: "trip-weather-v1", status: "EMPTY_VERIFIED", reason: "forecast_not_returned", fabricatedResults: false };
+  const forecastDays = (Array.isArray(forecast.casts) ? forecast.casts : []).slice(0, 8).map((cast) => ({
+    date: text(cast?.date, 10),
+    weekday: text(cast?.week, 8) || null,
+    dayCondition: text(cast?.dayweather, 80) || null,
+    nightCondition: text(cast?.nightweather, 80) || null,
+    highC: numberOrNull(cast?.daytemp_float ?? cast?.daytemp),
+    lowC: numberOrNull(cast?.nighttemp_float ?? cast?.nighttemp),
+    dayWind: text(cast?.daywind, 40) || null,
+    nightWind: text(cast?.nightwind, 40) || null,
+    maxWindLevel: Math.max(maximumNumber(cast?.daypower) ?? 0, maximumNumber(cast?.nightpower) ?? 0) || null,
+  })).filter((day) => day.date);
+  const tripDates = dateRange(brief?.dates);
+  const availableDates = new Set(forecastDays.map((day) => day.date));
+  const coveredDates = tripDates.filter((date) => availableDates.has(date));
+  const coverage = !tripDates.length ? "dates_unknown" : !coveredDates.length ? "outside_forecast_window" : coveredDates.length === tripDates.length ? "covered" : "partial";
+  const relevantDays = forecastDays.filter((day) => coveredDates.includes(day.date));
+  const conditionText = relevantDays.map((day) => `${day.dayCondition ?? ""}${day.nightCondition ?? ""}`).join(" ");
+  const hasSevereCondition = /暴雨|大雨|雷|雪|冰雹|台风|沙尘|大雾/.test(conditionText);
+  const hasWetCondition = /雨|雪|雷|冰雹/.test(conditionText);
+  const hasHeat = relevantDays.some((day) => day.highC != null && day.highC >= 35);
+  const hasCold = relevantDays.some((day) => day.lowC != null && day.lowC <= 5);
+  const hasStrongWind = relevantDays.some((day) => day.maxWindLevel != null && day.maxWindLevel >= 5);
+  const riskSignals = [
+    ...(hasWetCondition ? ["precipitation"] : []),
+    ...(hasHeat ? ["heat"] : []),
+    ...(hasCold ? ["cold"] : []),
+    ...(hasStrongWind ? ["strong_wind"] : []),
+  ];
+  const severity = hasSevereCondition || hasStrongWind || hasHeat ? "high" : riskSignals.length ? "watch" : "none";
+  const active = ["covered", "partial"].includes(coverage) && severity !== "none";
+  const guidance = {
+    play: active ? (hasWetCondition ? "优先室内或可随时取消的体验，户外项目保留替代方案。" : "把高暴露户外活动放在较舒适时段，并保留休息窗口。") : null,
+    transport: active ? "减少紧凑换乘并增加步行、等车和行李移动缓冲。" : null,
+    stay: active ? "住宿位置优先考虑公共交通与室内衔接便利，避免恶劣天气下长距离拖行李。" : null,
+    food: active ? "餐饮尽量靠近当日活动或住宿，减少天气不佳时的额外往返。" : null,
+  };
+  return {
+    schemaVersion: "trip-weather-v1",
+    status: "completed",
+    provider: "amap_weather",
+    destination: text(brief?.destination, 120),
+    city: text(forecast.city, 120) || null,
+    province: text(forecast.province, 120) || null,
+    adcode: text(forecast.adcode, 20) || null,
+    reportTime: text(forecast.reporttime, 40) || null,
+    checkedAt,
+    coverage,
+    tripDates,
+    forecastDays,
+    riskSignals,
+    planningImpact: { active, severity, affectedDomains: active ? [...DEFAULT_DOMAINS] : [], guidance },
+    sourceDocumentation: AMAP_WEATHER_DOC,
+    caveat: coverage === "outside_forecast_window" ? "行程日期不在当前预报窗口内，暂不据此改动方案，临近出发需重新核验。" : coverage === "dates_unknown" ? "尚无可解析的具体日期，当前预报只作目的地近期天气参考。" : null,
+    fabricatedResults: false,
+  };
+}
+
+function reusableWeather(existingWeather, brief, clock) {
+  if (!existingWeather || existingWeather.status !== "completed") return null;
+  if (text(existingWeather.destination, 120) !== text(brief?.destination, 120)) return null;
+  const expectedDates = dateRange(brief?.dates);
+  if (JSON.stringify(existingWeather.tripDates ?? []) !== JSON.stringify(expectedDates)) return null;
+  const checkedAt = new Date(existingWeather.checkedAt ?? 0).getTime();
+  const current = new Date(clock?.() ?? Date.now()).getTime();
+  if (!Number.isFinite(checkedAt) || !Number.isFinite(current) || current < checkedAt || current - checkedAt > 3 * 60 * 60 * 1_000) return null;
+  return { ...existingWeather, reused: true };
+}
+
+function array(value) {
+  if (Array.isArray(value)) return value;
+  return value && typeof value === "object" ? [value] : [];
+}
+
+function secondsToMinutes(value) {
+  const seconds = numberOrNull(value);
+  return seconds == null ? null : Math.max(1, Math.round(seconds / 60));
+}
+
+function coordinatePair(input) {
+  const coordinates = input?.location?.coordinates ?? input?.coordinates ?? null;
+  if (!Number.isFinite(coordinates?.longitude) || !Number.isFinite(coordinates?.latitude)) return null;
+  return {
+    longitude: Number(coordinates.longitude),
+    latitude: Number(coordinates.latitude),
+    coordinateSystem: "GCJ-02",
+  };
+}
+
+function coordinateString(point) {
+  return `${Number(point.longitude).toFixed(6)},${Number(point.latitude).toFixed(6)}`;
+}
+
+function polylinePoints(values) {
+  const joined = array(values).flatMap((value) => String(value ?? "").split(";")).filter(Boolean);
+  return joined.map((value) => {
+    const [longitude, latitude] = value.split(",").map(Number);
+    return Number.isFinite(longitude) && Number.isFinite(latitude)
+      ? { longitude, latitude, coordinateSystem: "GCJ-02" }
+      : null;
+  }).filter(Boolean).slice(0, 600);
+}
+
+function straightLineMeters(left, right) {
+  const radians = (degrees) => degrees * Math.PI / 180;
+  const latitudeDelta = radians(right.latitude - left.latitude);
+  const longitudeDelta = radians(right.longitude - left.longitude);
+  const a = Math.sin(latitudeDelta / 2) ** 2
+    + Math.cos(radians(left.latitude)) * Math.cos(radians(right.latitude)) * Math.sin(longitudeDelta / 2) ** 2;
+  return 6_371_000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function navigationRouteUrl(origin, destination, mode) {
+  const parameters = new URLSearchParams({
+    from: `${coordinateString(origin.coordinates)},${origin.label}`,
+    to: `${coordinateString(destination.coordinates)},${destination.label}`,
+    mode: mode === "transit" ? "bus" : mode === "walk" ? "walk" : "car",
+    policy: mode === "transit" ? "2" : "0",
+    src: "travel-agent-v1",
+    callnative: "0",
+  });
+  return `https://uri.amap.com/navigation?${parameters}`;
+}
+
+function routeStep({ item, kind, instruction, line = null, origin = null, destination = null, duration, distance }) {
+  const walkType = kind === "walk"
+    ? amapWalkTypeMetadata(item?.navi?.walk_type ?? item?.walk_type)
+    : null;
+  return {
+    kind,
+    instruction,
+    line,
+    origin,
+    destination,
+    durationMinutes: secondsToMinutes(duration),
+    distanceMeters: numberOrNull(distance),
+    walkType,
+    accessibilityFeatures: accessibilityFeaturesForWalkType(walkType),
+  };
+}
+
+function routeAccessibilityFeatures(steps) {
+  return [...new Map(steps
+    .flatMap((step) => step.accessibilityFeatures ?? [])
+    .map((feature) => [feature.kind, feature])).values()];
+}
+
+function withRouteAccessibility(alternative) {
+  const accessibilityFeatures = routeAccessibilityFeatures(alternative.steps ?? []);
+  return {
+    ...alternative,
+    accessibilityFeatures,
+    accessibilityAssessment: {
+      hasStairs: accessibilityFeatures.some((feature) => feature.kind === "stairs"),
+      hasElevator: accessibilityFeatures.some((feature) => feature.kind === "elevator"),
+      hasEscalator: accessibilityFeatures.some((feature) => feature.kind === "escalator"),
+      hasRamp: accessibilityFeatures.some((feature) => feature.kind === "ramp"),
+      stepFreeContinuity: "not_verified",
+      realTimeStatus: false,
+    },
+  };
+}
+
+function normalizeWalkingAlternative(payload, origin, destination) {
+  const path = array(payload?.route?.paths)[0];
+  if (!path) return null;
+  const steps = array(path.steps).map((item) => routeStep({
+    item,
+    kind: "walk",
+    instruction: text(item?.instruction, 500) || "按步行路线前往",
+    duration: item?.cost?.duration ?? item?.duration,
+    distance: item?.step_distance ?? item?.distance,
+  }));
+  return withRouteAccessibility({
+    mode: "walk",
+    totalMinutes: secondsToMinutes(path?.cost?.duration ?? path?.duration) ?? 1,
+    distanceMeters: numberOrNull(path.distance),
+    walkingMeters: numberOrNull(path.distance),
+    transfers: 0,
+    estimatedFareCny: 0,
+    scheduleBasis: "query_time_estimate",
+    realTimeArrival: false,
+    navigationUrl: navigationRouteUrl(origin, destination, "walk"),
+    polyline: polylinePoints(array(path.steps).map((item) => item?.polyline)),
+    steps: steps.length ? steps : [routeStep({ item: null, kind: "walk", instruction: `步行前往${destination.label}`, origin: origin.label, destination: destination.label, duration: path?.cost?.duration ?? path?.duration, distance: path.distance })],
+  });
+}
+
+function normalizeDrivingAlternative(payload, origin, destination) {
+  const path = array(payload?.route?.paths)[0];
+  if (!path) return null;
+  const steps = array(path.steps).slice(0, 12).map((item) => ({
+    kind: "taxi",
+    instruction: text(item?.instruction, 500) || "按驾车路线前往",
+    line: null,
+    origin: null,
+    destination: null,
+    durationMinutes: secondsToMinutes(item?.cost?.duration ?? item?.duration),
+    distanceMeters: numberOrNull(item?.step_distance ?? item?.distance),
+  }));
+  const taxiFare = numberOrNull(path?.cost?.taxi ?? path?.cost?.taxi_fee ?? payload?.route?.taxi_cost);
+  return {
+    mode: "taxi",
+    totalMinutes: secondsToMinutes(path?.cost?.duration ?? path?.duration) ?? 1,
+    distanceMeters: numberOrNull(path.distance),
+    walkingMeters: 0,
+    transfers: 0,
+    estimatedFareCny: taxiFare,
+    scheduleBasis: "query_time_estimate",
+    realTimeArrival: false,
+    navigationUrl: navigationRouteUrl(origin, destination, "taxi"),
+    polyline: polylinePoints(array(path.steps).map((item) => item?.polyline)),
+    steps: steps.length ? steps : [{ kind: "taxi", instruction: `驾车或打车前往${destination.label}`, line: null, origin: origin.label, destination: destination.label, durationMinutes: secondsToMinutes(path?.cost?.duration ?? path?.duration), distanceMeters: numberOrNull(path.distance) }],
+  };
+}
+
+function normalizeTransitAlternative(payload, origin, destination) {
+  const transit = array(payload?.route?.transits)[0];
+  if (!transit) return null;
+  const steps = [];
+  const polylines = [];
+  let transitLineCount = 0;
+  for (const segment of array(transit.segments)) {
+    for (const walking of array(segment?.walking)) {
+      for (const item of array(walking?.steps)) {
+        steps.push(routeStep({ item, kind: "walk", instruction: text(item?.instruction, 500) || "步行衔接", duration: item?.duration, distance: item?.distance }));
+        if (item?.polyline) polylines.push(item.polyline);
+      }
+    }
+    for (const bus of array(segment?.bus)) {
+      for (const line of array(bus?.buslines)) {
+        transitLineCount += 1;
+        const lineName = text(line?.name, 160) || "公共交通";
+        const originName = text(line?.departure_stop?.name, 160) || null;
+        const destinationName = text(line?.arrival_stop?.name, 160) || null;
+        steps.push({
+          kind: transitLineCount > 1 ? "transfer" : "ride",
+          instruction: [originName ? `从${originName}` : null, `乘坐${lineName}`, destinationName ? `到${destinationName}` : null].filter(Boolean).join("，"),
+          line: lineName,
+          origin: originName,
+          destination: destinationName,
+          durationMinutes: secondsToMinutes(line?.duration),
+          distanceMeters: numberOrNull(line?.distance),
+        });
+        if (line?.polyline) polylines.push(line.polyline);
+      }
+    }
+    for (const railway of array(segment?.railway)) {
+      const lineName = text(railway?.name, 160) || "轨道交通";
+      transitLineCount += 1;
+      steps.push({
+        kind: transitLineCount > 1 ? "transfer" : "ride",
+        instruction: `乘坐${lineName}`,
+        line: lineName,
+        origin: text(railway?.departure_stop?.name, 160) || null,
+        destination: text(railway?.arrival_stop?.name, 160) || null,
+        durationMinutes: secondsToMinutes(railway?.time),
+        distanceMeters: numberOrNull(railway?.distance),
+      });
+    }
+  }
+  const walkingMeters = numberOrNull(transit.walking_distance)
+    ?? steps.filter((item) => item.kind === "walk").reduce((sum, item) => sum + Number(item.distanceMeters ?? 0), 0);
+  return withRouteAccessibility({
+    mode: "transit",
+    totalMinutes: secondsToMinutes(transit?.cost?.duration ?? transit?.duration) ?? 1,
+    distanceMeters: numberOrNull(transit.distance),
+    walkingMeters,
+    transfers: Math.max(0, transitLineCount - 1),
+    estimatedFareCny: numberOrNull(transit?.cost?.transit_fee ?? transit?.cost),
+    scheduleBasis: "scheduled_service",
+    realTimeArrival: false,
+    navigationUrl: navigationRouteUrl(origin, destination, "transit"),
+    polyline: polylinePoints(polylines),
+    steps: steps.length ? steps : [{ kind: "ride", instruction: `乘公共交通前往${destination.label}`, line: null, origin: origin.label, destination: destination.label, durationMinutes: secondsToMinutes(transit?.cost?.duration ?? transit?.duration), distanceMeters: numberOrNull(transit.distance) }],
+  });
+}
+
+function mobilityConstraintProfile(brief, travelers) {
+  const structured = travelers.map((traveler) => ({ travelerId: traveler.travelerId, mobility: traveler.careNeeds?.mobility ?? {} }));
+  const constrained = structured.filter(({ mobility }) => Object.values(mobility).some((value) => value === true || Number.isFinite(value)));
+  const walkingLimits = constrained.map(({ mobility }) => mobility.maxContinuousWalkMeters).filter(Number.isFinite);
+  const transferLimits = constrained.map(({ mobility }) => mobility.maxTransfers).filter(Number.isFinite);
+  const reducedMobility = constrained.length > 0;
+  const explicitMaxWalkingMeters = walkingLimits.length ? Math.min(...walkingLimits) : null;
+  const explicitMaxTransfers = transferLimits.length ? Math.min(...transferLimits) : null;
+  return {
+    reducedMobility,
+    constrainedTravelerIds: constrained.map(({ travelerId }) => travelerId),
+    maxWalkingMeters: explicitMaxWalkingMeters,
+    maxTransfers: explicitMaxTransfers,
+    planningWalkingTarget: explicitMaxWalkingMeters ?? (reducedMobility ? 800 : 1_500),
+    planningTransferTarget: explicitMaxTransfers ?? (reducedMobility ? 1 : 3),
+    stepFreeRequired: constrained.some(({ mobility }) => mobility.stepFreeRequired === true),
+    avoidStairs: constrained.some(({ mobility }) => mobility.avoidStairs === true),
+  };
+}
+
+function chooseRouteAlternative(alternatives, constraints) {
+  const byMode = Object.fromEntries(alternatives.map((item) => [item.mode, item]));
+  const conflictsWithStairs = (alternative) => (constraints.stepFreeRequired || constraints.avoidStairs)
+    && alternative?.accessibilityAssessment?.hasStairs === true;
+  if (byMode.walk && !conflictsWithStairs(byMode.walk) && byMode.walk.distanceMeters <= Math.min(1_200, constraints.planningWalkingTarget)) {
+    return { mode: "walk", rationale: "距离较短，步行不需要换乘。" };
+  }
+  if (constraints.reducedMobility) {
+    if (byMode.transit && !conflictsWithStairs(byMode.transit) && Number(byMode.transit.walkingMeters ?? Infinity) <= constraints.planningWalkingTarget && Number(byMode.transit.transfers ?? Infinity) <= constraints.planningTransferTarget) {
+      return { mode: "transit", rationale: "已按少步行策略查询，步行量和换乘次数在当前约束内。" };
+    }
+    if (byMode.taxi) return { mode: "taxi", rationale: "公共交通的步行、换乘或台阶负担不适合当前同行人要求，优先打车衔接。" };
+  }
+  if (byMode.transit && byMode.transit.totalMinutes <= Number(byMode.taxi?.totalMinutes ?? Infinity) + 20) {
+    return { mode: "transit", rationale: "公共交通时间可接受，且可减少市区驾车不确定性。" };
+  }
+  if (byMode.taxi) return { mode: "taxi", rationale: "当前路段打车预计更直接。" };
+  const fallback = alternatives[0];
+  return {
+    mode: fallback.mode,
+    rationale: conflictsWithStairs(fallback)
+      ? "当前仅返回了含阶梯的路线，与避开台阶要求冲突，不能作为最终可执行路线。"
+      : "采用当前可核验的路线方案。",
+  };
+}
+
+export class AmapTravelResearchProvider {
+  constructor({ apiKey, apiSecret, fetchImpl = globalThis.fetch, clock, timeoutMs = 8_000, requestIntervalMs, rateLimitRetryMs, enabled = true } = {}) {
+    this.apiKey = text(apiKey, 512);
+    this.apiSecret = text(apiSecret, 512);
+    this.fetchImpl = fetchImpl;
+    this.clock = clock;
+    this.timeoutMs = timeoutMs;
+    this.requestIntervalMs = Number.isFinite(requestIntervalMs) ? Math.max(0, requestIntervalMs) : fetchImpl === globalThis.fetch ? 1_200 : 0;
+    this.rateLimitRetryMs = Number.isFinite(rateLimitRetryMs) ? Math.max(0, rateLimitRetryMs) : fetchImpl === globalThis.fetch ? 2_200 : 0;
+    this.lastRequestStartedAt = 0;
+    this.requestSchedule = Promise.resolve();
+    this.poiApiVersion = "v5";
+    this.enabled = enabled === true;
+  }
+
+  async waitForRequestSlot() {
+    const scheduled = this.requestSchedule.then(async () => {
+      const remaining = this.lastRequestStartedAt + this.requestIntervalMs - Date.now();
+      if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, remaining));
+      this.lastRequestStartedAt = Date.now();
+    });
+    this.requestSchedule = scheduled.catch(() => {});
+    await scheduled;
+  }
+
+  get status() {
+    return this.apiKey && this.enabled ? "configured" : "provider_unavailable";
+  }
+
+  get canRenderMap() {
+    return this.status === "configured";
+  }
+
+  async requestJson(endpoint, values, provider) {
+    const parameters = signedAmapParameters({ ...values, key: this.apiKey }, this.apiSecret);
+    await this.waitForRequestSlot();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    try {
+      const response = await this.fetchImpl(`${endpoint}?${parameters}`, { method: "GET", headers: { Accept: "application/json" }, signal: controller.signal });
+      if (!response.ok) throw providerError("SOURCE_UNAVAILABLE", { provider, httpStatus: response.status });
+      const payload = await response.json();
+      if (String(payload?.status) !== "1" || String(payload?.infocode) !== "10000") {
+        throw providerError(amapStatusCode(String(payload?.infocode ?? "")), {
+          provider,
+          infoCode: text(payload?.infocode, 20),
+          info: text(payload?.info, 160),
+        });
+      }
+      return payload;
+    } catch (error) {
+      if (error?.name === "AbortError") throw providerError("SOURCE_UNAVAILABLE", { provider, reason: "timeout" });
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  async requestJsonWithRetry(endpoint, values, provider) {
+    try {
+      return await this.requestJson(endpoint, values, provider);
+    } catch (error) {
+      if (!isTransientQpsLimit(error)) throw error;
+      if (this.rateLimitRetryMs > 0) await new Promise((resolve) => setTimeout(resolve, this.rateLimitRetryMs));
+      return this.requestJson(endpoint, values, provider);
+    }
+  }
+
+  async searchDomainVersion({ destination, domain, apiVersion }) {
+    const search = DOMAIN_SEARCH[domain];
+    if (!search) throw providerError("unsupported_research_domain", { domain });
+    const isV5 = apiVersion === "v5";
+    const payload = await this.requestJsonWithRetry(
+      isV5 ? AMAP_PLACE_ENDPOINT : AMAP_PLACE_V3_ENDPOINT,
+      isV5
+        ? { types: search.types, region: destination, city_limit: "true", show_fields: "business,navi,indoor,photos", page_size: "6", page_num: "1", output: "json" }
+        : { types: search.types, city: destination, citylimit: "true", extensions: "all", offset: "6", page: "1", output: "json" },
+      isV5 ? "amap_poi_v5" : "amap_poi_v3",
+    );
+    const checkedAt = new Date(this.clock?.() ?? Date.now()).toISOString();
+    return (Array.isArray(payload.pois) ? payload.pois : []).map((poi) => normalizePoi(poi, { domain, checkedAt, apiVersion }));
+  }
+
+  async searchDomain(input) {
+    if (this.poiApiVersion === "v3") return this.searchDomainVersion({ ...input, apiVersion: "v3" });
+    try {
+      return await this.searchDomainVersion({ ...input, apiVersion: "v5" });
+    } catch (error) {
+      if (!(["10041", "10012"].includes(String(error?.details?.infoCode ?? "")))) throw error;
+      this.poiApiVersion = "v3";
+      return this.searchDomainVersion({ ...input, apiVersion: "v3" });
+    }
+  }
+
+  async resolveMobilityStop(node, destination, destinationGeocode) {
+    const existing = coordinatePair(node);
+    if (existing) {
+      return {
+        nodeId: text(node?.nodeId, 128) || null,
+        label: text(node?.title, 200) || text(node?.location?.label, 200) || "地点",
+        coordinates: existing,
+        citycode: text(node?.location?.citycode, 20) || text(destinationGeocode?.citycode, 20) || null,
+        adcode: text(node?.location?.adcode, 20) || text(destinationGeocode?.adcode, 20) || null,
+        providerPoiId: text(node?.operability?.providerPoiId, 128) || null,
+      };
+    }
+    const address = text(node?.location?.label, 300) || text(node?.title, 200);
+    if (!address) return null;
+    const payload = await this.requestJsonWithRetry(
+      AMAP_GEOCODE_ENDPOINT,
+      { address, city: destination, output: "json" },
+      "amap_mobility_geocode",
+    );
+    const match = array(payload?.geocodes)[0];
+    const [longitude, latitude] = text(match?.location, 80).split(",").map(Number);
+    if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) return null;
+    return {
+      nodeId: text(node?.nodeId, 128) || null,
+      label: text(node?.title, 200) || address,
+      coordinates: { longitude, latitude, coordinateSystem: "GCJ-02" },
+      citycode: text(match?.citycode, 20) || text(destinationGeocode?.citycode, 20) || null,
+      adcode: text(match?.adcode, 20) || text(destinationGeocode?.adcode, 20) || null,
+      providerPoiId: text(node?.operability?.providerPoiId, 128) || null,
+    };
+  }
+
+  async routeMobilityLeg({ origin, destination, brief, constraints }) {
+    const date = isoDates(brief?.dates)[0] ?? null;
+    const timeMatch = JSON.stringify(brief ?? {}).match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/);
+    const routeTime = timeMatch ? `${Number(timeMatch[1])}-${timeMatch[2]}` : null;
+    const common = {
+      origin: coordinateString(origin.coordinates),
+      destination: coordinateString(destination.coordinates),
+      output: "json",
+      show_fields: "cost,navi,polyline",
+    };
+    const requests = [
+      this.requestJsonWithRetry(AMAP_TRANSIT_ENDPOINT, {
+        ...common,
+        city1: origin.citycode,
+        city2: destination.citycode,
+        strategy: constraints.reducedMobility ? "3" : "0",
+        AlternativeRoute: "2",
+        nightflag: "1",
+        ...(origin.providerPoiId && destination.providerPoiId ? { originpoi: origin.providerPoiId, destinationpoi: destination.providerPoiId } : {}),
+        ...(date ? { date } : {}),
+        ...(routeTime ? { time: routeTime } : {}),
+      }, "amap_routes_v5_transit").then((payload) => normalizeTransitAlternative(payload, origin, destination)),
+      this.requestJsonWithRetry(AMAP_DRIVING_ENDPOINT, {
+        ...common,
+        strategy: "32",
+        alternative_route: "2",
+        ...(origin.providerPoiId ? { origin_id: origin.providerPoiId } : {}),
+        ...(destination.providerPoiId ? { destination_id: destination.providerPoiId } : {}),
+      }, "amap_routes_v5_driving").then((payload) => normalizeDrivingAlternative(payload, origin, destination)),
+    ];
+    if (straightLineMeters(origin.coordinates, destination.coordinates) <= 3_500) {
+      requests.push(this.requestJsonWithRetry(AMAP_WALKING_ENDPOINT, {
+        ...common,
+        alternative_route: "1",
+        isindoor: "1",
+        ...(origin.providerPoiId ? { origin_id: origin.providerPoiId } : {}),
+        ...(destination.providerPoiId ? { destination_id: destination.providerPoiId } : {}),
+      }, "amap_routes_v5_walking").then((payload) => normalizeWalkingAlternative(payload, origin, destination)));
+    }
+    const settled = await Promise.allSettled(requests);
+    const alternatives = settled
+      .filter((result) => result.status === "fulfilled" && result.value)
+      .map((result) => result.value);
+    const errors = settled
+      .filter((result) => result.status === "rejected")
+      .map((result) => ({ code: result.reason?.code ?? "SOURCE_UNAVAILABLE", details: result.reason?.details ?? null }));
+    if (!alternatives.length) return { alternatives: [], errors };
+    const recommendation = chooseRouteAlternative(alternatives, constraints);
+    return { alternatives, errors, recommendation };
+  }
+
+  async planMobility({ brief = {}, travelers = [], selectedNodes = [] } = {}) {
+    const destination = text(brief.destination, 120);
+    if (!destination) return { schemaVersion: "trip-mobility-v1", status: "needs_context", reason: "destination_required", source: "amap_routes_v5", fabricatedResults: false };
+    if (!this.apiKey || !this.enabled) return { schemaVersion: "trip-mobility-v1", status: "provider_unavailable", destination, reason: this.apiKey ? "amap_live_smoke_required" : "AMAP_API_KEY_not_configured", source: "amap_routes_v5", sourceDocumentation: AMAP_ROUTE_DOC, fabricatedResults: false };
+    const selected = selectedNodes.filter((node) => node?.selected === true);
+    if (selected.length < 2) return { schemaVersion: "trip-mobility-v1", status: "needs_context", destination, reason: "at_least_two_selected_places_required", source: "amap_routes_v5", sourceDocumentation: AMAP_ROUTE_DOC, fabricatedResults: false };
+    let destinationGeocode;
+    try {
+      const payload = await this.requestJsonWithRetry(AMAP_GEOCODE_ENDPOINT, { address: destination, city: destination, output: "json" }, "amap_mobility_city_geocode");
+      destinationGeocode = array(payload?.geocodes)[0] ?? null;
+    } catch (error) {
+      return { schemaVersion: "trip-mobility-v1", status: "provider_unavailable", destination, reason: error?.code ?? "SOURCE_UNAVAILABLE", source: "amap_routes_v5", sourceDocumentation: AMAP_ROUTE_DOC, fabricatedResults: false };
+    }
+    const resolved = [];
+    const unresolvedNodeIds = [];
+    for (const node of selected.slice(0, 8)) {
+      try {
+        const stop = await this.resolveMobilityStop(node, destination, destinationGeocode);
+        if (stop?.coordinates && stop.citycode) resolved.push({ node, stop });
+        else unresolvedNodeIds.push(node.nodeId);
+      } catch {
+        unresolvedNodeIds.push(node.nodeId);
+      }
+    }
+    const transport = resolved.filter(({ node }) => node.domain === "transport" && node.operability?.mobilityRole !== "intercity_inventory");
+    const stay = resolved.find(({ node }) => node.domain === "stay") ?? null;
+    const activities = resolved.filter(({ node }) => ["play", "food"].includes(node.domain));
+    const remaining = resolved.filter(({ node }) => !["stay", "play", "food", "transport"].includes(node.domain));
+    const ordered = [...transport.slice(0, 1), ...(stay ? [stay] : []), ...activities, ...remaining].slice(0, 6);
+    if (ordered.length >= 3 && stay && ordered.at(-1)?.node.nodeId !== stay.node.nodeId) ordered.push(stay);
+    if (ordered.length < 2) {
+      return { schemaVersion: "trip-mobility-v1", status: "needs_context", destination, reason: "selected_places_need_resolvable_coordinates", source: "amap_routes_v5", coverage: { routedNodeIds: [], unresolvedNodeIds, unscheduled: true }, sourceDocumentation: AMAP_ROUTE_DOC, fabricatedResults: false };
+    }
+    const constraints = mobilityConstraintProfile(brief, travelers);
+    const legs = [];
+    const errors = [];
+    for (let index = 0; index < ordered.length - 1 && legs.length < 6; index += 1) {
+      const origin = ordered[index].stop;
+      const nextDestination = ordered[index + 1].stop;
+      const result = await this.routeMobilityLeg({ origin, destination: nextDestination, brief, constraints });
+      errors.push(...result.errors);
+      if (!result.alternatives.length) continue;
+      legs.push({
+        legId: `mobility_${shortHash(`${origin.nodeId}:${nextDestination.nodeId}:${index}`)}`,
+        origin,
+        destination: nextDestination,
+        recommendedMode: result.recommendation.mode,
+        rationale: `${result.recommendation.rationale}${constraints.stepFreeRequired || constraints.avoidStairs ? " 无障碍连续性仍需结合车站电梯与出入口资料核验。" : ""}`,
+        alternatives: result.alternatives,
+      });
+    }
+    const checkedAt = new Date(this.clock?.() ?? Date.now()).toISOString();
+    const routedNodeIds = unique(legs.flatMap((leg) => [leg.origin.nodeId, leg.destination.nodeId]));
+    const recommendedFeatures = legs.flatMap((leg) => leg.alternatives
+      .find((alternative) => alternative.mode === leg.recommendedMode)?.accessibilityFeatures ?? []);
+    const hasMappedAccessibilityFeature = recommendedFeatures.length > 0;
+    const hasStairConflict = (constraints.stepFreeRequired || constraints.avoidStairs)
+      && recommendedFeatures.some((feature) => feature.kind === "stairs");
+    return {
+      schemaVersion: "trip-mobility-v1",
+      status: legs.length === ordered.length - 1 && !unresolvedNodeIds.length ? "completed" : legs.length ? "partial" : "provider_unavailable",
+      destination,
+      source: "amap_routes_v5",
+      checkedAt,
+      freshUntil: new Date(new Date(checkedAt).getTime() + 3 * 60 * 60 * 1_000).toISOString(),
+      coverage: { routedNodeIds, unresolvedNodeIds, unscheduled: true },
+      legs,
+      travelerFit: {
+        constrainedTravelerIds: constraints.constrainedTravelerIds,
+        maxContinuousWalkMeters: constraints.maxWalkingMeters,
+        maxTransfers: constraints.maxTransfers,
+        stepFreeRequired: constraints.stepFreeRequired,
+        avoidStairs: constraints.avoidStairs,
+        accessibilityEvidence: constraints.stepFreeRequired || constraints.avoidStairs
+          ? (hasMappedAccessibilityFeature ? "partial" : "unverified")
+          : "not_required",
+      },
+      reason: legs.length ? null : errors[0]?.code ?? "route_not_returned",
+      caveats: [
+        "路线、时间和费用是查询时估算，不代表实时公交到站、即时叫车供给或最终车费。",
+        "当前地点尚未形成按天时刻表；路线用于核验已选地点之间的移动负担，日程确定后必须重新计算。",
+        ...(constraints.stepFreeRequired || constraints.avoidStairs ? [
+          hasMappedAccessibilityFeature
+            ? "路线已保留高德返回的扶梯、直梯、阶梯或斜坡信息；它们不是实时运行状态，也不能单独证明连续无障碍，建议现场确认。"
+            : "本次路线没有返回可用于判断直梯、扶梯、阶梯或斜坡的资料；连续无障碍仍待核验。",
+        ] : []),
+        ...(hasStairConflict ? ["当前推荐路线资料中仍含阶梯，与避开台阶要求冲突，必须更换路线或交通方式后再执行。"] : []),
+        ...(errors.length ? ["部分出行方式暂未返回，本轮只展示已核验的路线方案。"] : []),
+      ],
+      sourceDocumentation: AMAP_ROUTE_DOC,
+      fabricatedResults: false,
+    };
+  }
+
+  async getWeather({ brief = {} } = {}) {
+    const destination = text(brief.destination, 120);
+    if (!destination) return { schemaVersion: "trip-weather-v1", status: "provider_unavailable", reason: "destination_required", fabricatedResults: false };
+    if (!this.apiKey || !this.enabled) return { schemaVersion: "trip-weather-v1", status: "provider_unavailable", reason: this.apiKey ? "amap_live_smoke_required" : "AMAP_API_KEY_not_configured", fabricatedResults: false };
+    try {
+      const geocode = await this.requestJsonWithRetry(AMAP_GEOCODE_ENDPOINT, { address: destination, city: destination, output: "json" }, "amap_geocode");
+      const match = Array.isArray(geocode.geocodes) ? geocode.geocodes.find((item) => text(item?.adcode, 20)) : null;
+      const adcode = text(match?.adcode, 20);
+      if (!adcode) return { schemaVersion: "trip-weather-v1", status: "EMPTY_VERIFIED", reason: "destination_adcode_not_found", fabricatedResults: false };
+      const payload = await this.requestJsonWithRetry(AMAP_WEATHER_ENDPOINT, { city: adcode, extensions: "all", output: "json" }, "amap_weather");
+      return normalizeForecast(payload, brief, new Date(this.clock?.() ?? Date.now()).toISOString());
+    } catch (error) {
+      return {
+        schemaVersion: "trip-weather-v1",
+        status: error?.code ?? "SOURCE_UNAVAILABLE",
+        reason: error?.code ?? "SOURCE_UNAVAILABLE",
+        diagnostic: error?.details ?? null,
+        sourceDocumentation: AMAP_WEATHER_DOC,
+        fabricatedResults: false,
+      };
+    }
+  }
+
+  async research({ brief = {}, domains = DEFAULT_DOMAINS, existingWeather = null, includeWeather = true } = {}) {
+    const destination = text(brief.destination, 120);
+    if (!destination) throw providerError("destination_required");
+    if (!this.apiKey) {
+      return {
+        schemaVersion: "travel-provider-result-v1",
+        status: "provider_unavailable",
+        provider: "amap_web_service",
+        reason: "AMAP_API_KEY_not_configured",
+        fabricatedResults: false,
+      };
+    }
+    if (!this.enabled) {
+      return {
+        schemaVersion: "travel-provider-result-v1",
+        status: "provider_unavailable",
+        provider: "amap_web_service",
+        reason: "amap_live_smoke_required",
+        fabricatedResults: false,
+      };
+    }
+    const requestedDomains = unique(domains).filter((domain) => DEFAULT_DOMAINS.includes(domain));
+    if (!requestedDomains.length) throw providerError("research_domains_required");
+    const byDomain = Object.fromEntries(requestedDomains.map((domain) => [domain, []]));
+    const errors = [];
+    for (const domain of requestedDomains) {
+      try {
+        byDomain[domain] = await this.searchDomain({ destination, domain });
+      } catch (error) {
+        errors.push({ code: error?.code ?? "SOURCE_UNAVAILABLE", details: error?.details ?? null });
+      }
+    }
+    const weather = includeWeather ? (reusableWeather(existingWeather, brief, this.clock) ?? await this.getWeather({ brief })) : null;
+    const resultCount = Object.values(byDomain).reduce((total, candidates) => total + candidates.length, 0);
+    if (!resultCount && weather?.status !== "completed") {
+      return {
+        schemaVersion: "travel-provider-result-v1",
+        status: errors.some((error) => error.code === "AUTH_REQUIRED")
+          ? "AUTH_REQUIRED"
+          : errors.some((error) => error.code === "ACCOUNT_LIMITED")
+            ? "ACCOUNT_LIMITED"
+            : errors.some((error) => error.code === "RATE_LIMITED")
+              ? "RATE_LIMITED"
+              : "EMPTY_VERIFIED",
+        provider: "amap_web_service",
+        reason: errors[0]?.code ?? "EMPTY_VERIFIED",
+        errors,
+        ...(weather ? { weather } : {}),
+        fabricatedResults: false,
+      };
+    }
+    return {
+      schemaVersion: "travel-provider-result-v1",
+      status: "completed",
+      provider: "amap_web_service",
+      providerLabel: "高德地图 Web 服务",
+      destination,
+      checkedAt: new Date(this.clock?.() ?? Date.now()).toISOString(),
+      byDomain,
+      partial: errors.length > 0 || requestedDomains.some((domain) => byDomain[domain].length === 0),
+      errors,
+      ...(weather ? { weather } : {}),
+      caveats: [
+        "高德综合排序用于地点发现，不代表独立口碑结论。",
+        ...(this.poiApiVersion === "v3" ? ["当前账号的 POI 2.0 权益不可用，地点已自动切换为高德基础检索；营业时段、入口与室内字段可能较少。"] : []),
+        ...(weather?.caveat ? [weather.caveat] : []),
+      ],
+      fabricatedResults: false,
+      sourceDocumentation: this.poiApiVersion === "v5" ? AMAP_PLACE_DOC : AMAP_PLACE_V3_DOC,
+    };
+  }
+
+  async renderStaticMap({ points = [], paths = [], width = 750, height = 360 } = {}) {
+    if (!this.apiKey || !this.enabled) throw providerError("SOURCE_UNAVAILABLE", { provider: "amap_static_map" });
+    const safePoints = points.filter((point) => Number.isFinite(point?.coordinates?.longitude) && Number.isFinite(point?.coordinates?.latitude)).slice(0, 10);
+    if (!safePoints.length) throw providerError("EMPTY_VERIFIED", { provider: "amap_static_map" });
+    const markerLocations = safePoints.map((point) => `${point.coordinates.longitude},${point.coordinates.latitude}`).join(";");
+    const safePaths = paths.map((path) => array(path).filter((point) => Number.isFinite(point?.longitude) && Number.isFinite(point?.latitude)).slice(0, 80))
+      .filter((path) => path.length >= 2)
+      .slice(0, 4);
+    const parameters = signedAmapParameters({
+      key: this.apiKey,
+      size: `${Math.min(1024, Math.max(320, width))}*${Math.min(1024, Math.max(240, height))}`,
+      scale: "2",
+      markers: `mid,0xFF5A4F,:${markerLocations}`,
+      ...(safePaths.length ? { paths: safePaths.map((path, index) => `${index === 0 ? 8 : 5},${index === 0 ? "0x216DD7" : "0x5F8FB0"},0.85,,:${path.map(coordinateString).join(";")}`).join("|") } : {}),
+    }, this.apiSecret);
+    await this.waitForRequestSlot();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    try {
+      const response = await this.fetchImpl(`${AMAP_STATIC_MAP_ENDPOINT}?${parameters}`, { method: "GET", headers: { Accept: "image/*" }, signal: controller.signal });
+      const contentType = response.headers.get("content-type") ?? "";
+      if (!response.ok || !contentType.startsWith("image/")) {
+        if (contentType.includes("json")) {
+          const payload = await response.json().catch(() => null);
+          throw providerError(amapStatusCode(String(payload?.infocode ?? "")), {
+            provider: "amap_static_map",
+            httpStatus: response.status,
+            infoCode: text(payload?.infocode, 20),
+            info: text(payload?.info, 160),
+          });
+        }
+        throw providerError("SOURCE_UNAVAILABLE", { provider: "amap_static_map", httpStatus: response.status });
+      }
+      const body = Buffer.from(await response.arrayBuffer());
+      if (!body.length || body.length > 5_000_000) throw providerError("SOURCE_UNAVAILABLE", { provider: "amap_static_map", reason: "invalid_image_size" });
+      return { body, contentType, checkedAt: new Date(this.clock?.() ?? Date.now()).toISOString() };
+    } catch (error) {
+      if (error?.name === "AbortError") throw providerError("SOURCE_UNAVAILABLE", { provider: "amap_static_map", reason: "timeout" });
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+}
+
+export function createAmapTravelResearchProvider(env = process.env, options = {}) {
+  const enabled = Boolean(env.AMAP_API_KEY) && env.TRAVEL_AGENT_AMAP_SMOKE_STATUS === "passed_live_smoke";
+  return new AmapTravelResearchProvider({ apiKey: env.AMAP_API_KEY, apiSecret: env.AMAP_API_SECRET, enabled, ...options });
+}
+
+export {
+  AMAP_GEOCODE_ENDPOINT,
+  AMAP_PLACE_DOC,
+  AMAP_PLACE_ENDPOINT,
+  AMAP_PLACE_V3_DOC,
+  AMAP_PLACE_V3_ENDPOINT,
+  AMAP_ROUTE_DOC,
+  AMAP_DRIVING_ENDPOINT,
+  AMAP_TRANSIT_ENDPOINT,
+  AMAP_WALKING_ENDPOINT,
+  AMAP_WEATHER_DOC,
+  AMAP_WEATHER_ENDPOINT,
+  DOMAIN_SEARCH,
+  signedAmapParameters,
+};

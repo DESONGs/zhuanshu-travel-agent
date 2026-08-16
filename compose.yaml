@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: travel_agent
+      POSTGRES_USER: travel_agent
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your shell or a local .env file}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - travel-agent-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U travel_agent -d travel_agent"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  travel-agent-postgres:

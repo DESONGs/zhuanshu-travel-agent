@@ -1,0 +1,157 @@
+import { randomUUID } from "node:crypto";
+import { mkdir, open, readFile, readdir, rename, unlink } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { PostgresConversationRepository } from "./postgres-conversation-repository.mjs";
+import { DEFAULT_USER_MODEL_ID, userModelOption } from "../agent/user-model-options.mjs";
+
+const SAFE_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
+const MESSAGE_ROLES = new Set(["user", "assistant", "status"]);
+
+function repositoryError(code, details = {}) {
+  const error = new Error(code);
+  error.code = code;
+  error.details = details;
+  return error;
+}
+
+function requireSafeId(value, field) {
+  if (typeof value !== "string" || !SAFE_ID.test(value)) throw repositoryError(`invalid_${field}`);
+  return value;
+}
+
+export function validateConversation(record, expectedConversationId = record?.conversationId) {
+  if (!record || record.schemaVersion !== "travel-conversation-v1") throw repositoryError("invalid_stored_conversation");
+  if (record.conversationId !== expectedConversationId) throw repositoryError("invalid_stored_conversation");
+  requireSafeId(record.conversationId, "conversation_id");
+  requireSafeId(record.userId, "conversation_user_id");
+  if (record.tripId !== null) requireSafeId(record.tripId, "conversation_trip_id");
+  record.modelId ??= DEFAULT_USER_MODEL_ID;
+  if (!userModelOption(record.modelId)) throw repositoryError("invalid_conversation_model");
+  if (!Number.isInteger(record.storageVersion) || record.storageVersion < 0) throw repositoryError("invalid_conversation_storage_version");
+  if (!Array.isArray(record.messages) || record.messages.length > 80) throw repositoryError("invalid_conversation_messages");
+  for (const message of record.messages) {
+    requireSafeId(message?.messageId, "conversation_message_id");
+    if (!MESSAGE_ROLES.has(message?.role) || typeof message.text !== "string" || message.text.length > 8_000 || typeof message.createdAt !== "string" || (message.modelId != null && !userModelOption(message.modelId))) {
+      throw repositoryError("invalid_conversation_message");
+    }
+  }
+  return record;
+}
+
+export function createConversationRecord({ conversationId = `conversation_${randomUUID().slice(0, 8)}`, userId, tripId = null, modelId = DEFAULT_USER_MODEL_ID, clock } = {}) {
+  const timestamp = new Date(clock?.() ?? Date.now()).toISOString();
+  return validateConversation({
+    schemaVersion: "travel-conversation-v1",
+    conversationId,
+    userId,
+    tripId,
+    modelId,
+    storageVersion: 0,
+    messages: [],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  });
+}
+
+export class FileConversationRepository {
+  constructor({ rootDir = process.env.TRAVEL_AGENT_CONVERSATION_DATA_DIR ?? resolve(process.cwd(), "runtime-data", "conversations") } = {}) {
+    this.rootDir = resolve(rootDir);
+    this.mode = "file";
+    this.writeQueues = new Map();
+  }
+
+  pathFor(conversationId) {
+    return join(this.rootDir, `${requireSafeId(conversationId, "conversation_id")}.json`);
+  }
+
+  async initialize() {
+    await mkdir(this.rootDir, { recursive: true, mode: 0o700 });
+  }
+
+  async withWriteQueue(conversationId, task) {
+    const previous = this.writeQueues.get(conversationId) ?? Promise.resolve();
+    let release;
+    const current = new Promise((resolveQueue) => { release = resolveQueue; });
+    const queued = previous.then(() => current);
+    this.writeQueues.set(conversationId, queued);
+    await previous;
+    try {
+      return await task();
+    } finally {
+      release();
+      if (this.writeQueues.get(conversationId) === queued) this.writeQueues.delete(conversationId);
+    }
+  }
+
+  async create(record) {
+    const conversation = validateConversation(structuredClone(record));
+    const path = this.pathFor(conversation.conversationId);
+    await this.initialize();
+    return this.withWriteQueue(conversation.conversationId, async () => {
+      const persisted = { ...conversation, storageVersion: 0 };
+      let handle;
+      try {
+        handle = await open(path, "wx", 0o600);
+        await handle.writeFile(`${JSON.stringify(persisted, null, 2)}\n`, "utf8");
+      } catch (error) {
+        if (error?.code === "EEXIST") throw repositoryError("conversation_already_exists");
+        throw error;
+      } finally {
+        await handle?.close();
+      }
+      return persisted;
+    });
+  }
+
+  async get(conversationId) {
+    const path = this.pathFor(conversationId);
+    try {
+      return validateConversation(JSON.parse(await readFile(path, "utf8")), conversationId);
+    } catch (error) {
+      if (error?.code === "ENOENT") return null;
+      if (error instanceof SyntaxError) throw repositoryError("invalid_stored_conversation");
+      throw error;
+    }
+  }
+
+  async listByUser(userId) {
+    requireSafeId(userId, "conversation_user_id");
+    await this.initialize();
+    const entries = await readdir(this.rootDir, { withFileTypes: true });
+    const records = await Promise.all(entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".json") && SAFE_ID.test(entry.name.slice(0, -5)))
+      .map((entry) => this.get(entry.name.slice(0, -5))));
+    return records.filter((record) => record?.userId === userId).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  }
+
+  async save(record, { expectedStorageVersion } = {}) {
+    const conversation = validateConversation(structuredClone(record));
+    const path = this.pathFor(conversation.conversationId);
+    await this.initialize();
+    return this.withWriteQueue(conversation.conversationId, async () => {
+      const current = await this.get(conversation.conversationId);
+      if (!current) throw repositoryError("conversation_not_found");
+      if (current.storageVersion !== expectedStorageVersion) throw repositoryError("conversation_storage_conflict");
+      const persisted = { ...conversation, storageVersion: current.storageVersion + 1 };
+      const tempPath = join(this.rootDir, `.${conversation.conversationId}.${randomUUID()}.tmp`);
+      let handle;
+      try {
+        handle = await open(tempPath, "wx", 0o600);
+        await handle.writeFile(`${JSON.stringify(persisted, null, 2)}\n`, "utf8");
+        await handle.close();
+        handle = null;
+        await rename(tempPath, path);
+      } catch (error) {
+        await handle?.close();
+        await unlink(tempPath).catch(() => {});
+        throw error;
+      }
+      return persisted;
+    });
+  }
+}
+
+export function createConversationRepository({ databaseUrl = process.env.DATABASE_URL, rootDir } = {}) {
+  if (databaseUrl) return new PostgresConversationRepository({ databaseUrl });
+  return new FileConversationRepository({ rootDir });
+}

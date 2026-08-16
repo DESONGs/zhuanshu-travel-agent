@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "travel-context-pack-v2",
+  "type": "object",
+  "required": ["schemaVersion", "contextPackId", "tripId", "baseRevision", "workUnit", "travelerSlice", "decisionNeighborhood", "evidenceBundle", "readSet", "writeContract", "contextHash"],
+  "properties": {
+    "schemaVersion": { "const": "travel-context-pack-v2" },
+    "contextPackId": { "type": "string" },
+    "tripId": { "type": "string" },
+    "baseRevision": { "type": "integer", "minimum": 0 },
+    "workUnit": { "type": "object" },
+    "travelerSlice": { "type": "array" },
+    "decisionNeighborhood": { "type": "object" },
+    "evidenceBundle": { "type": "array" },
+    "readSet": { "type": "array" },
+    "writeContract": { "type": "object" },
+    "contextHash": { "type": "string", "minLength": 64, "maxLength": 64 }
+  }
+}

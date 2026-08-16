@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "third-party-audit-v1",
+  "type": "object",
+  "required": ["schemaVersion", "candidate", "commit", "license", "staticReview", "isolatedSmoke", "adoption"],
+  "properties": {
+    "schemaVersion": { "const": "third-party-audit-v1" },
+    "candidate": { "type": "string" },
+    "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "license": { "type": "string" },
+    "staticReview": { "enum": ["pending", "passed", "failed"] },
+    "isolatedSmoke": { "enum": ["not-run", "passed_read_only_isolated", "failed"] },
+    "adoption": { "enum": ["blocked", "borrow-only", "eligible"] }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "trip-commit-result-v1",
+  "type": "object",
+  "required": ["schemaVersion", "status", "state"],
+  "properties": {
+    "schemaVersion": { "const": "trip-commit-result-v1" },
+    "status": { "enum": ["committed", "rejected", "needs_rebase"] },
+    "state": { "$ref": "trip-control-state-v1" },
+    "qa": { "type": "object" },
+    "validation": { "type": "object" }
+  }
+}

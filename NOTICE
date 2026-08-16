@@ -1,0 +1,25 @@
+Travel Agent V1 is made available under the PolyForm Noncommercial License 1.0.0.
+Commercial use requires a separate written license from the copyright holder.
+
+Required Notice: Copyright 2026 DESONGs.
+
+The PolyForm license applies only to original project code. Third-party
+components remain under their own licenses, and those licenses are not changed
+or restricted by this repository's project license.
+
+This repository records third-party source provenance in
+wiki/research/third-party-candidate-audits.md. No third-party source is copied
+into this repository unless its license, fixed revision, and attribution are
+recorded there.
+
+The local MCP entrypoint uses @modelcontextprotocol/sdk 1.30.0, licensed under
+the MIT License. The Web/PWA uses React and Vite under the MIT License. The
+native shells use Capacitor under the MIT License. The native mini-program
+projects use only the platform developer runtimes. PostgreSQL is a separately
+deployed database and is not copied into this repository. Installed packages
+are dependencies, not copied source.
+
+Read-only Fliggy inventory research invokes @fly-ai/flyai-cli 1.0.16, licensed
+under the MIT License, in a restricted child process. Source provenance and
+the production authorization boundary are recorded in the third-party audit
+ledger. No 12306 community client source is included.

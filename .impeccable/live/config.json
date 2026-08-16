@@ -1,0 +1,14 @@
+{
+  "web": {
+    "command": "npm run web:dev -- --port 5173",
+    "url": "http://127.0.0.1:5173"
+  },
+  "api": {
+    "command": "TRAVEL_AGENT_ALLOW_DEVELOPMENT_AUTH=true PORT=8797 npm run api",
+    "url": "http://127.0.0.1:8797/api/health"
+  },
+  "mobileViewport": {
+    "width": 393,
+    "height": 852
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "trip-patch-proposal-v1",
+  "type": "object",
+  "required": ["schemaVersion", "proposalId", "tripId", "baseRevision", "writeSet", "writeContract", "readSet", "operations"],
+  "properties": {
+    "schemaVersion": { "const": "trip-patch-proposal-v1" },
+    "proposalId": { "type": "string", "pattern": "^[A-Za-z0-9_.:-]{1,128}$" },
+    "tripId": { "type": "string", "pattern": "^[A-Za-z0-9_.:-]{1,128}$" },
+    "baseRevision": { "type": "integer", "minimum": 0 },
+    "writeSet": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "writeContract": {
+      "type": "object",
+      "required": ["allowedNodeIds"],
+      "properties": { "allowedNodeIds": { "type": "array", "items": { "type": "string" } } }
+    },
+    "readSet": { "type": "array", "items": { "type": "object", "required": ["nodeId", "version"] } },
+    "offerRefs": { "type": "array", "items": { "type": "string" } },
+    "operations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["kind", "nodeId"],
+        "properties": { "kind": { "enum": ["add_candidate", "select", "reject", "update"] }, "nodeId": { "type": "string" }, "node": { "type": "object" } }
+      }
+    }
+  }
+}

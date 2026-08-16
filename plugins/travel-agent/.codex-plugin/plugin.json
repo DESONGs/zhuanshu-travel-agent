@@ -1,0 +1,23 @@
+{
+  "name": "travel-agent",
+  "version": "0.1.0",
+  "description": "Modular travel research, evidence, decision and fulfillment skills for Travel Agent V1.",
+  "author": {
+    "name": "Travel Agent contributors"
+  },
+  "license": "Apache-2.0",
+  "keywords": ["travel", "agent", "china", "evidence", "xiaohongshu"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Travel Agent",
+    "shortDescription": "Research and shape executable travel plans.",
+    "longDescription": "Travel Agent coordinates social discovery, official travel providers, evidence verification and shared trip decisions without allowing Skills to mutate trip state directly.",
+    "developerName": "Travel Agent contributors",
+    "category": "Productivity",
+    "capabilities": ["Travel research", "Evidence verification", "Trip decision support"],
+    "defaultPrompt": [
+      "Research this trip using social discovery and verified travel sources.",
+      "Compare these travel options and explain the important tradeoffs."
+    ]
+  }
+}
