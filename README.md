@@ -343,7 +343,7 @@ Fixture 通过只能证明合同正确；Provider 只有完成真实账号、真
 - `npm run api`、`npm run mcp` 和 `npm test` 通过锁定的 `tsx` loader 直接加载 TypeScript 源码；
 - Pi 从 `travel-agent-pi-package/extensions/*.ts` 和 `plugins/travel-agent/skills/` 加载产品能力；
 - `npm run library:build` 只生成可删除、可重建的 `dist/`，用于检查编译输出或未来发包，不是本地启动前置条件；
-- `.github/workflows/ci.yml` 会在 Windows、macOS 和 Linux 的 Node `22.19.0` 干净环境中执行 `npm ci --ignore-scripts` 与 `npm run check`。
+- npm scripts 不使用只适用于某一种 Shell 的环境变量语法；Windows、macOS 和 Linux 都使用同一组安装、测试和启动命令。
 
 因此，把仓库克隆到另一台 Windows 或 Mac 后，只需安装锁文件依赖并配置自己的 `env_travel.local`；不能复制旧电脑的 `dist/`、密钥或运行数据来冒充可运行环境。npm 发包保持延期，等公开 API 和完整 Pi package 形态稳定后再单独启用发布门。
 
