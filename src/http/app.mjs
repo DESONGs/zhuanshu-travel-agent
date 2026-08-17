@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import express from "express";
+import { assertTravelServicePort } from "zhuanshu-travel-agent/core";
 import { TravelService } from "../api/travel-service.mjs";
 import { TravelConversationAgent } from "../agent/travel-conversation-agent.mjs";
 import { createConversationRepository } from "../persistence/conversation-repository.mjs";
@@ -85,10 +86,10 @@ export function createHttpApp({
   allowedOrigins = parseAllowedOrigins(process.env.TRAVEL_AGENT_CORS_ORIGINS),
   runtimeEnv = process.env,
 } = {}) {
-  travelService ??= new TravelService({
+  travelService = assertTravelServicePort(travelService ?? new TravelService({
     store: createTripRepository({ databaseUrl: runtimeEnv.DATABASE_URL, rootDir: runtimeEnv.TRAVEL_AGENT_DATA_DIR }),
     researchProvider: createTravelResearchProvider(runtimeEnv),
-  });
+  }));
   conversationRepository ??= createConversationRepository({
     databaseUrl: runtimeEnv.DATABASE_URL,
     rootDir: runtimeEnv.TRAVEL_AGENT_CONVERSATION_DATA_DIR

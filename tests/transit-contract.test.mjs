@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { transitSegmentFromNode } from "../src/contracts/transit-contract.mjs";
+import { transitSegmentFromNode } from "zhuanshu-travel-agent/contracts";
 
 test("stored transit contract rehydrates normalized optional fields", () => {
   const segment = transitSegmentFromNode({

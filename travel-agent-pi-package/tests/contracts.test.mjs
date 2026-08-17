@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
-import { TRAVEL_MCP_OPERATIONS, validateTravelMcpRequest } from "../../src/api/travel-mcp-contract.mjs";
+import { TRAVEL_MCP_OPERATIONS, validateTravelMcpRequest } from "../dist/mcp/index.js";
 
 test("keeps the full business-level MCP surface and its confirmation boundary", () => {
   assert.deepEqual(Object.keys(TRAVEL_MCP_OPERATIONS), [

@@ -32,6 +32,29 @@ function weatherState(env) {
   return "blocked_pending_authorized_weather_provider";
 }
 
+function unavailableAuthState(reason) {
+  if (reason === "https_required") return "blocked_https_required";
+  if (reason === "secure_session_required") return "blocked_missing_secure_session";
+  return "blocked_missing_credentials";
+}
+
+function authChannelStates(env) {
+  const summary = createAuthService({ env }).providerSummary({ origin: env.TRAVEL_AGENT_PUBLIC_ORIGIN });
+  const providers = new Map(summary.providers.map((provider) => [provider.id, provider]));
+  const webState = (provider) => provider?.available === true ? "credential_configured_pending_smoke" : unavailableAuthState(provider?.unavailableReason);
+  const wechatWeb = providers.get("wechat");
+  const alipayWeb = providers.get("alipay");
+  const appleWeb = providers.get("apple");
+  const wechatMini = configured(env.WECHAT_MINIAPP_APP_ID) && configured(env.WECHAT_MINIAPP_APP_SECRET);
+  return {
+    wechat: wechatWeb?.available && wechatMini ? "web_and_miniapp_credentials_configured_pending_smoke"
+      : wechatWeb?.available ? "web_credentials_configured_pending_smoke"
+        : wechatMini ? "miniapp_credentials_configured_pending_smoke" : webState(wechatWeb),
+    alipay: webState(alipayWeb),
+    apple: webState(appleWeb),
+  };
+}
+
 export function providerStatusSummary(env = process.env) {
   const fliggyFlyAi = flyaiState(env);
   const tuniuOfficialMcp = tuniuState(env);
@@ -62,11 +85,8 @@ export function providerStatusSummary(env = process.env) {
       railway: authorizedInventory,
       flightsAndHotels: authorizedInventory,
     },
-    channels: {
-      wechat: "blocked_pending_auth_adapter",
-      alipay: "blocked_pending_auth_adapter",
-      apple: "blocked_pending_auth_adapter",
-    },
+    channels: authChannelStates(env),
   };
 }
 import { publicModelSelection } from "../agent/user-model-options.mjs";
+import { createAuthService } from "../http/auth-providers.mjs";

@@ -2,6 +2,7 @@ import { createAmapTravelResearchProvider } from "./amap-travel-research.mjs";
 import { createFlyaiTravelResearchProvider } from "./flyai-travel-research.mjs";
 import { createOpenMeteoWeatherProvider } from "./open-meteo-weather.mjs";
 import { createTuniuTravelResearchProvider } from "./tuniu-travel-research.mjs";
+import { normalizeProviderResult } from "zhuanshu-travel-agent/providers";
 
 const DOMAINS = Object.freeze(["play", "food", "stay", "transport"]);
 
@@ -106,7 +107,7 @@ export class CompositeTravelResearchProvider {
   async research(input) {
     const providers = this.configuredProviders;
     const hasWeatherProvider = this.weatherProviders.some((provider) => provider.status === "configured" && typeof provider.getWeather === "function");
-    if (!providers.length && !hasWeatherProvider) return { schemaVersion: "travel-provider-result-v1", status: "provider_unavailable", provider: "composite_travel_research", fabricatedResults: false };
+    if (!providers.length && !hasWeatherProvider) return normalizeProviderResult({ schemaVersion: "travel-provider-result-v1", status: "provider_unavailable", provider: "composite_travel_research", fabricatedResults: false });
     const [settled, weather] = await Promise.all([
       Promise.allSettled(providers.map((provider) => provider.research({ ...input, includeWeather: false }))),
       this.resolveWeather(input),
@@ -119,7 +120,7 @@ export class CompositeTravelResearchProvider {
     });
     if (!completed.length) {
       if (weather?.status === "completed") {
-        return {
+        return normalizeProviderResult({
           schemaVersion: "travel-provider-result-v1",
           status: "completed",
           provider: weather.provider,
@@ -133,9 +134,9 @@ export class CompositeTravelResearchProvider {
           caveats: [weather.caveat].filter(Boolean),
           fabricatedResults: false,
           sourceDocumentation: weather.sourceDocumentation,
-        };
+        });
       }
-      return {
+      return normalizeProviderResult({
         schemaVersion: "travel-provider-result-v1",
         status: errors.some((error) => error.code === "AUTH_REQUIRED")
           ? "AUTH_REQUIRED"
@@ -147,13 +148,13 @@ export class CompositeTravelResearchProvider {
         provider: "composite_travel_research",
         errors,
         fabricatedResults: false,
-      };
+      });
     }
     const byDomain = Object.fromEntries(DOMAINS.map((domain) => [domain, deduplicate(completed.flatMap((result) => result.byDomain?.[domain] ?? []))]));
     const requested = Array.isArray(input?.domains) && input.domains.length ? input.domains : DOMAINS;
     const weatherCaveat = weatherGapCaveat(weather);
     const amapAccountGate = errors.some((error) => error.code === "ACCOUNT_LIMITED" && error.provider === "amap_web_service");
-    return {
+    return normalizeProviderResult({
       schemaVersion: "travel-provider-result-v1",
       status: Object.values(byDomain).some((items) => items.length) ? "completed" : "EMPTY_VERIFIED",
       provider: completed.map((result) => result.provider).join("+"),
@@ -174,7 +175,7 @@ export class CompositeTravelResearchProvider {
       ].filter(Boolean))],
       fabricatedResults: false,
       sourceDocumentation: completed.find((result) => result.sourceDocumentation)?.sourceDocumentation ?? null,
-    };
+    });
   }
 }
 

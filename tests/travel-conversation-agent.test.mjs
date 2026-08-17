@@ -7,7 +7,7 @@ import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from "
 import { TravelConversationAgent, userFacingAgentText } from "../src/agent/travel-conversation-agent.mjs";
 import { TravelService } from "../src/api/travel-service.mjs";
 import { FileConversationRepository } from "../src/persistence/conversation-repository.mjs";
-import { TripStore } from "../travel-agent-pi-package/src/runtime/trip-store.mjs";
+import { TripStore } from "zhuanshu-travel-agent/core";
 
 test("user-facing agent copy translates internal planning enums before rendering", () => {
   const copy = userFacingAgentText("Provider 把 weatherFit 标为 caution，等待 TripPatch revision。");

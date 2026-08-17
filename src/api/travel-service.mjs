@@ -10,11 +10,10 @@ import {
   stageTripPatch,
   updateTripControlScope,
   validateTripCoherence,
-} from "../../travel-agent-pi-package/src/runtime/trip-runtime.mjs";
+} from "zhuanshu-travel-agent/core";
 import { createTripRepository } from "../persistence/trip-repository.mjs";
-import { validateTravelMcpRequest } from "./travel-mcp-contract.mjs";
-import { transitSegmentFromNode } from "../contracts/transit-contract.mjs";
-import { normalizeTripMobility } from "../contracts/mobility-contract.mjs";
+import { validateTravelMcpRequest } from "zhuanshu-travel-agent/mcp";
+import { normalizeTripMobility, transitSegmentFromNode } from "zhuanshu-travel-agent/contracts";
 
 const FOUR_DOMAINS = Object.freeze(["play", "food", "stay", "transport"]);
 const DOMAIN_LABELS = Object.freeze({ play: "玩", food: "吃", stay: "住", transport: "行" });

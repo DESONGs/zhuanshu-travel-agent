@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { accessibilityFeaturesForWalkType, amapWalkTypeMetadata } from "../contracts/mobility-contract.mjs";
+import { accessibilityFeaturesForWalkType, amapWalkTypeMetadata } from "zhuanshu-travel-agent/contracts";
 
 const AMAP_PLACE_ENDPOINT = "https://restapi.amap.com/v5/place/text";
 const AMAP_PLACE_V3_ENDPOINT = "https://restapi.amap.com/v3/place/text";

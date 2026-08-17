@@ -11,7 +11,7 @@ import {
   recordOfferSnapshot,
   updateTripControlScope,
   validateTripCoherence,
-} from "../src/runtime/trip-runtime.mjs";
+} from "../dist/core/index.js";
 
 const clock = () => new Date("2026-08-13T08:00:00.000Z");
 

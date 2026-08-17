@@ -1,4 +1,5 @@
 import { Pool } from "pg";
+import { hydrateStoredTripState } from "zhuanshu-travel-agent/core";
 
 function repositoryError(code, details = {}) {
   const error = new Error(code);
@@ -8,11 +9,14 @@ function repositoryError(code, details = {}) {
 }
 
 function validateState(state, expectedTripId) {
-  if (!state || state.schemaVersion !== "trip-control-state-v1" || state.tripId !== expectedTripId) {
+  let validated;
+  try {
+    validated = hydrateStoredTripState(state);
+  } catch {
     throw repositoryError("invalid_stored_trip");
   }
-  if (!Number.isInteger(state.storageVersion) || state.storageVersion < 0) throw repositoryError("invalid_storage_version");
-  return state;
+  if (validated.tripId !== expectedTripId) throw repositoryError("invalid_stored_trip");
+  return validated;
 }
 
 export const POSTGRES_MIGRATION_SQL = `

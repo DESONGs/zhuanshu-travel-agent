@@ -1,4 +1,4 @@
-import { SOCIAL_ERROR_CODES } from "../runtime/trip-runtime.mjs";
+import { SOCIAL_ERROR_CODES } from "zhuanshu-travel-agent/contracts";
 
 export const PLATFORM_HOSTS = Object.freeze({
   xiaohongshu: ["xiaohongshu.com", "xhslink.com", "rednote.com"],

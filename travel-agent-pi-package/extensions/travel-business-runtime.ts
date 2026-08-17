@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { Type, type Static, type TSchema } from "typebox";
 import { TravelService } from "../../src/api/travel-service.mjs";
+import { TripBriefSchema, TripPatchProposalSchema, TravelerSchema } from "../src/contracts/index.js";
 
 const service = new TravelService();
 
@@ -31,20 +32,28 @@ const travelerProfileParameters = Type.Object({
   })),
 });
 
-function response(details: Record<string, unknown>) {
+function statusOf(details: unknown): unknown {
+  return details && typeof details === "object" ? Reflect.get(details, "status") : undefined;
+}
+
+function response(details: unknown) {
   return {
     content: [{ type: "text" as const, text: JSON.stringify(details, null, 2) }],
     details,
-    isError: details.status === "rejected" || details.status === "needs_rebase",
+    isError: statusOf(details) === "rejected" || statusOf(details) === "needs_rebase",
   };
 }
 
-function register(pi: ExtensionAPI, config: {
+function errorField(error: unknown, field: string): unknown {
+  return error && typeof error === "object" ? Reflect.get(error, field) : undefined;
+}
+
+function register<const Parameters extends TSchema>(pi: ExtensionAPI, config: {
   name: string;
   label: string;
   description: string;
-  parameters: ReturnType<typeof Type.Object>;
-  run: (params: any) => Promise<Record<string, unknown>>;
+  parameters: Parameters;
+  run: (params: Static<Parameters>) => Promise<unknown>;
 }) {
   pi.registerTool({
     name: config.name,
@@ -54,8 +63,8 @@ function register(pi: ExtensionAPI, config: {
     async execute(_id, params) {
       try {
         return response(await config.run(params));
-      } catch (error: any) {
-        return response({ status: "error", code: error?.code ?? "internal_error", details: error?.details ?? null });
+      } catch (error: unknown) {
+        return response({ status: "error", code: errorField(error, "code") ?? "internal_error", details: errorField(error, "details") ?? null });
       }
     },
   });
@@ -64,14 +73,14 @@ function register(pi: ExtensionAPI, config: {
 export default function (pi: ExtensionAPI) {
   register(pi, {
     name: "create_trip", label: "Create Trip", description: "Create the persistent shared state for one complete Travel V1 trip.",
-    parameters: Type.Object({ tripId: Type.Optional(Type.String()), brief: Type.Optional(Type.Any()), travelers: Type.Optional(Type.Array(Type.Any())) }),
+    parameters: Type.Object({ tripId: Type.Optional(Type.String()), brief: Type.Optional(TripBriefSchema), travelers: Type.Optional(Type.Array(Type.Partial(TravelerSchema))) }),
     run: (params) => service.createTrip(params),
   });
   register(pi, {
     name: "update_trip_scope", label: "Update Trip Scope", description: "Save newly understood traveler facts without inferring them from keywords or overwriting omitted facts.",
     parameters: Type.Object({
       tripId: Type.String(),
-      brief: Type.Optional(Type.Any()),
+      brief: Type.Optional(Type.Partial(TripBriefSchema)),
       travelerCount: Type.Optional(Type.Integer({ minimum: 1, maximum: 12 })),
       language: Type.Optional(Type.String()),
       foreignGuestRequired: Type.Optional(Type.Boolean()),
@@ -98,7 +107,7 @@ export default function (pi: ExtensionAPI) {
   });
   register(pi, {
     name: "propose_trip_change", label: "Propose Trip Change", description: "Stage a revisioned TripPatchProposal without changing the accepted plan.",
-    parameters: Type.Object({ tripId: Type.String(), proposal: Type.Any() }), run: (params) => service.proposeTripChange(params),
+    parameters: Type.Object({ tripId: Type.String(), proposal: TripPatchProposalSchema }), run: (params) => service.proposeTripChange(params),
   });
   register(pi, {
     name: "accept_trip_change", label: "Accept Trip Change", description: "Parent-only atomic commit of one staged proposal.",
@@ -120,11 +129,11 @@ export default function (pi: ExtensionAPI) {
   });
   register(pi, {
     name: "report_trip_disruption", label: "Report Trip Disruption", description: "Stage a bounded disruption patch for the affected neighborhood.",
-    parameters: Type.Object({ tripId: Type.String(), proposal: Type.Any() }), run: (params) => service.reportTripDisruption(params),
+    parameters: Type.Object({ tripId: Type.String(), proposal: TripPatchProposalSchema }), run: (params) => service.reportTripDisruption(params),
   });
   register(pi, {
     name: "submit_trip_feedback", label: "Submit Trip Feedback", description: "Record classified feedback without promoting it directly to public memory.",
-    parameters: Type.Object({ tripId: Type.String(), baseRevision: Type.Integer(), category: Type.String(), nodeId: Type.Optional(Type.String()), text: Type.String() }),
+    parameters: Type.Object({ tripId: Type.String(), baseRevision: Type.Integer(), category: Type.Union([Type.Literal("personal_experience"), Type.Literal("preference_change"), Type.Literal("fact_correction"), Type.Literal("unverified_public_info")]), nodeId: Type.Optional(Type.String()), text: Type.String() }),
     run: (params) => service.submitTripFeedback(params),
   });
 }

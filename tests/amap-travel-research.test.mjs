@@ -6,7 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { TravelService } from "../src/api/travel-service.mjs";
 import { AmapTravelResearchProvider, createAmapTravelResearchProvider, signedAmapParameters } from "../src/providers/amap-travel-research.mjs";
-import { TripStore } from "../travel-agent-pi-package/src/runtime/trip-store.mjs";
+import { TripStore } from "zhuanshu-travel-agent/core";
 
 const POIS = {
   "110000|140000": [

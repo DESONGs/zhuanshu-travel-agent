@@ -33,7 +33,7 @@ test("user model choices prioritize DeepSeek V4 Flash, then Pro, then Kimi K3", 
   assert.equal(status.modelSelection.options.every((option) => option.available), true);
 });
 
-test("unimplemented channel credentials cannot make an adapter appear connected", () => {
+test("channel status is derived from the implemented auth contract without exposing legacy credentials", () => {
   const status = providerStatusSummary({
     WECHAT_APP_ID: "legacy-app",
     WECHAT_APP_SECRET: "legacy-secret",
@@ -42,11 +42,39 @@ test("unimplemented channel credentials cannot make an adapter appear connected"
     TRAVEL_SOCIAL_WORKER_URL: "https://legacy.example",
   });
   assert.deepEqual(status.channels, {
-    wechat: "blocked_pending_auth_adapter",
-    alipay: "blocked_pending_auth_adapter",
-    apple: "blocked_pending_auth_adapter",
+    wechat: "blocked_missing_secure_session",
+    alipay: "blocked_missing_secure_session",
+    apple: "blocked_missing_secure_session",
   });
   assert.equal(status.data.socialReadWorker, "blocked_pending_isolated_worker");
+});
+
+test("configured login adapters remain pending until a real account smoke passes", () => {
+  const common = {
+    TRAVEL_AGENT_PUBLIC_ORIGIN: "https://travel.example.com",
+    TRAVEL_AGENT_SESSION_SECRET: "s".repeat(32),
+    TRAVEL_AGENT_AUTH_STATE_SECRET: "a".repeat(32),
+  };
+  const status = providerStatusSummary({
+    ...common,
+    WECHAT_OPEN_APP_ID: "wechat-web",
+    WECHAT_OPEN_APP_SECRET: "wechat-secret",
+    WECHAT_MINIAPP_APP_ID: "wechat-mini",
+    WECHAT_MINIAPP_APP_SECRET: "wechat-mini-secret",
+    ALIPAY_APP_ID: "alipay-app",
+    ALIPAY_PRIVATE_KEY_PATH: "/run/secrets/alipay-private.pem",
+    ALIPAY_PUBLIC_KEY_PATH: "/run/secrets/alipay-public.pem",
+    APPLE_CLIENT_ID: "com.example.travel.web",
+    APPLE_TEAM_ID: "TEAM123",
+    APPLE_KEY_ID: "KEY123",
+    APPLE_PRIVATE_KEY_PATH: "/run/secrets/apple.p8",
+  });
+  assert.deepEqual(status.channels, {
+    wechat: "web_and_miniapp_credentials_configured_pending_smoke",
+    alipay: "credential_configured_pending_smoke",
+    apple: "credential_configured_pending_smoke",
+  });
+  assert.equal(JSON.stringify(status).includes("wechat-secret"), false);
 });
 
 test("inventory status distinguishes audited FlyAI trial access from production authorization", () => {

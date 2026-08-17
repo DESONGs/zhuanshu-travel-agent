@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { TripStore } from "../travel-agent-pi-package/src/runtime/trip-store.mjs";
+import { TripStore } from "zhuanshu-travel-agent/core";
 
 test("trip persistence keeps localized destination names in state rather than using them as filesystem identifiers", () => {
   const store = new TripStore({ rootDir: "/private/tmp/travel-agent-trip-id-contract" });

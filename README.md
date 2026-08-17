@@ -332,6 +332,16 @@ npx cap copy android
 
 Fixture 通过只能证明合同正确；Provider 只有完成真实账号、真实网络和只读隔离 smoke 后，才能称为已接通。
 
+### 验证 npm 包
+
+项目同时包含一个可独立发布的 `zhuanshu-travel-agent` ESM 包：
+
+```bash
+npm run release:check
+```
+
+它通过 subpath exports 提供 `core`、`contracts`、`providers`、`mcp` 和 `pi`。发布门会检查严格 TypeScript、现有产品测试与构建、publint、pack 内容，并把实际 tgz 安装到临时目录后编译 consumer、让 Pi `0.84.1` 加载核心工具。Web、HTTP 部署服务器、原生和小程序、ENV、运行数据、Fixture 与 Wiki 不会进入 tarball。
+
 ## 项目结构
 
 ```text

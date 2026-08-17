@@ -4,10 +4,19 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "useUnknownInCatchVariables": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
     "skipLibCheck": true,
-    "allowJs": false,
+    "allowJs": true,
+    "checkJs": false,
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["extensions/**/*.ts", "../src/**/*.d.mts"]
+  "include": ["src/**/*.ts", "src/runtime/trip-runtime.mjs", "extensions/**/*.ts"],
+  "exclude": ["dist", "node_modules"]
 }

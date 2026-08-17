@@ -7,7 +7,7 @@ import { TravelService } from "../src/api/travel-service.mjs";
 import { createAuthService } from "../src/http/auth-providers.mjs";
 import { createHttpApp } from "../src/http/app.mjs";
 import { authenticatedUserId, SignedSessionStore } from "../src/http/session.mjs";
-import { TripStore } from "../travel-agent-pi-package/src/runtime/trip-store.mjs";
+import { TripStore } from "zhuanshu-travel-agent/core";
 
 const fixedClock = () => new Date("2026-08-17T08:00:00.000Z");
 const sessionSecret = "session-secret-for-tests-only-1234567890";

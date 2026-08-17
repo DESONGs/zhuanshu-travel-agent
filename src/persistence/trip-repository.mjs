@@ -1,4 +1,4 @@
-import { TripStore } from "../../travel-agent-pi-package/src/runtime/trip-store.mjs";
+import { TripStore } from "zhuanshu-travel-agent/core";
 import { PostgresTripRepository } from "./postgres-trip-repository.mjs";
 
 export function createTripRepository({ databaseUrl = process.env.DATABASE_URL, rootDir } = {}) {

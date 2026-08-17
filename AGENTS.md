@@ -28,6 +28,7 @@
 npm test
 npm run typecheck
 npm run check
+npm run release:check
 npm run miniapp:weapp
 npm run miniapp:alipay
 npx cap copy ios
@@ -35,6 +36,8 @@ npx cap copy android
 ```
 
 当前开发机必须使用 Node `>=22.19.0`；较低版本可以阅读或做非 Pi 的纯 Runtime 检查，但不能作为 Pi 可加载的完成证据。
+
+`npm run release:check` 是 `zhuanshu-travel-agent` npm 包的发布门：除产品检查外，还必须通过 publint、`npm pack --dry-run`、实际 tgz 临时安装、严格 consumer TypeScript 编译和 Pi `0.84.1` extension load。不要提交 `travel-agent-pi-package/dist/` 或 tgz；它们必须由发布门重建。
 
 ## 跨端与运行环境
 

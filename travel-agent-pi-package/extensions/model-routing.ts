@@ -3,11 +3,20 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Type } from "typebox";
+import { Value } from "typebox/value";
 
 const packageDir = dirname(dirname(fileURLToPath(import.meta.url)));
 
+const route = Type.Object({ purpose: Type.String() }, { additionalProperties: true });
+const modelRouting = Type.Object({
+  defaultRoute: Type.String(),
+  routes: Type.Object({ deliberation: route, extraction: route, verification: route, multimodal: route }),
+}, { additionalProperties: true });
+
 function routes() {
-  return JSON.parse(readFileSync(join(packageDir, "runtime", "model-routing.json"), "utf8")) as { defaultRoute: string; routes: Record<string, unknown> };
+  const value: unknown = JSON.parse(readFileSync(join(packageDir, "runtime", "model-routing.json"), "utf8"));
+  if (!Value.Check(modelRouting, value)) throw new Error("invalid_model_routing_configuration");
+  return value;
 }
 
 export default function (pi: ExtensionAPI) {

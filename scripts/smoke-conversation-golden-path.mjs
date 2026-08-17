@@ -7,7 +7,7 @@ import { TravelService } from "../src/api/travel-service.mjs";
 import { loadTravelRuntimeEnv } from "../src/http/runtime-env.mjs";
 import { FileConversationRepository } from "../src/persistence/conversation-repository.mjs";
 import { createTravelResearchProvider } from "../src/providers/travel-research-provider.mjs";
-import { TripStore } from "../travel-agent-pi-package/src/runtime/trip-store.mjs";
+import { TripStore } from "zhuanshu-travel-agent/core";
 
 const env = await loadTravelRuntimeEnv();
 assert.equal(env.TRAVEL_AGENT_MODEL_PROVIDER, "deepseek", "DeepSeek reasoning route is not configured");

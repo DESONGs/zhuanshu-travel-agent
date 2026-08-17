@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { AmapTravelResearchProvider } from "../src/providers/amap-travel-research.mjs";
-import { normalizeTripMobility } from "../src/contracts/mobility-contract.mjs";
+import { normalizeTripMobility } from "zhuanshu-travel-agent/contracts";
 
 test("AMap mobility turns selected places into bounded walking, transit and taxi alternatives without claiming real-time arrival", async () => {
   const calls = [];
