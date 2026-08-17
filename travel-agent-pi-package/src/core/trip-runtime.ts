@@ -1,4 +1,4 @@
-import * as runtime from "../runtime/trip-runtime.mjs";
+import * as runtime from "../runtime/trip-runtime-implementation.js";
 import {
   FOUR_DOMAINS,
   SOCIAL_ERROR_CODES,
@@ -32,12 +32,6 @@ export { FOUR_DOMAINS, SOCIAL_ERROR_CODES };
 
 export type Clock = Date | string | number | (() => Date | string | number);
 export interface RuntimeOptions { clock?: Clock }
-
-function invoke(name: string, ...args: unknown[]): unknown {
-  const implementation: unknown = Reflect.get(runtime, name);
-  if (typeof implementation !== "function") throw new Error(`missing_trip_runtime_export:${name}`);
-  return Reflect.apply(implementation, undefined, args);
-}
 
 export interface CreateTripControlStateInput {
   tripId?: string;
@@ -86,69 +80,69 @@ export interface TripFeedbackInput {
 }
 
 export function createTripControlState(input: CreateTripControlStateInput = {}): TripState {
-  return assertTripState(invoke("createTripControlState", input));
+  return assertTripState(runtime.createTripControlState(input));
 }
 
 export function applyWeatherObservation(state: TripState, observation: object, options: RuntimeOptions = {}): TripState {
-  return assertTripState(invoke("applyWeatherObservation", state, observation, options));
+  return assertTripState(runtime.applyWeatherObservation(state, observation as Record<string, unknown>, options));
 }
 
 export function applyMobilityObservation(state: TripState, observation: MobilityObservation, options: RuntimeOptions = {}): TripState {
-  return assertTripState(invoke("applyMobilityObservation", state, observation, options));
+  return assertTripState(runtime.applyMobilityObservation(state, observation, options));
 }
 
 export function updateTripControlScope(state: TripState, input: UpdateTripScopeInput = {}, options: RuntimeOptions = {}): TripState {
-  return assertTripState(invoke("updateTripControlScope", state, input, options));
+  return assertTripState(runtime.updateTripControlScope(state, input, options));
 }
 
 export function addDecisionNode(state: TripState, input: DecisionNodeInput, options: RuntimeOptions = {}): TripState {
-  return assertTripState(invoke("addDecisionNode", state, input, options));
+  return assertTripState(runtime.addDecisionNode(state, input, options));
 }
 
 export function addDecisionEdge(state: TripState, input: DecisionEdge): TripState {
-  return assertTripState(invoke("addDecisionEdge", state, input));
+  return assertTripState(runtime.addDecisionEdge(state, input));
 }
 
 export function addEvidenceClaim(state: TripState, input: EvidenceClaimInput, options: RuntimeOptions = {}): TripState {
-  return assertTripState(invoke("addEvidenceClaim", state, input, options));
+  return assertTripState(runtime.addEvidenceClaim(state, input, options));
 }
 
 export function recordOfferSnapshot(state: TripState, input: OfferSnapshotInput, options: RuntimeOptions = {}): TripState {
-  return assertTripState(invoke("recordOfferSnapshot", state, input, options));
+  return assertTripState(runtime.recordOfferSnapshot(state, input, options));
 }
 
 export function computeDirtySet(state: TripState, changedNodeIds: string[]): string[] {
-  const result = invoke("computeDirtySet", state, changedNodeIds);
+  const result = runtime.computeDirtySet(state, changedNodeIds);
   if (!Array.isArray(result) || result.some((value) => typeof value !== "string")) throw new Error("invalid_dirty_set");
   return result;
 }
 
 export function enqueueAffectedTaskChains(state: TripState, changedNodeIds: string[], options: RuntimeOptions = {}): TripState {
-  return assertTripState(invoke("enqueueAffectedTaskChains", state, changedNodeIds, options));
+  return assertTripState(runtime.enqueueAffectedTaskChains(state, changedNodeIds, options));
 }
 
 export function buildTravelContextPack(state: TripState, request: TravelContextRequest): TravelContextPack {
-  return assertSchema(TravelContextPackSchema, invoke("buildTravelContextPack", state, request), "invalid_travel_context_pack");
+  return assertSchema(TravelContextPackSchema, runtime.buildTravelContextPack(state, request), "invalid_travel_context_pack");
 }
 
 export function needsContext(input: NeedsContextInput): NeedsContext {
-  return assertSchema(NeedsContextSchema, invoke("needsContext", input), "invalid_needs_context");
+  return assertSchema(NeedsContextSchema, runtime.needsContext(input), "invalid_needs_context");
 }
 
 export function validateTripPatch(state: TripState, proposal: TripPatchProposal, options: RuntimeOptions = {}): TripValidation {
-  return assertSchema(TripValidationSchema, invoke("validateTripPatch", state, proposal, options), "invalid_trip_validation");
+  return assertSchema(TripValidationSchema, runtime.validateTripPatch(state, proposal, options), "invalid_trip_validation");
 }
 
 export function validateTripCoherence(state: TripState): TripQa {
-  return assertSchema(TripQaSchema, invoke("validateTripCoherence", state), "invalid_trip_qa");
+  return assertSchema(TripQaSchema, runtime.validateTripCoherence(state), "invalid_trip_qa");
 }
 
 export function commitTripPatch(state: TripState, proposal: TripPatchProposal, options: RuntimeOptions = {}): TripCommitResult {
-  return assertSchema(TripCommitResultSchema, invoke("commitTripPatch", state, proposal, options), "invalid_trip_commit_result");
+  return assertSchema(TripCommitResultSchema, runtime.commitTripPatch(state, proposal, options), "invalid_trip_commit_result");
 }
 
 export function stageTripPatch(state: TripState, proposal: TripPatchProposal, options: RuntimeOptions = {}): TripProposalResult {
-  return assertSchema(TripProposalResultSchema, invoke("stageTripPatch", state, proposal, options), "invalid_trip_proposal_result");
+  return assertSchema(TripProposalResultSchema, runtime.stageTripPatch(state, proposal, options), "invalid_trip_proposal_result");
 }
 
 export function acceptStagedTripPatch(
@@ -156,17 +150,17 @@ export function acceptStagedTripPatch(
   proposalId: string,
   options: RuntimeOptions & { selections?: Partial<Record<(typeof FOUR_DOMAINS)[number], string>> } = {},
 ): TripCommitResult {
-  return assertSchema(TripCommitResultSchema, invoke("acceptStagedTripPatch", state, proposalId, options), "invalid_trip_commit_result");
+  return assertSchema(TripCommitResultSchema, runtime.acceptStagedTripPatch(state, proposalId, options), "invalid_trip_commit_result");
 }
 
 export function rejectStagedTripPatch(state: TripState, proposalId: string, options: RuntimeOptions = {}): TripProposalResult {
-  return assertSchema(TripProposalResultSchema, invoke("rejectStagedTripPatch", state, proposalId, options), "invalid_trip_proposal_result");
+  return assertSchema(TripProposalResultSchema, runtime.rejectStagedTripPatch(state, proposalId, options), "invalid_trip_proposal_result");
 }
 
 export function recordBookingConfirmation(state: TripState, input: BookingConfirmationInput, options: RuntimeOptions = {}): TripCommitResult {
-  return assertSchema(TripCommitResultSchema, invoke("recordBookingConfirmation", state, input, options), "invalid_trip_commit_result");
+  return assertSchema(TripCommitResultSchema, runtime.recordBookingConfirmation(state, input, options), "invalid_trip_commit_result");
 }
 
 export function recordTripFeedback(state: TripState, input: TripFeedbackInput, options: RuntimeOptions = {}): TripCommitResult {
-  return assertSchema(TripCommitResultSchema, invoke("recordTripFeedback", state, input, options), "invalid_trip_commit_result");
+  return assertSchema(TripCommitResultSchema, runtime.recordTripFeedback(state, input, options), "invalid_trip_commit_result");
 }

@@ -6,6 +6,19 @@ import { hydrateStoredTripState } from "./trip-state-hydration.js";
 
 const SAFE_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
 
+function storageKey(id: string): string {
+  return encodeURIComponent(id);
+}
+
+function idFromStorageKey(key: string): string | null {
+  try {
+    const id = decodeURIComponent(key);
+    return SAFE_ID.test(id) ? id : null;
+  } catch {
+    return null;
+  }
+}
+
 class StorageError extends Error {
   readonly code: string;
 
@@ -54,7 +67,7 @@ export class TripStore implements TripRepository {
 
   pathFor(tripId: string): string {
     if (!SAFE_ID.test(tripId)) throw storageError("invalid_trip_id");
-    return join(this.rootDir, `${tripId}.json`);
+    return join(this.rootDir, `${storageKey(tripId)}.json`);
   }
 
   async initialize(): Promise<void> {
@@ -80,6 +93,7 @@ export class TripStore implements TripRepository {
     const path = this.pathFor(state.tripId);
     await this.initialize();
     return this.withWriteQueue(state.tripId, async () => {
+      if (await this.get(state.tripId)) throw storageError("trip_already_exists");
       const persisted = structuredClone(state);
       persisted.storageVersion = 0;
       let handle;
@@ -101,6 +115,14 @@ export class TripStore implements TripRepository {
     try {
       return validateStoredState(JSON.parse(await readFile(path, "utf8")), tripId);
     } catch (error) {
+      const legacyPath = join(this.rootDir, `${tripId}.json`);
+      if (errorCode(error) === "ENOENT" && process.platform !== "win32" && path !== legacyPath) {
+        try {
+          return validateStoredState(JSON.parse(await readFile(legacyPath, "utf8")), tripId);
+        } catch (legacyError) {
+          if (errorCode(legacyError) !== "ENOENT") throw legacyError;
+        }
+      }
       if (errorCode(error) === "ENOENT") return null;
       if (error instanceof SyntaxError) throw storageError("invalid_stored_trip");
       throw error;
@@ -110,9 +132,11 @@ export class TripStore implements TripRepository {
   async list(): Promise<TripState[]> {
     await this.initialize();
     const entries = await readdir(this.rootDir, { withFileTypes: true });
-    const states = await Promise.all(entries
-      .filter((entry) => entry.isFile() && entry.name.endsWith(".json") && SAFE_ID.test(entry.name.slice(0, -5)))
-      .map((entry) => this.get(entry.name.slice(0, -5))));
+    const tripIds = [...new Set(entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+      .map((entry) => idFromStorageKey(entry.name.slice(0, -5)))
+      .filter((tripId): tripId is string => tripId !== null))];
+    const states = await Promise.all(tripIds.map((tripId) => this.get(tripId)));
     return states.filter((state): state is TripState => state !== null).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }
 
@@ -127,7 +151,7 @@ export class TripStore implements TripRepository {
 
       const persisted = structuredClone(state);
       persisted.storageVersion = current.storageVersion + 1;
-      const tempPath = join(this.rootDir, `.${tripId}.${randomUUID()}.tmp`);
+      const tempPath = join(this.rootDir, `.${storageKey(tripId)}.${randomUUID()}.tmp`);
       let handle;
       try {
         handle = await open(tempPath, "wx", 0o600);

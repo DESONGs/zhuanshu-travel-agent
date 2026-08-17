@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { transitSegmentFromNode } from "zhuanshu-travel-agent/contracts";
+import { transitSegmentFromNode } from "../travel-agent-pi-package/src/contracts/public.ts";
 
 test("stored transit contract rehydrates normalized optional fields", () => {
   const segment = transitSegmentFromNode({

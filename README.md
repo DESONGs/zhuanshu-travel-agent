@@ -103,14 +103,20 @@ npm install --ignore-scripts
 
 ### 2. 创建本地配置
 
-复制示例文件：
+复制示例文件。macOS/Linux：
 
 ```bash
 cp .env.example env_travel.local
 chmod 600 env_travel.local
 ```
 
-API 启动时会自动读取项目根目录的 `env_travel.local`。如果文件权限比 `0600` 更宽，服务会拒绝加载，避免其他本机用户读取密钥。
+Windows PowerShell：
+
+```powershell
+Copy-Item .env.example env_travel.local
+```
+
+API 启动时会自动读取项目根目录的 `env_travel.local`。macOS/Linux 要求权限为 `0600`；Windows 使用当前账号的文件 ACL，不错误套用 POSIX 权限位。该文件已被 Git 忽略，仍应只允许当前开发账号读取。
 
 先配置最小本地开发环境：
 
@@ -293,9 +299,7 @@ npm run native:sync
 
 ## 作为 MCP 使用
 
-```bash
-TRAVEL_AGENT_DATA_DIR=/absolute/path/to/data npm run mcp
-```
+先在 `env_travel.local` 中填写 `TRAVEL_AGENT_DATA_DIR`，再运行 `npm run mcp`。这种方式在 Windows 与 macOS 上一致，不依赖某一种 Shell 的临时环境变量语法。
 
 MCP 使用与 Web 相同的旅行内核，主要提供：
 
@@ -332,15 +336,16 @@ npx cap copy android
 
 Fixture 通过只能证明合同正确；Provider 只有完成真实账号、真实网络和只读隔离 smoke 后，才能称为已接通。
 
-### 验证 npm 包
+### 源码运行与构建产物
 
-项目同时包含一个可独立发布的 `zhuanshu-travel-agent` ESM 包：
+仓库当前按内部产品开发方式运行，不要求先生成或提交 `travel-agent-pi-package/dist/`：
 
-```bash
-npm run release:check
-```
+- `npm run api`、`npm run mcp` 和 `npm test` 通过锁定的 `tsx` loader 直接加载 TypeScript 源码；
+- Pi 从 `travel-agent-pi-package/extensions/*.ts` 和 `plugins/travel-agent/skills/` 加载产品能力；
+- `npm run library:build` 只生成可删除、可重建的 `dist/`，用于检查编译输出或未来发包，不是本地启动前置条件；
+- `.github/workflows/ci.yml` 会在 Windows、macOS 和 Linux 的 Node `22.19.0` 干净环境中执行 `npm ci --ignore-scripts` 与 `npm run check`。
 
-它通过 subpath exports 提供 `core`、`contracts`、`providers`、`mcp` 和 `pi`。发布门会检查严格 TypeScript、现有产品测试与构建、publint、pack 内容，并把实际 tgz 安装到临时目录后编译 consumer、让 Pi `0.84.1` 加载核心工具。Web、HTTP 部署服务器、原生和小程序、ENV、运行数据、Fixture 与 Wiki 不会进入 tarball。
+因此，把仓库克隆到另一台 Windows 或 Mac 后，只需安装锁文件依赖并配置自己的 `env_travel.local`；不能复制旧电脑的 `dist/`、密钥或运行数据来冒充可运行环境。npm 发包保持延期，等公开 API 和完整 Pi package 形态稳定后再单独启用发布门。
 
 ## 项目结构
 
@@ -351,7 +356,8 @@ src/providers/                    高德、天气、飞猪、途牛等 Provider
 src/persistence/                  本地 JSON 与 PostgreSQL repository
 src/web/                          Web/PWA 产品界面
 src/mcp/                          stdio MCP Server
-travel-agent-pi-package/          Pi Runtime、状态与提交规则
+travel-agent-pi-package/src/      TypeScript 合同、旅行核心 Runtime、持久化与 MCP 边界
+travel-agent-pi-package/extensions/ Pi 产品工具入口；只暴露业务级合同，不把完整 TripState 放入模型工具参数
 plugins/travel-agent/skills/      Travel Agent 语义 Skills 唯一来源
 apps/miniapp/                     微信与支付宝原生小程序
 wiki/current/                     当前产品和架构规范

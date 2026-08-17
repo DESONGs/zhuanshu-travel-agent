@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { addDecisionNode, createTripControlState, TripStore } from "../dist/core/index.js";
+import { addDecisionNode, createTripControlState, hydrateStoredTripState, TripStore } from "../src/core/index.ts";
 
 test("persisted trip-control-state-v1 snapshots hydrate additive fields without changing decisions", async () => {
   const rootDir = await mkdtemp(join(tmpdir(), "travel-trip-hydration-"));
@@ -27,4 +27,10 @@ test("persisted trip-control-state-v1 snapshots hydrate additive fields without 
   assert.deepEqual(loaded.travelers[0].careNeeds, {});
   assert.deepEqual(loaded.environment, { weather: null, mobility: null, updatedAt: null });
   assert.equal(loaded.brief.totalBudget, null);
+});
+
+test("hydration rejects malformed persisted collections instead of silently replacing user data", () => {
+  const malformed = createTripControlState({ tripId: "trip_malformed" });
+  malformed.nodes = { lost: "candidate" };
+  assert.throws(() => hydrateStoredTripState(malformed), /invalid_stored_trip/);
 });

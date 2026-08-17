@@ -28,7 +28,6 @@
 npm test
 npm run typecheck
 npm run check
-npm run release:check
 npm run miniapp:weapp
 npm run miniapp:alipay
 npx cap copy ios
@@ -37,11 +36,14 @@ npx cap copy android
 
 当前开发机必须使用 Node `>=22.19.0`；较低版本可以阅读或做非 Pi 的纯 Runtime 检查，但不能作为 Pi 可加载的完成证据。
 
-`npm run release:check` 是 `zhuanshu-travel-agent` npm 包的发布门：除产品检查外，还必须通过 publint、`npm pack --dry-run`、实际 tgz 临时安装、严格 consumer TypeScript 编译和 Pi `0.84.1` extension load。不要提交 `travel-agent-pi-package/dist/` 或 tgz；它们必须由发布门重建。
+内部开发直接运行 TypeScript 源码，不依赖也不提交 `travel-agent-pi-package/dist/`。`npm run library:build` 只检查可重建输出，不是 API、MCP、测试或 Pi package 的启动前置条件。npm 发布尚未启用，不得把 pack 成功表述为产品交付。
+
+核心合同、Trip Runtime、TripStore、Mobility、Transit、MCP 权限和 Pi 产品边界使用严格 TypeScript；HTTP、Auth、具体 Provider、对话编排和前端可保留 JavaScript。新增核心业务规则不得回写到未检查的 `.mjs` 内核。
 
 ## 跨端与运行环境
 
 - `src/http/`、`src/persistence/` 和 `src/api/TravelService` 是 Web、原生、小程序与 MCP 共用的服务边界；不得为客户端复制行程提交规则。
+- 源码层只能相对导入 `travel-agent-pi-package/src/`；不得通过 workspace 包名绕到未生成的 `dist/`。Windows/macOS/Linux 的干净克隆必须都能在 `npm ci --ignore-scripts` 后运行 `npm run check`。
 - 生产设置 `DATABASE_URL` 以启用 PostgreSQL。未设置时的原子 JSON repository 只用于本地开发与合同验证。
 - Web 开发代理到 `http://127.0.0.1:8797`；原生使用 `VITE_TRAVEL_API_BASE_URL`，两个原生小程序在各自 `app.js` 使用已登记的 HTTPS API。所有跨源请求都必须在 `TRAVEL_AGENT_CORS_ORIGINS` 逐项允许。
 - Google、微信、支付宝和 Apple 的生产登录必须完成平台授权并通过真实回调后才可签发会话；Google 是 Web 主入口，微信/支付宝 Web 使用官方扫码授权页，小程序只交换平台一次性 code。本地称呼输入仅限显式开发模式，不能冒充生产邮箱登录。配置未完成时保持 `auth_provider_not_configured`，不得伪造成功登录。

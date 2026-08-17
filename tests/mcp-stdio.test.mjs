@@ -11,10 +11,13 @@ test("real stdio MCP server exposes and executes the Travel V1 business contract
   const client = new Client({ name: "travel-mcp-test", version: "1.0.0" }, { capabilities: {} });
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: [resolve("src/mcp/server.mjs")],
+    args: ["--import", "tsx", resolve("src/mcp/server.mjs")],
     cwd: process.cwd(),
     env: {
-      ...process.env,
+      NODE_ENV: "test",
+      ...(process.env.SYSTEMROOT ? { SYSTEMROOT: process.env.SYSTEMROOT } : {}),
+      ...(process.env.COMSPEC ? { COMSPEC: process.env.COMSPEC } : {}),
+      ...(process.env.PATHEXT ? { PATHEXT: process.env.PATHEXT } : {}),
       TRAVEL_AGENT_DATA_DIR: dataDir,
       TRAVEL_AGENT_ENV_FILE: join(dataDir, "isolated-test.env"),
       AMAP_API_KEY: "",

@@ -9,7 +9,7 @@ import { TravelService } from "../src/api/travel-service.mjs";
 import { createHttpApp } from "../src/http/app.mjs";
 import { FileConversationRepository } from "../src/persistence/conversation-repository.mjs";
 import { InMemorySessionStore } from "../src/http/session.mjs";
-import { TripStore } from "zhuanshu-travel-agent/core";
+import { TripStore } from "../travel-agent-pi-package/src/core/index.ts";
 
 async function httpFixture() {
   const rootDir = await mkdtemp(join(tmpdir(), "travel-http-"));

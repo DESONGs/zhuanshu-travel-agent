@@ -6,8 +6,17 @@ function objectValue(value: unknown): UnknownObject | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as UnknownObject : null;
 }
 
-function arrayValue(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
+function optionalObject(value: unknown): UnknownObject {
+  if (value === undefined) return {};
+  const object = objectValue(value);
+  if (!object) throw new Error("invalid_stored_trip");
+  return object;
+}
+
+function optionalArray(value: unknown): unknown[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new Error("invalid_stored_trip");
+  return value;
 }
 
 /**
@@ -20,11 +29,11 @@ export function hydrateStoredTripState(value: unknown): TripState {
   if (!source || source.schemaVersion !== "trip-control-state-v1") throw new Error("invalid_stored_trip");
   const next = structuredClone(source);
 
-  const brief = objectValue(next.brief) ?? {};
+  const brief = optionalObject(next.brief);
   next.brief = brief;
 
-  next.travelers = arrayValue(next.travelers).map((travelerValue, index) => {
-    const traveler = objectValue(travelerValue) ?? {};
+  next.travelers = optionalArray(next.travelers).map((travelerValue, index) => {
+    const traveler = optionalObject(travelerValue);
     return {
       ...traveler,
       travelerId: traveler.travelerId ?? `traveler_${index + 1}`,
@@ -32,36 +41,36 @@ export function hydrateStoredTripState(value: unknown): TripState {
       relationship: traveler.relationship ?? null,
       role: traveler.role ?? "traveler",
       language: traveler.language ?? "zh-CN",
-      hardConstraints: arrayValue(traveler.hardConstraints),
-      softPreferences: arrayValue(traveler.softPreferences),
-      careNeeds: objectValue(traveler.careNeeds) ?? {},
-      operability: objectValue(traveler.operability) ?? {},
+      hardConstraints: optionalArray(traveler.hardConstraints),
+      softPreferences: optionalArray(traveler.softPreferences),
+      careNeeds: optionalObject(traveler.careNeeds),
+      operability: optionalObject(traveler.operability),
     };
   });
 
-  next.nodes = arrayValue(next.nodes).map((nodeValue) => {
-    const node = objectValue(nodeValue) ?? {};
-    return { ...node, media: arrayValue(node.media) };
+  next.nodes = optionalArray(next.nodes).map((nodeValue) => {
+    const node = optionalObject(nodeValue);
+    return { ...node, media: optionalArray(node.media) };
   });
-  next.edges = arrayValue(next.edges);
-  next.dirtySet = arrayValue(next.dirtySet);
-  next.openDecisions = arrayValue(next.openDecisions);
-  next.pendingProposals = arrayValue(next.pendingProposals);
-  next.proposalHistory = arrayValue(next.proposalHistory);
-  next.feedbackLedger = arrayValue(next.feedbackLedger);
-  next.fulfillmentLedger = arrayValue(next.fulfillmentLedger);
-  next.fulfillmentEvents = arrayValue(next.fulfillmentEvents);
-  next.changeJournal = arrayValue(next.changeJournal);
+  next.edges = optionalArray(next.edges);
+  next.dirtySet = optionalArray(next.dirtySet);
+  next.openDecisions = optionalArray(next.openDecisions);
+  next.pendingProposals = optionalArray(next.pendingProposals);
+  next.proposalHistory = optionalArray(next.proposalHistory);
+  next.feedbackLedger = optionalArray(next.feedbackLedger);
+  next.fulfillmentLedger = optionalArray(next.fulfillmentLedger);
+  next.fulfillmentEvents = optionalArray(next.fulfillmentEvents);
+  next.changeJournal = optionalArray(next.changeJournal);
 
-  const queues = objectValue(next.taskQueues) ?? {};
-  next.taskQueues = Object.fromEntries(FOUR_DOMAINS.map((domain) => [domain, arrayValue(queues[domain])]));
-  const evidence = objectValue(next.evidence) ?? {};
+  const queues = optionalObject(next.taskQueues);
+  next.taskQueues = Object.fromEntries(FOUR_DOMAINS.map((domain) => [domain, optionalArray(queues[domain])]));
+  const evidence = optionalObject(next.evidence);
   next.evidence = {
-    contentItems: arrayValue(evidence.contentItems),
-    claims: arrayValue(evidence.claims),
-    entities: arrayValue(evidence.entities),
+    contentItems: optionalArray(evidence.contentItems),
+    claims: optionalArray(evidence.claims),
+    entities: optionalArray(evidence.entities),
   };
-  const environment = objectValue(next.environment) ?? {};
+  const environment = optionalObject(next.environment);
   next.environment = {
     ...environment,
     weather: environment.weather ?? null,

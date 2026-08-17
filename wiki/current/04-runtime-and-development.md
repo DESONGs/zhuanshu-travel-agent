@@ -4,13 +4,13 @@
 
 本项目以参考项目 `DESONGs/assignment-agent` 的固定提交 `0602f134f65052f7617d417a221f7d31d29746ef` 为模式来源，保持 Pi `0.84.1`、`pi-subagents@0.46.0`、`@quintinshaw/pi-dynamic-workflows@3.5.1`。迁移的通用概念是 Planner、Capability Registry、Policy、Observability、模型路由、有界委派与 Dynamic Workflow 装载；会议领域代码没有复制。
 
-`travel-agent-pi-package/` 的旅行专属 Runtime 已实现，并开始采用核心优先的 TypeScript 迁移：
+`travel-agent-pi-package/` 的旅行专属 Runtime 已实现，并采用核心 TypeScript、外围 JavaScript 的明确边界：
 
 - `src/contracts/*.ts`：TypeBox Schema 与 `Static` 类型的单一合同源，覆盖 Trip State、Traveler、Decision/Evidence、Patch、Context、QA、Mobility、Transit 和 ProviderResult；构建时派生 JSON Schema。
-- `src/core/`：严格 TypeScript 的 TripStore、Mobility、Transit、TravelService/Persistence 接口，以及经过 Runtime Schema 校验的 Trip Runtime 公共入口。
-- `src/runtime/trip-runtime.mjs`：仍承载原有 Trip State、Decision Graph、dirty set、Context Pack、Patch validate/commit 与旅行 QA 实现；它是包内不可导出的受校验迁移桥，不再拥有手写 `.d.mts`。
+- `src/core/`：严格 TypeScript 的 TripStore、TravelService/Persistence 接口，以及经过 Runtime Schema 校验的 Trip Runtime 公共入口。
+- `src/runtime/trip-runtime-implementation.ts`：Trip State、Decision Graph、dirty set、Context Pack、Patch validate/commit 与旅行 QA 的 TypeScript 实现；动态 Provider/持久化 JSON 只在这一内部归一化边界进入，公共返回值继续经过 TypeBox 校验。
 - `src/mcp/`、`src/providers/`、`src/pi/`：MCP 权限合同、ProviderResult discriminated union 和不含 `Type.Any` 的核心 Pi tools。
-- `extensions/`：Pi tools，覆盖 Planner、Registry、Policy、Observability、模型路由、State、Context、Patch、约束和社交 Worker 合同；核心参数复用同一 TypeBox Schema。
+- `extensions/`：Pi 产品工具默认只加载 Planner、Registry、Policy、Observability、模型路由、TravelService 业务接口和社交 Worker 合同。完整 TripState、低层 commit 与重复 QA Schema 不直接暴露给模型；父 Agent 通过持久化业务接口接受方案。
 - `plugins/travel-agent/skills/`：22 个只返回候选、证据、天气评估或提案的语义 Skills，Pi package 直接装载唯一目录。
 - `runtime/`：Capability Registry、模型路由与 JSON Schema 合同。
 
@@ -26,12 +26,12 @@
 6. **已实现、待高德真实账号恢复：城市移动由 Runtime Mobility Gate 强制贯穿确认后链路。** 高德路径规划 2.0 的步行、公交/地铁和驾车结果归一为 `trip-mobility-v1`，进入 Environment Plane、Context Pack、QA、静态路线图和前端路线卡；步行 `walk_type` 继续贯通为直梯、扶梯、阶梯和斜坡参考，并参与逐人避开台阶约束。地点或范围变化使旧路线失效。公交计划结果固定标记为非实时到站，驾车结果只作为打车时间/费用估算，路线设施也固定标记为非实时。扩展后的 `smoke:amap` 必须同时通过路线和折线地图才允许启用。
 7. **已验证：DeepSeek 基础认证与无地点资料时的诚实失败。** 父 Agent 的 Prompt、工具或模型版本改变后，必须重新运行多轮自然语言轨迹，并在真实浏览器桌面与移动视口复核。自动化测试只证明合同，不能替代这项验收。
 8. **已实现：逐人旅行关怀进入共享状态与 QA。** 对话工具把具体同行人的步行、换乘、台阶、休息、时间、设施、感官与饮食要求绑定到稳定 ID；路线 Adapter 只读取具名 Traveler 约束，不再从整团描述猜测归属。明确阶梯与避开台阶要求冲突时 QA 拒绝，直梯或斜坡存在则作为非实时部分证据；变化时只使旧城市路线失效。方案画布回显预算、节奏与逐人要求，设施或连续无障碍证据缺失时保持待核验。
-9. **已完成：npm 可发布边界。** `zhuanshu-travel-agent` 以 ESM subpath exports 提供 `core`、`contracts`、`providers`、`mcp` 和 `pi`；tarball 只包含产物、声明、source map、派生 Schema、README、LICENSE 与 metadata。Web、HTTP 部署、原生、小程序、ENV、运行数据、Fixture 和 Wiki 不发布。`release:check` 会运行产品检查、publint、pack dry-run、临时目录安装、严格 TS consumer 和真实 Pi `0.84.1` 加载。
+9. **已完成：跨平台源码运行边界。** API、MCP、测试和 Pi package 直接加载 TypeScript 源码，不依赖未提交的 `dist/`；文件名、ENV 权限检查和 npm scripts 同时兼容 Windows 与 macOS。CI 在 Windows、macOS、Linux 的 Node `22.19.0` 干净环境运行完整检查。npm package 保持 `private`，发布工作延期到公共 API 与完整分发内容稳定后。
 10. **待外部授权：更深 Provider。** 社交 Worker、实时公交到站、站内设施、生产天气授权、生产登录及更深库存能力必须完成官方授权或固定版本审查及真实 smoke 后才能启用。
 
 ## 类型迁移边界
 
-本轮不通过机械改名提高语言占比。已经转换为严格 TypeScript 的真实运行路径包括合同、文件 Persistence、Mobility/Transit 归一化、MCP 权限合同和核心 Pi 注册；HTTP、Auth、TravelService 实现、具体 Provider、对话 Agent 与 Web 仍保留 JavaScript。它们通过已生成类型和运行时合同进入新内核，后续按 Provider → HTTP/Auth → Web/TSX 的顺序迁移。旧 Trip Runtime 的公共声明完全由 TS 包装层生成，内部 inferred `.d.mts` 不进入 tarball。读取旧 `trip-control-state-v1` 时只补齐后来新增的展示字段和空容器，再进行严格校验；不会重写用户选择、偏好、预算或 revision。
+本轮不通过机械改名提高语言占比。严格 TypeScript 覆盖合同、Trip Runtime 实现与公共校验边界、文件 Persistence、Mobility/Transit、MCP 权限、TravelService Port 和核心 Pi 注册；HTTP、Auth、TravelService 实现、具体 Provider、对话 Agent 与 Web 继续使用 JavaScript。它们直接导入源码合同并由 `tsx` 加载，不通过 npm 包名绕到 `dist/`。读取旧 `trip-control-state-v1` 时只补齐确实缺失的新增字段；已有字段类型错误会拒绝加载，不能静默替换为数组或空对象。
 
 ## 验收情景
 

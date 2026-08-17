@@ -17,6 +17,6 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "src/runtime/trip-runtime.mjs", "extensions/**/*.ts"],
+  "include": ["src/**/*.ts", "extensions/**/*.ts"],
   "exclude": ["dist", "node_modules"]
 }

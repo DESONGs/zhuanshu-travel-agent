@@ -1,5 +1,5 @@
 import { Pool } from "pg";
-import { hydrateStoredTripState } from "zhuanshu-travel-agent/core";
+import { hydrateStoredTripState } from "../../travel-agent-pi-package/src/core/index.ts";
 
 function repositoryError(code, details = {}) {
   const error = new Error(code);

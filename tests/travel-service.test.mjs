@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { TravelService } from "../src/api/travel-service.mjs";
-import { TripStore, recordOfferSnapshot } from "zhuanshu-travel-agent/core";
+import { TripStore, recordOfferSnapshot } from "../travel-agent-pi-package/src/core/index.ts";
 
 const clock = () => new Date("2026-08-13T12:00:00.000Z");
 

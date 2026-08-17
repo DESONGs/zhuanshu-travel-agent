@@ -7,6 +7,19 @@ import { DEFAULT_USER_MODEL_ID, userModelOption } from "../agent/user-model-opti
 const SAFE_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
 const MESSAGE_ROLES = new Set(["user", "assistant", "status"]);
 
+function storageKey(id) {
+  return encodeURIComponent(id);
+}
+
+function idFromStorageKey(key) {
+  try {
+    const id = decodeURIComponent(key);
+    return SAFE_ID.test(id) ? id : null;
+  } catch {
+    return null;
+  }
+}
+
 function repositoryError(code, details = {}) {
   const error = new Error(code);
   error.code = code;
@@ -61,7 +74,7 @@ export class FileConversationRepository {
   }
 
   pathFor(conversationId) {
-    return join(this.rootDir, `${requireSafeId(conversationId, "conversation_id")}.json`);
+    return join(this.rootDir, `${storageKey(requireSafeId(conversationId, "conversation_id"))}.json`);
   }
 
   async initialize() {
@@ -88,6 +101,7 @@ export class FileConversationRepository {
     const path = this.pathFor(conversation.conversationId);
     await this.initialize();
     return this.withWriteQueue(conversation.conversationId, async () => {
+      if (await this.get(conversation.conversationId)) throw repositoryError("conversation_already_exists");
       const persisted = { ...conversation, storageVersion: 0 };
       let handle;
       try {
@@ -108,6 +122,14 @@ export class FileConversationRepository {
     try {
       return validateConversation(JSON.parse(await readFile(path, "utf8")), conversationId);
     } catch (error) {
+      const legacyPath = join(this.rootDir, `${conversationId}.json`);
+      if (error?.code === "ENOENT" && process.platform !== "win32" && path !== legacyPath) {
+        try {
+          return validateConversation(JSON.parse(await readFile(legacyPath, "utf8")), conversationId);
+        } catch (legacyError) {
+          if (legacyError?.code !== "ENOENT") throw legacyError;
+        }
+      }
       if (error?.code === "ENOENT") return null;
       if (error instanceof SyntaxError) throw repositoryError("invalid_stored_conversation");
       throw error;
@@ -118,9 +140,11 @@ export class FileConversationRepository {
     requireSafeId(userId, "conversation_user_id");
     await this.initialize();
     const entries = await readdir(this.rootDir, { withFileTypes: true });
-    const records = await Promise.all(entries
-      .filter((entry) => entry.isFile() && entry.name.endsWith(".json") && SAFE_ID.test(entry.name.slice(0, -5)))
-      .map((entry) => this.get(entry.name.slice(0, -5))));
+    const conversationIds = [...new Set(entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+      .map((entry) => idFromStorageKey(entry.name.slice(0, -5)))
+      .filter((conversationId) => conversationId !== null))];
+    const records = await Promise.all(conversationIds.map((conversationId) => this.get(conversationId)));
     return records.filter((record) => record?.userId === userId).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }
 
@@ -133,7 +157,7 @@ export class FileConversationRepository {
       if (!current) throw repositoryError("conversation_not_found");
       if (current.storageVersion !== expectedStorageVersion) throw repositoryError("conversation_storage_conflict");
       const persisted = { ...conversation, storageVersion: current.storageVersion + 1 };
-      const tempPath = join(this.rootDir, `.${conversation.conversationId}.${randomUUID()}.tmp`);
+      const tempPath = join(this.rootDir, `.${storageKey(conversation.conversationId)}.${randomUUID()}.tmp`);
       let handle;
       try {
         handle = await open(tempPath, "wx", 0o600);

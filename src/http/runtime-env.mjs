@@ -70,11 +70,17 @@ export function parseTravelEnvFile(text) {
   return values;
 }
 
-export async function loadTravelRuntimeEnv({ baseEnv = process.env, envFile = baseEnv.TRAVEL_AGENT_ENV_FILE ?? resolve(process.cwd(), "env_travel.local") } = {}) {
+export async function loadTravelRuntimeEnv({
+  baseEnv = process.env,
+  envFile = baseEnv.TRAVEL_AGENT_ENV_FILE ?? resolve(process.cwd(), "env_travel.local"),
+  platform = process.platform,
+} = {}) {
   const env = { ...baseEnv };
   try {
     const [contents, metadata] = await Promise.all([readFile(envFile, "utf8"), stat(envFile)]);
-    if ((metadata.mode & 0o077) !== 0) {
+    // POSIX mode bits are not an authoritative Windows ACL signal. Enforce 0600
+    // on Unix and rely on the account ACL plus ignored local file on Windows.
+    if (platform !== "win32" && (metadata.mode & 0o077) !== 0) {
       const error = new Error("runtime_env_file_permissions_too_open");
       error.code = "runtime_env_file_permissions_too_open";
       error.details = { envFile, requiredMode: "0600" };

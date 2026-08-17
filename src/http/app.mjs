@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import express from "express";
-import { assertTravelServicePort } from "zhuanshu-travel-agent/core";
+import { assertTravelServicePort } from "../../travel-agent-pi-package/src/core/index.ts";
 import { TravelService } from "../api/travel-service.mjs";
 import { TravelConversationAgent } from "../agent/travel-conversation-agent.mjs";
 import { createConversationRepository } from "../persistence/conversation-repository.mjs";

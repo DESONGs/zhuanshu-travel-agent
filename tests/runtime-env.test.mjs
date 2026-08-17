@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { visualCompletionOptions } from "../src/agent/travel-conversation-agent.mjs";
 import { loadTravelRuntimeEnv, parseTravelEnvFile } from "../src/http/runtime-env.mjs";
@@ -53,6 +56,15 @@ test("runtime env maps the canonical DeepSeek and Kimi keys to their Travel Agen
   assert.equal(runtime.MOONSHOT_API_KEY, "kimi-key");
   assert.equal(runtime.TRAVEL_AGENT_VISION_PROVIDER, "moonshotai-cn");
   assert.equal(runtime.TRAVEL_AGENT_VISION_MODEL, "kimi-k2.6");
+});
+
+test("runtime env loads an ignored local file on Windows without interpreting POSIX mode bits", async () => {
+  const root = await mkdtemp(join(tmpdir(), "travel-env-win32-"));
+  const envFile = join(root, "env_travel.local");
+  await writeFile(envFile, "DEEPSEEK_API_KEY=windows-local-key\n", "utf8");
+  const runtime = await loadTravelRuntimeEnv({ baseEnv: {}, envFile, platform: "win32" });
+  assert.equal(runtime.DEEPSEEK_API_KEY, "windows-local-key");
+  assert.equal(runtime.TRAVEL_AGENT_RUNTIME_ENV_FILE_PERMISSIONS_SAFE, "true");
 });
 
 test("runtime env does not map legacy meeting and Kimi alias keys into Travel Agent roles", async () => {

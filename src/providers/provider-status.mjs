@@ -42,15 +42,23 @@ function authChannelStates(env) {
   const summary = createAuthService({ env }).providerSummary({ origin: env.TRAVEL_AGENT_PUBLIC_ORIGIN });
   const providers = new Map(summary.providers.map((provider) => [provider.id, provider]));
   const webState = (provider) => provider?.available === true ? "credential_configured_pending_smoke" : unavailableAuthState(provider?.unavailableReason);
+  const googleWeb = providers.get("google");
   const wechatWeb = providers.get("wechat");
   const alipayWeb = providers.get("alipay");
   const appleWeb = providers.get("apple");
   const wechatMini = configured(env.WECHAT_MINIAPP_APP_ID) && configured(env.WECHAT_MINIAPP_APP_SECRET);
+  const alipayMini = configured(env.ALIPAY_APP_ID)
+    && configured(env.ALIPAY_PRIVATE_KEY_PATH)
+    && configured(env.ALIPAY_PUBLIC_KEY_PATH)
+    && String(env.TRAVEL_AGENT_SESSION_SECRET ?? "").length >= 32;
   return {
+    google: webState(googleWeb),
     wechat: wechatWeb?.available && wechatMini ? "web_and_miniapp_credentials_configured_pending_smoke"
       : wechatWeb?.available ? "web_credentials_configured_pending_smoke"
         : wechatMini ? "miniapp_credentials_configured_pending_smoke" : webState(wechatWeb),
-    alipay: webState(alipayWeb),
+    alipay: alipayWeb?.available && alipayMini ? "web_and_miniapp_credentials_configured_pending_smoke"
+      : alipayWeb?.available ? "web_credentials_configured_pending_smoke"
+        : alipayMini ? "miniapp_credentials_configured_pending_smoke" : webState(alipayWeb),
     apple: webState(appleWeb),
   };
 }

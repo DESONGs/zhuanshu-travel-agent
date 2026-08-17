@@ -9,6 +9,6 @@
     "sourceMap": true,
     "inlineSources": true
   },
-  "include": ["src/**/*.ts", "src/runtime/trip-runtime.mjs"],
+  "include": ["src/**/*.ts"],
   "exclude": ["dist", "node_modules", "extensions"]
 }

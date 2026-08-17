@@ -1,10 +1,15 @@
 import type {
   DecisionNode,
   MobilityObservation,
+  ProviderResult,
+  TransitSegment,
   TripBrief,
+  TripCommitResult,
   TripPatchProposal,
+  TripProposalResult,
   TripQa,
   TripState,
+  TripValidation,
   Traveler,
   TravelDomain,
 } from "../contracts/index.js";
@@ -47,15 +52,85 @@ export interface TripPlanView {
   schemaVersion: "trip-plan-view-v1";
   tripId: string;
   revision: number;
-  byDomain: { play: DecisionNode[]; food: DecisionNode[]; stay: DecisionNode[]; transport: DecisionNode[] };
+  byDomain: Record<TravelDomain, TripPlanNode[]>;
   budget: TripQa["budget"];
   qa: TripQa;
   fulfillment: TripState["fulfillmentEvents"];
-  pendingProposals: object[];
-  transitSegments: object[];
+  pendingProposals: TripProposalView[];
+  transitSegments: Array<{ nodeId: string; segment: TransitSegment }>;
   mapPreviewAvailable: boolean;
   weather: TripState["environment"]["weather"];
   mobility: TripState["environment"]["mobility"];
+}
+
+export type TripPlanNode = Pick<DecisionNode,
+  | "nodeId" | "title" | "summary" | "selected" | "status" | "cost" | "time" | "location" | "lock"
+  | "sourceStatus" | "foreignGuestEligible" | "spoilerLevel" | "media" | "sourceRefs" | "claimRefs" | "operability"
+>;
+
+export type TripProposalCandidate = Pick<DecisionNode,
+  | "nodeId" | "domain" | "title" | "summary" | "selected" | "cost" | "location" | "sourceStatus"
+  | "foreignGuestEligible" | "spoilerLevel" | "media" | "sourceRefs" | "claimRefs" | "operability"
+>;
+
+export interface TripProposalView {
+  schemaVersion: "trip-proposal-view-v1";
+  proposalId: string;
+  baseRevision: number;
+  title: string;
+  summary: string;
+  provider: string | null;
+  providerLabel: string | null;
+  checkedAt: string | null;
+  sourceDocumentation: string | null;
+  caveats: string[];
+  partial: boolean;
+  fixtureOnly: boolean;
+  stagedAt: string | null;
+  byDomain: Record<TravelDomain, TripProposalCandidate[]>;
+}
+
+export interface TripListView {
+  schemaVersion: "trip-list-view-v1";
+  storageMode: string;
+  trips: Array<{
+    tripId: string;
+    revision: number;
+    destination: string | null;
+    dates: string | null;
+    travelerCount: number;
+    updatedAt: string;
+    openDecisionCount: number;
+    collaboration: { memberCount: number } | null;
+  }>;
+}
+
+export interface OpenDecisionsView {
+  schemaVersion: "open-decisions-v1";
+  tripId: string;
+  revision: number;
+  decisions: TripState["openDecisions"];
+  pendingProposals: TripPatchProposal[];
+}
+
+export interface TripMapAsset {
+  contentType: string;
+  body: Uint8Array;
+}
+
+export interface BookingHandoff {
+  schemaVersion: "booking-handoff-v1";
+  status: "ready";
+  tripId: string;
+  revision: number;
+  nodeId: string;
+  offerId: string;
+  source: string;
+  handoffUrl: string | null;
+  totalPrice: number;
+  currency: string;
+  automaticPurchase: false;
+  sensitiveDataHandled: false;
 }
 
 export interface ResearchTripOptionsInput {
@@ -67,35 +142,38 @@ export interface ResearchTripOptionsInput {
 }
 
 export type ResearchTripOptionsResult =
-  | { schemaVersion: "travel-research-proposal-result-v1"; status: "proposed"; tripId: string; revision: number; proposal: object; fabricatedResults: false }
-  | { schemaVersion: "travel-provider-result-v1"; status: string; tripId: string; revision: number; fabricatedResults: false };
+  | { schemaVersion: "travel-research-proposal-result-v1"; status: "proposed"; tripId: string; revision: number; proposal: TripProposalView; fabricatedResults: false }
+  | (ProviderResult & { tripId: string; revision: number })
+  | TripProposalResult;
 
 export interface TripMutationResult {
   schemaVersion: string;
-  status: string;
+  status: "committed" | "proposed" | "rejected" | "rejected_by_user" | "needs_rebase";
   tripId?: string;
   revision?: number;
-  validation?: object;
+  validation?: TripValidation;
   qa?: TripQa;
 }
+
+export type TravelMutationResult = TripMutationResult | TripCommitResult | TripProposalResult;
 
 export interface TravelServicePort {
   createTrip(input?: CreateTripInput): Promise<TripControlView>;
   updateTripScope(input: UpdateTripScopeServiceInput): Promise<TripControlView>;
-  listTrips(input?: { userId?: string }): Promise<object>;
+  listTrips(input?: { userId?: string }): Promise<TripListView>;
   getTripControlView(tripId: string): Promise<TripControlView>;
   getTripPlanView(tripId: string): Promise<TripPlanView>;
-  renderTripMap(tripId: string): Promise<unknown>;
+  renderTripMap(tripId: string): Promise<TripMapAsset>;
   refreshTripMobility(input: { tripId: string }): Promise<{ schemaVersion: "trip-mobility-refresh-result-v1"; status: MobilityObservation["status"]; tripId: string; revision: number; mobility: MobilityObservation; qa: TripQa; fabricatedResults: false }>;
-  getOpenDecisions(tripId: string): Promise<object>;
+  getOpenDecisions(tripId: string): Promise<OpenDecisionsView>;
   researchTripOptions(input: ResearchTripOptionsInput): Promise<ResearchTripOptionsResult>;
-  proposeTripChange(input: { tripId: string; proposal: TripPatchProposal }, actor?: string): Promise<TripMutationResult>;
-  acceptTripChange(input: { tripId: string; proposalId: string; selections?: Partial<{ play: string; food: string; stay: string; transport: string }> }): Promise<TripMutationResult>;
-  rejectTripChange(input: { tripId: string; proposalId: string }): Promise<TripMutationResult>;
-  prepareBookingHandoff(input: { tripId: string; nodeId: string; offerId: string; explicitUserConfirmation: true }): Promise<object>;
-  recordBookingConfirmation(input: { tripId: string; nodeId: string; offerId?: string; confirmationRef: string; baseRevision: number; explicitUserConfirmation: true }): Promise<TripMutationResult>;
-  reportTripDisruption(input: { tripId: string; proposal: TripPatchProposal }, actor?: string): Promise<TripMutationResult>;
-  submitTripFeedback(input: { tripId: string; baseRevision: number; category: "personal_experience" | "preference_change" | "fact_correction" | "unverified_public_info"; nodeId?: string; text: string }, actor?: string): Promise<TripMutationResult>;
+  proposeTripChange(input: { tripId: string; proposal: TripPatchProposal }, actor?: string): Promise<TravelMutationResult>;
+  acceptTripChange(input: { tripId: string; proposalId: string; selections?: Partial<Record<TravelDomain, string>> }): Promise<TravelMutationResult>;
+  rejectTripChange(input: { tripId: string; proposalId: string }): Promise<TravelMutationResult>;
+  prepareBookingHandoff(input: { tripId: string; nodeId: string; offerId: string; explicitUserConfirmation: true }): Promise<BookingHandoff>;
+  recordBookingConfirmation(input: { tripId: string; nodeId: string; offerId?: string; confirmationRef: string; baseRevision: number; explicitUserConfirmation: true }): Promise<TravelMutationResult>;
+  reportTripDisruption(input: { tripId: string; proposal: TripPatchProposal }, actor?: string): Promise<TravelMutationResult>;
+  submitTripFeedback(input: { tripId: string; baseRevision: number; category: "personal_experience" | "preference_change" | "fact_correction" | "unverified_public_info"; nodeId?: string; text: string }, actor?: string): Promise<TravelMutationResult>;
 }
 
 const REQUIRED_METHODS: ReadonlyArray<keyof TravelServicePort> = [

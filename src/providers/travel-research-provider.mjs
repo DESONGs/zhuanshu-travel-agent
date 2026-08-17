@@ -2,7 +2,7 @@ import { createAmapTravelResearchProvider } from "./amap-travel-research.mjs";
 import { createFlyaiTravelResearchProvider } from "./flyai-travel-research.mjs";
 import { createOpenMeteoWeatherProvider } from "./open-meteo-weather.mjs";
 import { createTuniuTravelResearchProvider } from "./tuniu-travel-research.mjs";
-import { normalizeProviderResult } from "zhuanshu-travel-agent/providers";
+import { normalizeProviderResult } from "../../travel-agent-pi-package/src/providers/index.ts";
 
 const DOMAINS = Object.freeze(["play", "food", "stay", "transport"]);
 

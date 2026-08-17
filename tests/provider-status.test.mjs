@@ -42,6 +42,7 @@ test("channel status is derived from the implemented auth contract without expos
     TRAVEL_SOCIAL_WORKER_URL: "https://legacy.example",
   });
   assert.deepEqual(status.channels, {
+    google: "blocked_missing_secure_session",
     wechat: "blocked_missing_secure_session",
     alipay: "blocked_missing_secure_session",
     apple: "blocked_missing_secure_session",
@@ -70,8 +71,9 @@ test("configured login adapters remain pending until a real account smoke passes
     APPLE_PRIVATE_KEY_PATH: "/run/secrets/apple.p8",
   });
   assert.deepEqual(status.channels, {
+    google: "blocked_missing_credentials",
     wechat: "web_and_miniapp_credentials_configured_pending_smoke",
-    alipay: "credential_configured_pending_smoke",
+    alipay: "web_and_miniapp_credentials_configured_pending_smoke",
     apple: "credential_configured_pending_smoke",
   });
   assert.equal(JSON.stringify(status).includes("wechat-secret"), false);
