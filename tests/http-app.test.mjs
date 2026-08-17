@@ -157,7 +157,7 @@ test("HTTP API does not issue a development session when provider callbacks are 
   await once(server, "listening");
   try {
     const { port } = server.address();
-    const response = await fetch(`http://127.0.0.1:${port}/api/auth/session`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider: "wechat", identity: "ignored" }) });
+    const response = await fetch(`http://127.0.0.1:${port}/api/auth/session`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider: "email_otp", identity: "ignored" }) });
     const value = await response.json();
     assert.equal(response.status, 503);
     assert.equal(value.code, "auth_provider_not_configured");

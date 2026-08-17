@@ -41,4 +41,4 @@ npx cap copy android
 - `src/http/`、`src/persistence/` 和 `src/api/TravelService` 是 Web、原生、小程序与 MCP 共用的服务边界；不得为客户端复制行程提交规则。
 - 生产设置 `DATABASE_URL` 以启用 PostgreSQL。未设置时的原子 JSON repository 只用于本地开发与合同验证。
 - Web 开发代理到 `http://127.0.0.1:8797`；原生使用 `VITE_TRAVEL_API_BASE_URL`，两个原生小程序在各自 `app.js` 使用已登记的 HTTPS API。所有跨源请求都必须在 `TRAVEL_AGENT_CORS_ORIGINS` 逐项允许。
-- 微信、支付宝、Apple 和邮箱的生产登录必须完成平台/邮件服务授权后才可签发会话。配置未完成时保持 `auth_provider_not_configured`，不得伪造成功登录。
+- Google、微信、支付宝和 Apple 的生产登录必须完成平台授权并通过真实回调后才可签发会话；Google 是 Web 主入口，微信/支付宝 Web 使用官方扫码授权页，小程序只交换平台一次性 code。本地称呼输入仅限显式开发模式，不能冒充生产邮箱登录。配置未完成时保持 `auth_provider_not_configured`，不得伪造成功登录。

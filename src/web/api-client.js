@@ -23,6 +23,8 @@ async function request(path, { method = "GET", body, token } = {}) {
 
 export const api = {
   health: () => request("/api/health"),
+  authProviders: () => request("/api/auth/providers"),
+  authStartUrl: (provider, returnTo = "/") => `${apiBaseUrl}/api/auth/${encodeURIComponent(provider)}/start?returnTo=${encodeURIComponent(returnTo)}`,
   createDevelopmentSession: (provider, identity) => request("/api/auth/session", { method: "POST", body: { provider, identity } }),
   session: () => request("/api/session"),
   logout: () => request("/api/session", { method: "DELETE" }),

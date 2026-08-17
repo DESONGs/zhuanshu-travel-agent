@@ -15,6 +15,13 @@ test("runtime env loader accepts only explicit Travel Agent keys and preserves k
     "TRAVEL_AGENT_TUNIU_ENABLED=true",
     "TUNIU_API_KEY=example-tuniu-key",
     "TRAVEL_AGENT_TUNIU_SMOKE_STATUS=passed_read_only_isolated",
+    "TRAVEL_AGENT_PUBLIC_ORIGIN=https://travel.example.com",
+    "TRAVEL_AGENT_SESSION_SECRET=example-session-secret-at-least-32-chars",
+    "GOOGLE_CLIENT_ID=example-google-client",
+    "GOOGLE_CLIENT_SECRET=example-google-secret",
+    "WECHAT_MINIAPP_APP_ID=example-wechat-miniapp",
+    "ALIPAY_PRIVATE_KEY_PATH=/secure/alipay-private.pem",
+    "APPLE_PRIVATE_KEY_PATH=/secure/AuthKey_TEST.p8",
     "FEISHU_APP_SECRET=must-not-load",
     "PI_MODEL=must-not-load",
     "UNRELATED_SECRET=must-not-load",
@@ -26,6 +33,11 @@ test("runtime env loader accepts only explicit Travel Agent keys and preserves k
   assert.equal(values.AMAP_API_SECRET, "example-amap-secret");
   assert.equal(values.FLYAI_API_KEY, "example-flyai-key");
   assert.equal(values.TUNIU_API_KEY, "example-tuniu-key");
+  assert.equal(values.TRAVEL_AGENT_PUBLIC_ORIGIN, "https://travel.example.com");
+  assert.equal(values.GOOGLE_CLIENT_ID, "example-google-client");
+  assert.equal(values.WECHAT_MINIAPP_APP_ID, "example-wechat-miniapp");
+  assert.equal(values.ALIPAY_PRIVATE_KEY_PATH, "/secure/alipay-private.pem");
+  assert.equal(values.APPLE_PRIVATE_KEY_PATH, "/secure/AuthKey_TEST.p8");
   assert.equal(Object.hasOwn(values, "UNRELATED_SECRET"), false);
   assert.equal(Object.hasOwn(values, "FEISHU_APP_SECRET"), false);
   assert.equal(Object.hasOwn(values, "PI_MODEL"), false);

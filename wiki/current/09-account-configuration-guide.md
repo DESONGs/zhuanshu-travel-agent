@@ -117,14 +117,27 @@ npm run smoke:inventory
 
 模型输出应包含 `deepseek: passed_live_smoke`、`kimiVision: passed_live_smoke`，Kimi route 应为 `moonshotai-cn`。高德应返回 `passed_live_smoke`，且吃、住、行、玩各域、照片、静态地图和天气均有真实结果。`smoke:weather` 在没有付费 Key 时只会返回 `passed_noncommercial_development_smoke`，不得作为生产天气授权。通过后还需从真实聊天入口检查天气、候选、照片、地图、用户确认和失败恢复。
 
-## 6. 暂缓平台：去哪注册、代码做到哪里
+## 6. 登录账号系统：注册入口、回调与 ENV
+
+认证后端已经实现，但仓库不会内置任何平台 AppID 或密钥。生产站点先准备一个固定 HTTPS Origin，例如 `https://travel.example.com`，然后生成两个相互独立、至少 32 字符的随机密钥：
+
+```dotenv
+TRAVEL_AGENT_PUBLIC_ORIGIN=https://travel.example.com
+TRAVEL_AGENT_SESSION_SECRET=
+TRAVEL_AGENT_AUTH_STATE_SECRET=
+```
+
+Web 登录成功后使用 `HttpOnly` cookie；微信和支付宝小程序只得到本站 bearer session。Google/Apple 的身份令牌会校验签名、issuer、audience、有效期和 nonce；支付宝响应必须通过平台公钥 RSA2 验签；微信 `session_key` 与各平台 access token 均不会返回客户端。
 
 | 能力 | 注册/授权入口 | 当前代码事实 | 恢复开发时还要做什么 |
 | --- | --- | --- | --- |
-| 微信小程序登录 | [微信公众平台](https://mp.weixin.qq.com/)、[小程序开发文档](https://developers.weixin.qq.com/miniprogram/dev/framework/) | 微信原生小程序壳已调用 `wx.login` 并把 code 发给 `/api/auth/platform-exchange`；服务端当前固定返回 `auth_provider_not_configured`。 | 创建小程序并取得 AppID/Secret，登记 HTTPS request 域名；服务端调用 `auth.code2Session`、校验一次性 code、保存 OpenID 映射并签发本站会话。不能把 `session_key` 下发前端。 |
-| 支付宝小程序登录 | [支付宝开放平台](https://open.alipay.com/)、[my.getAuthCode](https://miniprogram.alipay.com/docs/miniprogram/mpdev/API_OpenAPI_getAuthCode) | 支付宝原生小程序壳已获取 `authCode` 并调用同一交换接口；服务端仍是未配置占位。 | 创建小程序应用，准备 AppID、应用私钥、公钥/证书和网关配置；服务端用授权码调用 token 接口、验签并签发本站会话。 |
+| Google Web 登录（主入口） | [Google Cloud Credentials](https://console.cloud.google.com/apis/credentials)、[Web Server OAuth](https://developers.google.com/identity/protocols/oauth2/web-server) | `/api/auth/google/start`、回调 code exchange、state/nonce 与 Google JWKS 验签已实现。 | 创建 **Web application** OAuth Client；Authorized redirect URI 填 `https://travel.example.com/api/auth/google/callback`；ENV 填 `GOOGLE_CLIENT_ID`、`GOOGLE_CLIENT_SECRET`。Google 允许 localhost 测试，但生产必须使用登记的 HTTPS 地址。 |
+| 微信 Web 扫码登录 | [微信开放平台](https://open.weixin.qq.com/)、[网站应用微信登录指南](https://developers.weixin.qq.com/doc/oplatform/Website_App/WeChat_Login/Development_Guide.html) | `/api/auth/wechat/start` 会进入微信官方 `qrconnect` 扫码页，回调后服务端交换一次性 code。 | 创建并审核“网站应用”，登记回调域；ENV 填 `WECHAT_OPEN_APP_ID`、`WECHAT_OPEN_APP_SECRET`。回调为 `https://travel.example.com/api/auth/wechat/callback`。 |
+| 微信小程序登录 | [微信公众平台](https://mp.weixin.qq.com/)、[code2Session](https://developers.weixin.qq.com/miniprogram/dev/OpenApiDoc/user-login/code2Session.html) | 小程序调用 `wx.login`，服务端已经调用 `jscode2session` 并以 UnionID/OpenID 建立本站身份，不下发 `session_key`。 | 创建小程序，登记 HTTPS request domain；ENV 填 `WECHAT_MINIAPP_APP_ID`、`WECHAT_MINIAPP_APP_SECRET`，在微信开发者工具和真机各做一次登录 smoke。 |
+| 支付宝 Web / 小程序登录 | [支付宝网页/移动应用](https://open.alipay.com/module/webApp)、[my.getAuthCode](https://miniprogram.alipay.com/docs/miniprogram/mpdev/API_OpenAPI_getAuthCode) | Web 官方授权页和小程序 `authCode` 共用服务端 token exchange；请求使用 RSA2，响应使用支付宝公钥验签。 | 创建应用并开通快速登录/用户授权；回调填 `https://travel.example.com/api/auth/alipay/callback`；ENV 填 `ALIPAY_APP_ID`、`ALIPAY_PRIVATE_KEY_PATH`、`ALIPAY_PUBLIC_KEY_PATH`。两个 PEM 文件必须位于仓库外并设为 `0600`。 |
+| Apple Web 登录 | [Configure Sign in with Apple for the web](https://developer.apple.com/help/account/capabilities/configure-sign-in-with-apple-for-the-web)、[REST API](https://developer.apple.com/documentation/signinwithapplerestapi) | `/api/auth/apple/start` 使用 `form_post`，服务端生成五分钟 ES256 client secret、交换 code 并用 Apple JWKS 验证 identity token。 | 需要 Apple Developer Program、已启用 Sign in with Apple 的主 App ID、Services ID 和 `.p8` Key；Return URL 填 `https://travel.example.com/api/auth/apple/callback`；ENV 填 `APPLE_CLIENT_ID`（Services ID）、`APPLE_TEAM_ID`、`APPLE_KEY_ID`、`APPLE_PRIVATE_KEY_PATH`。 |
 | 飞书渠道（可选） | [飞书开放平台](https://open.feishu.cn/)、[机器人应用配置](https://open.feishu.cn/document/develop-an-echo-bot/faq?lang=zh-CN) | Travel Agent 没有飞书渠道 Adapter，也不再保留飞书 ENV 字段。 | 创建企业自建应用、开启机器人、最小化申请 `im.message.receive_v1` 和发送消息权限，配置事件或长连接，再把消息映射到现有 Conversation API。 |
 | 携程商旅 MCP | [携程商旅开放平台](https://openapi.ctripbiz.com/)、[官方 MCP 说明](https://ct.ctrip.com/thinktanks/235566117077549) | 仅完成官方能力与申请路径调研，没有企业 credentials。 | 企业主体申请标准/高级/定制能力；拿到实际端点与凭据后新增独立只读 Provider。 |
 | 华住会 B2B 酒店 | [华住会文档中心](https://docs.huazhu.com/)、[B2B API 目录](https://docs.huazhu.com/b2b/api/directory/) | 未接入；它是企业酒店直连 API，不是公开 MCP。 | 商务申请 client ID、secret、会员卡、AES key，登记生产出口 IP；先只接酒店/库存读取，订单仍需用户确认。 |
 
-这些平台在账号、权限和真实服务端交换完成前，必须继续显示“尚未接通”，不能因为客户端目录、ENV 字段或占位接口存在就声称可用。
+新电脑部署时，把平台密钥文件放在仓库外，将以上 ENV 写入权限为 `0600` 的 `env_travel.local`，再运行 API。`/api/auth/providers` 中对应渠道变为 `available: true` 后，仍必须以真实账号完成“开始授权 → 平台回调 → 建立会话 → 刷新页面恢复会话 → 注销”的 smoke。没有完成真实账号 smoke 的渠道只能描述为“代码已接线、待平台验证”，不能声称已上线。
