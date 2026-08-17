@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowsClockwise, Brain, CheckCircle, CircleNotch, CloudSun, Compass, CurrencyCircleDollar, ForkKnife, Heart, House, MapPin,
-  MapTrifold, NavigationArrow, PaperPlaneRight, PersonSimpleWalk, Plus, SignOut, Sparkle, Train, WarningCircle,
+  AppleLogo, ArrowsClockwise, Brain, CheckCircle, CircleNotch, CloudSun, Compass, CurrencyCircleDollar, ForkKnife, GoogleLogo,
+  Heart, House, MapPin, MapTrifold, NavigationArrow, PaperPlaneRight, PersonSimpleWalk, Plus, QrCode, SignOut, Sparkle, Train,
+  WarningCircle, WechatLogo,
 } from "@phosphor-icons/react";
 import { api } from "./api-client.js";
 
@@ -16,6 +17,7 @@ const PROMPTS = [
   "第一次来上海 3 天，想兼顾建筑、咖啡和适合步行的路线。",
   "两个人去北京看秋色，预算 8000，交通尽量少换乘。",
 ];
+const SESSION_PROVIDER_LABELS = { google: "Google", wechat: "微信", alipay: "支付宝", apple: "Apple", email_otp: "本地体验" };
 
 function formatTime(value) {
   const date = new Date(value);
@@ -38,9 +40,34 @@ function messageError(error) {
   return messages[error.code] ?? "这次没有处理完成，请稍后重试。你的旅行内容不会丢失。";
 }
 
-function LoginScreen({ onSession, developmentAuthEnabled }) {
+const LOGIN_PROVIDERS = [
+  { id: "google", label: "使用 Google 继续", shortLabel: "Google", icon: GoogleLogo, primary: true },
+  { id: "wechat", label: "微信扫码登录", shortLabel: "微信", icon: WechatLogo, qr: true },
+  { id: "alipay", label: "支付宝扫码登录", shortLabel: "支付宝", icon: QrCode, qr: true },
+  { id: "apple", label: "使用 Apple 登录", shortLabel: "Apple", icon: AppleLogo },
+];
+
+function authFeedback(code) {
+  const messages = {
+    auth_authorization_denied: "你取消了登录，没有创建账号会话。",
+    auth_state_invalid: "登录校验已失效，请重新选择登录方式。",
+    auth_state_expired: "登录页面停留时间较长，请重新登录。",
+    auth_provider_not_configured: "这个登录渠道暂未开放，请选择其他方式。",
+    auth_provider_unavailable: "登录平台暂时无法连接，请稍后重试。",
+    auth_login_failed: "这次登录没有完成，请重新尝试。",
+  };
+  return code ? messages[code] ?? messages.auth_login_failed : null;
+}
+
+function LoginScreen({ onSession, developmentAuthEnabled, providerStatus, initialError }) {
   const [identity, setIdentity] = useState("");
-  const [status, setStatus] = useState(null);
+  const [status, setStatus] = useState(initialError ? { error: authFeedback(initialError) } : null);
+  const availableById = new Map((providerStatus?.providers ?? []).map((provider) => [provider.id, provider]));
+  const webLoginAvailable = LOGIN_PROVIDERS.some((provider) => availableById.get(provider.id)?.available);
+  const startLogin = (provider) => {
+    if (!availableById.get(provider.id)?.available) return;
+    window.location.assign(api.authStartUrl(provider.id));
+  };
   const submit = async (event) => {
     event.preventDefault();
     setStatus({ loading: true });
@@ -56,12 +83,27 @@ function LoginScreen({ onSession, developmentAuthEnabled }) {
       <div className="brand"><MapPin weight="fill" /> Travel Agent</div>
       <h1>把一趟旅行，<br />从一句话开始。</h1>
       <p>告诉旅行 Agent 目的地、时间、同行人或一句模糊的期待；它会先理解，再联动研究吃、住、行、玩。</p>
-      {developmentAuthEnabled ? <form onSubmit={submit}>
-        <div className="local-mode"><strong>本地体验</strong><span>这里不会发送验证码，也不会冒充微信或支付宝登录。</span></div>
-        <label>怎么称呼你（可选）<input value={identity} onChange={(event) => setIdentity(event.target.value)} maxLength={80} placeholder="旅行者" /></label>
-        {status?.error && <p className="form-error"><WarningCircle /> {status.error}</p>}
+      <section className="auth-options" aria-label="选择登录方式">
+        {status?.error && <p className="form-error" role="alert"><WarningCircle /> {status.error}</p>}
+        {LOGIN_PROVIDERS.filter((provider) => provider.primary).map((provider) => {
+          const Icon = provider.icon;
+          const available = availableById.get(provider.id)?.available === true;
+          return <button key={provider.id} className="auth-provider primary-provider" onClick={() => startLogin(provider)} disabled={!available}><Icon weight="bold" /><span>{provider.label}</span>{!available && <em>待开放</em>}</button>;
+        })}
+        <div className="auth-provider-grid">{LOGIN_PROVIDERS.filter((provider) => !provider.primary).map((provider) => {
+          const Icon = provider.icon;
+          const available = availableById.get(provider.id)?.available === true;
+          return <button key={provider.id} className={`auth-provider ${provider.id}`} onClick={() => startLogin(provider)} disabled={!available}><Icon weight={provider.id === "wechat" ? "fill" : "regular"} /><span>{provider.shortLabel}</span>{!available && <em>待开放</em>}</button>;
+        })}</div>
+        <p className="qr-guidance">电脑端选择微信或支付宝后，会进入平台官方扫码页；手机端按平台授权流程继续。</p>
+        {!webLoginAvailable && !developmentAuthEnabled ? <div className="auth-unavailable"><WarningCircle weight="fill" /><div><strong>登录渠道正在配置</strong><p>当前没有可用的登录方式，请稍后再试。</p></div></div> : null}
+      </section>
+      {developmentAuthEnabled ? <form className="development-login" onSubmit={submit}>
+        <div className="auth-divider"><span>本地开发</span></div>
+        <div className="local-mode"><strong>仅限本机体验</strong><span>不会发送验证码，也不会冒充任何第三方账号。</span></div>
+        <label>怎么称呼你<input value={identity} onChange={(event) => setIdentity(event.target.value)} maxLength={80} placeholder="旅行者" /></label>
         <button className="button primary" disabled={status?.loading}>{status?.loading ? <CircleNotch className="spin" /> : null}进入旅行助手</button>
-      </form> : <div className="auth-unavailable"><WarningCircle weight="fill" /><div><strong>登录服务尚未开放</strong><p>微信、支付宝、Apple 和邮箱登录需要完成真实授权后才会出现在这里。</p></div></div>}
+      </form> : null}
       <small>支付、证件、Cookie 与第三方账号凭据不会发送给旅行 Agent。预订只会准备跳转，不会替你购买或退改。</small>
     </section>
   </main>;
@@ -416,7 +458,7 @@ function TravelEditor({ session, onLogout }) {
   const modelOptions = providerStatus?.modelSelection?.options ?? [];
   const modelLabels = useMemo(() => Object.fromEntries(modelOptions.map((option) => [option.id, option.shortLabel])), [modelOptions]);
   return <main className="editor-shell">
-    <header className="editor-topbar"><div className="brand"><MapPin weight="fill" /> Travel Agent</div><div className="topbar-copy"><span>旅行助手</span><small>从一句话到可确认方案</small></div>{trip ? <button className="plan-jump" onClick={() => document.getElementById("trip-plan-canvas")?.scrollIntoView({ behavior: "smooth", block: "start" })}><MapTrifold />查看方案</button> : null}<div className="account-actions"><span>{session.developmentOnly || session.provider === "email_otp" ? "本地体验" : session.provider}</span><button className="icon-button" onClick={onLogout} aria-label="退出登录"><SignOut /></button></div></header>
+    <header className="editor-topbar"><div className="brand"><MapPin weight="fill" /> Travel Agent</div><div className="topbar-copy"><span>旅行助手</span><small>从一句话到可确认方案</small></div>{trip ? <button className="plan-jump" onClick={() => document.getElementById("trip-plan-canvas")?.scrollIntoView({ behavior: "smooth", block: "start" })}><MapTrifold />查看方案</button> : null}<div className="account-actions"><span>{session.displayName || SESSION_PROVIDER_LABELS[session.provider] || "旅行者"}</span><button className="icon-button" onClick={onLogout} aria-label="退出登录"><SignOut /></button></div></header>
     <div className="editor-layout">
       <ConversationPicker conversations={conversations} activeId={conversation?.conversationId} onPick={selectConversation} onNew={createConversation} />
       <section className="conversation-panel">
@@ -433,11 +475,25 @@ function TravelEditor({ session, onLogout }) {
 export function TravelApp() {
   const [session, setSession] = useState(undefined);
   const [health, setHealth] = useState(null);
+  const [authProviders, setAuthProviders] = useState(null);
+  const [authError, setAuthError] = useState(null);
   useEffect(() => {
-    Promise.all([api.session().catch(() => null), api.health().catch(() => null)]).then(([nextSession, nextHealth]) => { setSession(nextSession); setHealth(nextHealth); });
+    const query = new URLSearchParams(window.location.search);
+    setAuthError(query.get("auth_error"));
+    Promise.all([api.session().catch(() => null), api.health().catch(() => null), api.authProviders().catch(() => null)]).then(([nextSession, nextHealth, nextProviders]) => {
+      setSession(nextSession);
+      setHealth(nextHealth);
+      setAuthProviders(nextProviders);
+      if (query.has("auth") || query.has("auth_error")) {
+        query.delete("auth");
+        query.delete("auth_error");
+        const nextQuery = query.toString();
+        window.history.replaceState({}, "", `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash}`);
+      }
+    });
   }, []);
   const logout = async () => { await api.logout().catch(() => null); setSession(null); };
   if (session === undefined) return <main className="app-loading"><CircleNotch className="spin" />正在恢复会话</main>;
-  if (!session) return <LoginScreen onSession={setSession} developmentAuthEnabled={health?.developmentAuthEnabled === true} />;
+  if (!session) return <LoginScreen onSession={setSession} developmentAuthEnabled={health?.developmentAuthEnabled === true} providerStatus={authProviders} initialError={authError} />;
   return <TravelEditor session={session} onLogout={logout} />;
 }

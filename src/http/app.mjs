@@ -7,13 +7,18 @@ import { createConversationRepository } from "../persistence/conversation-reposi
 import { providerStatusSummary } from "../providers/provider-status.mjs";
 import { createTravelResearchProvider } from "../providers/travel-research-provider.mjs";
 import { createTripRepository } from "../persistence/trip-repository.mjs";
-import { AUTH_PROVIDERS, developmentUserId, InMemorySessionStore } from "./session.mjs";
+import { authenticatedUserId, developmentUserId, InMemorySessionStore, SignedSessionStore } from "./session.mjs";
+import { createAuthService, oauthNonceCookieName } from "./auth-providers.mjs";
 import { httpError, sendError } from "./http-errors.mjs";
 
 function cookieValue(request, name) {
   const values = String(request.headers.cookie ?? "").split(";").map((item) => item.trim());
   const encoded = values.find((item) => item.startsWith(`${name}=`))?.slice(name.length + 1);
-  return encoded ? decodeURIComponent(encoded) : null;
+  try {
+    return encoded ? decodeURIComponent(encoded) : null;
+  } catch {
+    return null;
+  }
 }
 
 function asyncRoute(handler) {
@@ -34,11 +39,47 @@ function isLocalDevelopmentOrigin(origin) {
   return /^http:\/\/(?:127\.0\.0\.1|localhost):\d+$/.test(origin);
 }
 
+function requestPublicOrigin(request, runtimeEnv) {
+  const configured = String(runtimeEnv.TRAVEL_AGENT_PUBLIC_ORIGIN ?? "").trim().replace(/\/$/, "");
+  if (configured) return configured;
+  const inferred = `${request.protocol}://${request.get("host")}`;
+  return runtimeEnv.NODE_ENV !== "production" && isLocalDevelopmentOrigin(inferred) ? inferred : null;
+}
+
+function sessionTokenFromRequest(request) {
+  const bearer = request.headers.authorization?.startsWith("Bearer ") ? request.headers.authorization.slice(7) : null;
+  return bearer ?? cookieValue(request, "travel_session");
+}
+
+function sessionCookieOptions(runtimeEnv, expiresAt) {
+  const maxAge = Math.max(0, new Date(expiresAt).getTime() - Date.now());
+  return {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: runtimeEnv.NODE_ENV === "production" || String(runtimeEnv.TRAVEL_AGENT_PUBLIC_ORIGIN ?? "").startsWith("https://"),
+    path: "/",
+    maxAge,
+  };
+}
+
+function authResultLocation(returnTo, key, value) {
+  const url = new URL(returnTo || "/", "http://travel-agent.local");
+  url.searchParams.set(key, value);
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
+function publicAuthError(error) {
+  return ["auth_authorization_denied", "auth_state_invalid", "auth_state_expired", "auth_provider_not_configured", "auth_provider_unavailable"].includes(error?.code)
+    ? error.code
+    : "auth_login_failed";
+}
+
 export function createHttpApp({
   travelService,
   conversationRepository,
   conversationAgent,
-  sessionStore = new InMemorySessionStore(),
+  sessionStore,
+  authService,
   webRoot = resolve(process.cwd(), "dist"),
   developmentAuthEnabled = process.env.NODE_ENV !== "production" && process.env.TRAVEL_AGENT_ALLOW_DEVELOPMENT_AUTH === "true",
   allowedOrigins = parseAllowedOrigins(process.env.TRAVEL_AGENT_CORS_ORIGINS),
@@ -53,10 +94,15 @@ export function createHttpApp({
     rootDir: runtimeEnv.TRAVEL_AGENT_CONVERSATION_DATA_DIR
       ?? (runtimeEnv.TRAVEL_AGENT_DATA_DIR ? resolve(runtimeEnv.TRAVEL_AGENT_DATA_DIR, "conversations") : undefined),
   });
+  sessionStore ??= String(runtimeEnv.TRAVEL_AGENT_SESSION_SECRET ?? "").length >= 32
+    ? new SignedSessionStore({ secret: runtimeEnv.TRAVEL_AGENT_SESSION_SECRET })
+    : new InMemorySessionStore();
+  authService ??= createAuthService({ env: runtimeEnv });
   const travelConversationAgent = conversationAgent ?? new TravelConversationAgent({ travelService, conversationRepository, env: runtimeEnv });
   const app = express();
   app.disable("x-powered-by");
   app.use(express.json({ limit: "6mb", type: "application/json" }));
+  app.use(express.urlencoded({ extended: false, limit: "32kb" }));
   app.use((request, response, next) => {
     response.setHeader("X-Content-Type-Options", "nosniff");
     response.setHeader("Referrer-Policy", "same-origin");
@@ -78,10 +124,7 @@ export function createHttpApp({
     return next();
   });
 
-  const currentSession = (request) => {
-    const bearer = request.headers.authorization?.startsWith("Bearer ") ? request.headers.authorization.slice(7) : null;
-    return sessionStore.read(bearer ?? cookieValue(request, "travel_session"));
-  };
+  const currentSession = (request) => sessionStore.read(sessionTokenFromRequest(request));
   const requireSession = (request) => {
     const session = currentSession(request);
     if (!session) throw httpError("authentication_required", 401);
@@ -110,38 +153,81 @@ export function createHttpApp({
   app.get("/api/health", asyncRoute(async (_request, response) => {
     response.json({ status: "ok", developmentAuthEnabled, storageMode: travelService.store.mode ?? "unknown" });
   }));
+  app.get("/api/auth/providers", asyncRoute(async (request, response) => {
+    response.json({ ...authService.providerSummary({ origin: requestPublicOrigin(request, runtimeEnv) }), developmentAuthEnabled });
+  }));
+  app.get("/api/auth/:provider/start", asyncRoute(async (request, response) => {
+    const provider = String(request.params.provider ?? "");
+    const authorization = authService.beginWeb({
+      provider,
+      origin: requestPublicOrigin(request, runtimeEnv),
+      returnTo: request.query.returnTo,
+    });
+    response.cookie(oauthNonceCookieName(provider), authorization.nonce, {
+      httpOnly: true,
+      sameSite: authorization.cookieSameSite,
+      secure: authorization.cookieSecure,
+      path: `/api/auth/${provider}/callback`,
+      maxAge: authorization.cookieMaxAge,
+    });
+    response.redirect(302, authorization.authorizationUrl);
+  }));
+  const completeWebAuthorization = async (request, response) => {
+    const provider = String(request.params.provider ?? "");
+    const state = request.body?.state ?? request.query.state;
+    const nonceCookie = oauthNonceCookieName(provider);
+    const cookieOptions = { path: `/api/auth/${provider}/callback`, sameSite: provider === "apple" ? "none" : "lax", secure: provider === "apple" || runtimeEnv.NODE_ENV === "production" };
+    let returnTo = "/";
+    try {
+      if (request.body?.error || request.query.error) throw httpError("auth_authorization_denied", 400);
+      const code = request.body?.code ?? request.query.code ?? request.query.auth_code;
+      const completed = await authService.completeWeb({ provider, code, state, nonce: cookieValue(request, nonceCookie) });
+      returnTo = completed.returnTo;
+      const issued = sessionStore.issue({
+        userId: authenticatedUserId(completed.identity),
+        provider: completed.identity.provider,
+        displayName: completed.identity.displayName,
+      });
+      response.cookie("travel_session", issued.opaqueToken, sessionCookieOptions(runtimeEnv, issued.expiresAt));
+      response.clearCookie(nonceCookie, cookieOptions);
+      response.redirect(303, authResultLocation(returnTo, "auth", "success"));
+    } catch (error) {
+      response.clearCookie(nonceCookie, cookieOptions);
+      response.redirect(303, authResultLocation(returnTo, "auth_error", publicAuthError(error)));
+    }
+  };
+  app.get("/api/auth/:provider/callback", completeWebAuthorization);
+  app.post("/api/auth/:provider/callback", completeWebAuthorization);
   app.get("/api/provider-status", asyncRoute(async (request, response) => {
     requireSession(request);
     response.json(providerStatusSummary(runtimeEnv));
   }));
   app.post("/api/auth/session", asyncRoute(async (request, response) => {
     const provider = request.body?.provider;
-    if (!AUTH_PROVIDERS.includes(provider)) throw httpError("unsupported_auth_provider", 400, { provider });
+    if (provider !== "email_otp") throw httpError("unsupported_auth_provider", 400, { provider });
     if (!developmentAuthEnabled) throw httpError("auth_provider_not_configured", 503, { provider, message: "Configure this provider callback before issuing a production session." });
     const identity = String(request.body?.identity ?? "").trim();
     if (!identity || identity.length > 256) throw httpError("invalid_auth_identity");
     const userId = developmentUserId({ provider, identity });
-    const issued = sessionStore.issue({ userId, provider });
-    response.cookie("travel_session", issued.opaqueToken, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", path: "/", maxAge: 1000 * 60 * 60 * 24 * 14 });
-    response.status(201).json({ schemaVersion: "auth-session-v1", userId, provider, expiresAt: issued.expiresAt, accessToken: issued.opaqueToken, developmentOnly: true });
+    const issued = sessionStore.issue({ userId, provider, displayName: identity });
+    response.cookie("travel_session", issued.opaqueToken, sessionCookieOptions(runtimeEnv, issued.expiresAt));
+    response.status(201).json({ schemaVersion: "auth-session-v1", userId, provider, displayName: identity, expiresAt: issued.expiresAt, accessToken: issued.opaqueToken, developmentOnly: true });
   }));
-  app.post("/api/auth/platform-exchange", asyncRoute(async (request, _response) => {
+  app.post("/api/auth/platform-exchange", asyncRoute(async (request, response) => {
     const provider = request.body?.provider;
-    if (!AUTH_PROVIDERS.includes(provider) || !["wechat", "alipay", "apple"].includes(provider)) {
-      throw httpError("unsupported_auth_provider", 400, { provider });
-    }
+    if (!["wechat", "alipay"].includes(provider)) throw httpError("unsupported_auth_provider", 400, { provider });
     const authorizationCode = String(request.body?.authorizationCode ?? "").trim();
     if (!authorizationCode || authorizationCode.length > 4096) throw httpError("invalid_authorization_code", 400);
-    throw httpError("auth_provider_not_configured", 503, {
-      provider,
-      message: "Configure and verify the platform authorization-code exchange before issuing production sessions.",
-    });
+    const identity = await authService.exchangePlatform({ provider, authorizationCode });
+    const userId = authenticatedUserId(identity);
+    const issued = sessionStore.issue({ userId, provider: identity.provider, displayName: identity.displayName });
+    response.status(201).json({ schemaVersion: "auth-session-v1", userId, provider: identity.provider, displayName: identity.displayName, expiresAt: issued.expiresAt, accessToken: issued.opaqueToken, developmentOnly: false });
   }));
   app.get("/api/session", asyncRoute(async (request, response) => {
     response.json({ schemaVersion: "auth-session-v1", ...requireSession(request) });
   }));
   app.delete("/api/session", asyncRoute(async (request, response) => {
-    sessionStore.revoke(cookieValue(request, "travel_session"));
+    sessionStore.revoke(sessionTokenFromRequest(request));
     response.clearCookie("travel_session", { path: "/" });
     response.status(204).end();
   }));

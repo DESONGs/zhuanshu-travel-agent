@@ -29,7 +29,9 @@ PORT=8797 npm run api
 npm run web:dev -- --port 5173
 ```
 
-开发会话只在显式开启的非生产环境可用。生产使用 `DATABASE_URL`、精确的 `TRAVEL_AGENT_CORS_ORIGINS` 和真实的授权 code exchange；没有这些配置时，接口明确返回 `auth_provider_not_configured`，不会创建模拟账户。对话 Agent 需要在服务器环境配置 `TRAVEL_AGENT_MODEL_PROVIDER`、`TRAVEL_AGENT_MODEL` 及对应密钥；缺少时界面保留用户需求并明确显示 `agent_unavailable`，不会生成虚构推荐。
+开发会话只在显式开启的非生产环境可用。生产登录以 Google 为主入口，并支持微信/支付宝官方扫码页、Sign in with Apple，以及微信/支付宝小程序授权码交换；服务端校验 state、身份令牌或平台签名后才签发本站会话。必须设置 `TRAVEL_AGENT_PUBLIC_ORIGIN`、两个独立会话密钥和对应平台凭据；没有这些配置时按钮显示“待开放”，不会创建模拟账户。账号申请、回调地址和 ENV 字段见 [账号与 API 配置说明](./wiki/current/09-account-configuration-guide.md)。
+
+生产同时使用 `DATABASE_URL` 和精确的 `TRAVEL_AGENT_CORS_ORIGINS`。对话 Agent 需要在服务器环境配置 `TRAVEL_AGENT_MODEL_PROVIDER`、`TRAVEL_AGENT_MODEL` 及对应密钥；缺少时界面保留用户需求并明确显示 `agent_unavailable`，不会生成虚构推荐。
 
 默认父 Agent 使用 DeepSeek V4 Flash。用户可在每段对话中切换到 DeepSeek V4 Pro 或 Kimi K3；选择会持久化并显示在回答时间旁。Pi sub-agent 默认使用 Kimi K2.6，Kimi K2.6 同时处理用户授权的图片理解。账号配置、Provider 状态及官方来源见 [模型路由、账号接入与数据能力](./wiki/current/08-provider-accounts-and-routing.md)。
 
