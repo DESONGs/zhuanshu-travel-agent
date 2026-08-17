@@ -38,6 +38,19 @@ function isoDate(year: number, month: number, day: number): string | null {
   return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
+function nearestFutureYear(reference: Date, month: number, day: number): number {
+  const currentYear = reference.getUTCFullYear();
+  const candidate = isoDate(currentYear, month, day);
+  const referenceDate = reference.toISOString().slice(0, 10);
+  return candidate && candidate >= referenceDate ? currentYear : currentYear + 1;
+}
+
+function inclusiveDateRange(start: string, durationDays: number): string {
+  const startDate = new Date(`${start}T00:00:00.000Z`);
+  const endDate = new Date(startDate.getTime() + (durationDays - 1) * 86_400_000);
+  return `${start} 至 ${endDate.toISOString().slice(0, 10)}`;
+}
+
 function normalizedTravelDates(value: unknown, referenceTimestamp: string): string | null {
   const raw = String(value ?? "").trim();
   if (!raw) return null;
@@ -52,9 +65,9 @@ function normalizedTravelDates(value: unknown, referenceTimestamp: string): stri
   const chineseRange = raw.match(/(?:(20\d{2})\s*年\s*)?(\d{1,2})\s*月\s*(\d{1,2})\s*日?\s*(?:至|到|[-—~～])\s*(?:(20\d{2})\s*年\s*)?(?:(\d{1,2})\s*月\s*)?(\d{1,2})\s*日?/);
   if (chineseRange) {
     const reference = new Date(referenceTimestamp);
-    const startYear = Number(chineseRange[1] ?? reference.getUTCFullYear());
     const startMonth = Number(chineseRange[2]);
     const startDay = Number(chineseRange[3]);
+    const startYear = chineseRange[1] ? Number(chineseRange[1]) : nearestFutureYear(reference, startMonth, startDay);
     let endYear = Number(chineseRange[4] ?? startYear);
     const endMonth = Number(chineseRange[5] ?? startMonth);
     const endDay = Number(chineseRange[6]);
@@ -66,7 +79,10 @@ function normalizedTravelDates(value: unknown, referenceTimestamp: string): stri
   const chineseSingle = raw.match(/(?:(20\d{2})\s*年\s*)?(\d{1,2})\s*月\s*(\d{1,2})\s*日/);
   if (chineseSingle) {
     const reference = new Date(referenceTimestamp);
-    return isoDate(Number(chineseSingle[1] ?? reference.getUTCFullYear()), Number(chineseSingle[2]), Number(chineseSingle[3])) ?? raw.slice(0, 120);
+    const month = Number(chineseSingle[2]);
+    const day = Number(chineseSingle[3]);
+    const year = chineseSingle[1] ? Number(chineseSingle[1]) : nearestFutureYear(reference, month, day);
+    return isoDate(year, month, day) ?? raw.slice(0, 120);
   }
   return raw.slice(0, 120);
 }
@@ -440,6 +456,9 @@ function normalizedBriefUpdate(current: DynamicRecord, changes: DynamicRecord, r
     const durationDays = Number(changes.durationDays);
     if (!Number.isInteger(durationDays) || durationDays < 1 || durationDays > 60) throw new Error("invalid_duration_days");
     next.durationDays = durationDays;
+  }
+  if (typeof next.dates === "string" && /^20\d{2}-\d{2}-\d{2}$/.test(next.dates) && Number.isInteger(next.durationDays) && next.durationDays > 1) {
+    next.dates = inclusiveDateRange(next.dates, next.durationDays);
   }
   if (changes.totalBudget !== undefined) {
     const totalBudget = Number(changes.totalBudget);

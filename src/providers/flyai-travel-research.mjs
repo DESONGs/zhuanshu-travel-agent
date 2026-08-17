@@ -121,6 +121,7 @@ function normalizeHotel(item, checkedAt) {
   const mediaUrl = safeProviderUrl(item.mainPic, "image");
   const longitude = numberOrNull(item.longitude);
   const latitude = numberOrNull(item.latitude);
+  const address = text(item.address, 260);
   const facts = [text(item.star, 80), text(item.brandName, 80), priceHint ? `参考价 ${priceHint}` : "", text(item.interestsPoi, 160), text(item.address, 260)].filter(Boolean);
   return candidateBase({
     domain: "stay",
@@ -129,13 +130,10 @@ function normalizeHotel(item, checkedAt) {
     summary: facts.join(" · "),
     checkedAt,
     media: mediaUrl ? [{ url: mediaUrl, title: text(item.name, 120), source: FLYAI_PROVIDER }] : [],
-    location: {
-      label: text(item.address, 260) || null,
-      district: null,
-      city: null,
-      adcode: null,
-      coordinates: longitude != null && latitude != null ? { longitude, latitude, coordinateSystem: "GCJ-02" } : null,
-    },
+    location: address || (longitude != null && latitude != null) ? {
+      ...(address ? { address, label: address } : {}),
+      ...(longitude != null && latitude != null ? { coordinates: { longitude, latitude, coordinateSystem: "GCJ-02" } } : {}),
+    } : null,
     cost: exactPrice(priceHint),
     operability: {
       priceHint: priceHint || null,
@@ -152,6 +150,7 @@ function normalizePoi(item, checkedAt) {
   const mediaUrl = safeProviderUrl(item.mainPic, "image");
   const longitude = numberOrNull(item.longitude);
   const latitude = numberOrNull(item.latitude);
+  const address = text(item.address, 260);
   const facts = [text(item.category, 80), text(item.poiLevel, 20) ? `${text(item.poiLevel, 20)}A` : "", ticketPrice ? `门票参考 ${ticketPrice}` : text(item.freePoiStatus, 40) === "FREE" ? "免费开放" : "", text(item.address, 260), text(item.description, 300)].filter(Boolean);
   return candidateBase({
     domain: "play",
@@ -160,13 +159,10 @@ function normalizePoi(item, checkedAt) {
     summary: facts.join(" · "),
     checkedAt,
     media: mediaUrl ? [{ url: mediaUrl, title: text(item.name, 120), source: FLYAI_PROVIDER }] : [],
-    location: {
-      label: text(item.address, 260) || null,
-      district: null,
-      city: null,
-      adcode: null,
-      coordinates: longitude != null && latitude != null ? { longitude, latitude, coordinateSystem: "GCJ-02" } : null,
-    },
+    location: address || (longitude != null && latitude != null) ? {
+      ...(address ? { address, label: address } : {}),
+      ...(longitude != null && latitude != null ? { coordinates: { longitude, latitude, coordinateSystem: "GCJ-02" } } : {}),
+    } : null,
     cost: exactPrice(ticketPrice),
     operability: {
       priceHint: ticketPrice || null,

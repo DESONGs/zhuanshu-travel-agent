@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { TuniuTravelResearchProvider } from "../src/providers/tuniu-travel-research.mjs";
+import { normalizeProviderResult } from "../travel-agent-pi-package/src/providers/index.ts";
 
 function client(fixtures) {
   return {
@@ -27,6 +28,7 @@ test("Tuniu research normalizes official hotel and train inventory into shared c
   assert.equal(result.byDomain.transport[0].operability.availableSeats, 15);
   assert.deepEqual(fake.calls.map((call) => call.tool).sort(), ["searchLowestPriceTrain", "tuniuHotelSearch"]);
   assert.equal(result.byDomain.stay[0].operability.bookingUrl, undefined);
+  assert.doesNotThrow(() => normalizeProviderResult(result), "hotel candidates without coordinates must still satisfy the shared Provider contract");
 });
 
 test("Tuniu research chooses the flight read tool only when the traveler requested air travel", async () => {

@@ -4,6 +4,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FlyaiTravelResearchProvider } from "../src/providers/flyai-travel-research.mjs";
+import { normalizeProviderResult } from "../travel-agent-pi-package/src/providers/index.ts";
 
 function fixture(command) {
   if (command === "search-hotel") return [{
@@ -56,4 +57,5 @@ test("FlyAI strips non-allowlisted media and handoff URLs", async () => {
   const result = await provider.research({ brief: { destination: "大理" }, domains: ["stay"] });
   assert.equal(result.byDomain.stay[0].media.length, 0);
   assert.equal(result.byDomain.stay[0].operability.bookingUrl, null);
+  assert.doesNotThrow(() => normalizeProviderResult(result), "a provider place without coordinates must omit the nested field instead of returning null");
 });

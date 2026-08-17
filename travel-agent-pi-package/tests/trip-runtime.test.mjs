@@ -41,6 +41,12 @@ test("normalizes common Chinese date ranges before weather research", () => {
   assert.equal(state.brief.dates, "2026-08-20 至 2026-08-23");
   const inferredYear = updateTripControlScope(state, { brief: { dates: "12月30日至1月2日" } }, { clock });
   assert.equal(inferredYear.brief.dates, "2026-12-30 至 2027-01-02");
+  const nextOccurrence = updateTripControlScope(inferredYear, { brief: { dates: "3月1日至3月3日" } }, { clock });
+  assert.equal(nextOccurrence.brief.dates, "2027-03-01 至 2027-03-03");
+  const explicitPast = updateTripControlScope(nextOccurrence, { brief: { dates: "2025年3月1日至3月3日" } }, { clock });
+  assert.equal(explicitPast.brief.dates, "2025-03-01 至 2025-03-03");
+  const startAndDuration = updateTripControlScope(explicitPast, { brief: { dates: "10月3日", durationDays: 5 } }, { clock });
+  assert.equal(startAndDuration.brief.dates, "2026-10-03 至 2026-10-07");
   const fuzzy = updateTripControlScope(inferredYear, { brief: { dates: "国庆五天" } }, { clock });
   assert.equal(fuzzy.brief.dates, "国庆五天");
 });

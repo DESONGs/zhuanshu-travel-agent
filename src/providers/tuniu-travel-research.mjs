@@ -61,6 +61,9 @@ function normalizeHotel(item, checkedAt) {
   const providerRef = text(item.hotelId, 100) || hash(`${item.hotelName}:${item.address}`);
   const cost = numeric(item.lowestPrice) ?? 0;
   const photo = safeImage(item.firstPic);
+  const address = text(item.address, 240);
+  const district = text(item.business, 120);
+  const city = text(item.cityName, 100);
   const details = [text(item.starName, 50), text(item.brandName, 80), item.commentScore ? `评分 ${item.commentScore}` : "", cost ? `最低价 ¥${cost}` : "", text(item.roomName, 120), text(item.meal, 60), text(item.refund, 100), text(item.commentDigest, 200), text(item.address, 240)].filter(Boolean);
   return candidate({
     domain: "stay",
@@ -70,7 +73,7 @@ function normalizeHotel(item, checkedAt) {
     checkedAt,
     cost,
     media: photo ? [{ url: photo, title: text(item.hotelName, 120), source: PROVIDER }] : [],
-    location: { label: text(item.address, 240) || null, district: text(item.business, 120) || null, city: text(item.cityName, 100) || null, adcode: null, coordinates: null },
+    location: address || district || city ? { ...(address ? { address, label: address } : {}), ...(district ? { district } : {}), ...(city ? { city } : {}) } : null,
     operability: { rating: numeric(item.commentScore), priceHint: cost ? `¥${cost} 起` : null, roomName: text(item.roomName, 120) || null, meal: text(item.meal, 80) || null, refundPolicy: text(item.refund, 140) || null, inventoryVerified: true, offerFreshness: "search_time" },
   });
 }

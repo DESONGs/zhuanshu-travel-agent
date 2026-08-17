@@ -10,3 +10,17 @@
 .route-title { display:block; font-size:25rpx; font-weight:700; }
 .route-facilities text.assist { color:#255f47; background:#e8f5ec; }
 .route-facilities text.barrier { color:#8b5018; background:#fff1df; }
+.workspace-tabs { position:sticky; top:0; z-index:4; display:grid; grid-template-columns:repeat(3,1fr); gap:8rpx; padding:12rpx 24rpx; background:rgba(246,248,249,.96); }
+.workspace-tabs button { height:72rpx; line-height:72rpx; margin:0; padding:0; border:0; border-radius:18rpx; color:#60717b; background:#e9eef1; font-size:25rpx; font-weight:700; }
+.workspace-tabs button::after,.decision-tabs button::after,.map-cta::after { border:0; }
+.workspace-tabs button.active { color:#245b73; background:#fff; box-shadow:0 6rpx 18rpx rgba(50,73,86,.09); }
+.messages { height:calc(100vh - 430rpx); }
+.composer-hint { color:#74818a; font-size:22rpx; }
+.decision-tabs { display:grid; grid-template-columns:repeat(4,1fr); gap:8rpx; margin-top:24rpx; }
+.decision-tabs button { min-width:0; height:92rpx; margin:0; padding:10rpx 6rpx; border:1rpx solid #dfe5e8; border-radius:16rpx; color:#617079; background:#f5f8f9; font-size:25rpx; font-weight:700; line-height:1.25; }
+.decision-tabs button.active { color:#255f47; border-color:#a8cfb5; background:#edf8f0; }
+.decision-tabs text { display:block; margin-top:4rpx; font-size:18rpx; font-weight:500; }
+.facility-copy { display:block; margin-top:8rpx; color:#316449; font-size:20rpx; line-height:1.45; }
+.schedule-label { display:block; margin-bottom:6rpx; color:#6a7b85; font-size:20rpx; font-weight:700; }
+.map-cta { margin-top:22rpx; color:#315f77; border:1rpx solid #b9ced9; border-radius:18rpx; background:#eef7fb; font-size:24rpx; font-weight:700; }
+.facility-panel { margin-top:0; }

@@ -87,6 +87,59 @@ function compactToolPayload(value) {
   return text.length > 10_000 ? `${text.slice(0, 9_800)}\n[truncated]` : text;
 }
 
+function domainCandidateDigest(byDomain = {}) {
+  return Object.fromEntries(LINKED_TRAVEL_DOMAINS.map((domain) => {
+    const candidates = Array.isArray(byDomain?.[domain]) ? byDomain[domain] : [];
+    return [domain, {
+      count: candidates.length,
+      options: candidates.slice(0, 3).map((candidate) => ({
+        title: candidate.title,
+        summary: trimText(candidate.summary, 220),
+        sourceStatus: candidate.sourceStatus ?? null,
+      })),
+    }];
+  }));
+}
+
+function proposalDigest(proposal) {
+  if (!proposal) return null;
+  const domains = domainCandidateDigest(proposal.byDomain);
+  return {
+    proposalId: proposal.proposalId,
+    title: proposal.title,
+    summary: proposal.summary,
+    providerLabel: proposal.providerLabel ?? null,
+    checkedAt: proposal.checkedAt ?? null,
+    domains,
+    missingDomains: LINKED_TRAVEL_DOMAINS.filter((domain) => domains[domain].count === 0),
+    caveats: (proposal.caveats ?? []).slice(0, 8),
+  };
+}
+
+function planDigest(plan) {
+  return {
+    tripId: plan.tripId,
+    revision: plan.revision,
+    acceptedDomains: Object.fromEntries(LINKED_TRAVEL_DOMAINS.map((domain) => [domain, (plan.byDomain?.[domain] ?? []).filter((candidate) => candidate.selected).map((candidate) => candidate.title).slice(0, 6)])),
+    pendingProposals: (plan.pendingProposals ?? []).slice(0, 2).map(proposalDigest),
+    weather: plan.weather ? { status: plan.weather.status, coverage: plan.weather.coverage, provider: plan.weather.provider, affectedDomains: plan.weather.planningImpact?.affectedDomains ?? [] } : null,
+    mobility: plan.mobility ? { status: plan.mobility.status, reason: plan.mobility.reason ?? null, legCount: plan.mobility.legs?.length ?? 0 } : null,
+  };
+}
+
+function researchDigest(result) {
+  const proposal = proposalDigest(result.proposal);
+  return {
+    status: result.status,
+    tripId: result.tripId ?? null,
+    proposal,
+    candidateCounts: result.candidateCounts ?? (proposal ? Object.fromEntries(LINKED_TRAVEL_DOMAINS.map((domain) => [domain, proposal.domains[domain].count])) : {}),
+    missingDomains: proposal?.missingDomains ?? [],
+    weather: result.weather ? { status: result.weather.status, coverage: result.weather.coverage, provider: result.weather.provider } : null,
+    fabricatedResults: result.fabricatedResults === true,
+  };
+}
+
 function userFacingAgentText(value) {
   return trimText(value, 8_000)
     .replace(/\bweatherFit\b/gi, "天气适配结果")
@@ -187,8 +240,11 @@ function tripBriefForPrompt(control) {
   });
 }
 
-function parentSystemPrompt({ conversation, control }) {
+function parentSystemPrompt({ conversation, control, referenceTime }) {
+  const referenceDate = new Date(referenceTime ?? Date.now()).toLocaleDateString("zh-CN", { timeZone: "Asia/Hong_Kong", year: "numeric", month: "2-digit", day: "2-digit" });
   return `你是用户正在交谈的旅行顾问。你的任务是理解整段对话，把零散想法持续整理成一趟旅行，并协调吃、住、行、玩之间的取舍。你不是问卷、关键词分类器或行程录入表单。
+
+今天是 ${referenceDate}。用户没有明确说年份时，不得凭模型记忆补写年份，也不得生成过去日期；把用户原本的“10月3日”“3月1日至3日”等无年份表达原样交给 save_trip_understanding，由旅行状态按今天推断最近一次未来日期。用户明确说出年份时才保留该年份。
 
 产品边界：
 - 用户先讲自然语言需求；不要要求用户先手工添加行程条目。
@@ -207,6 +263,7 @@ function parentSystemPrompt({ conversation, control }) {
 - 信息不足时只问一个真正影响下一步的问题。不要一次发问卷，不要把可由你提出候选的问题退回给用户，例如用户说“住宿位置你来设计”时就应研究和比较，而不是要求用户先选片区。
 - 在研究工具返回可核验资料前，不得说出具体片区、景点、餐厅、酒店、交通时长、拥堵、评分、价格、房态或营业事实。不得用模型记忆补空。
 - research_trip_options 返回候选后，只需告诉用户方案区已出现可以比较的选择，并概括最重要的取舍。用户通过方案区按钮确认，不由聊天模型直接提交。
+- 工具摘要会逐域给出候选数量和 missingDomains。只把数量为 0 的域说成“待补”或“缺失”；数量大于 0 的域必须说成“已有候选”，不得把已有交通、住宿或游玩候选误报为待补。
 - 绝不自动购买、退改，也不索要证件号、支付信息、Cookie、Token 或手机号号码。
 - 数据来源限流、不可用或没有结果时，使用普通用户能理解的语言说明影响和恢复动作，不能把空结果说成搜索完成。
 
@@ -361,7 +418,7 @@ export class TravelConversationAgent {
         description: "用户提供或纠正任何旅行事实时调用。结合整段对话理解短句；省略字段保持原值。目的地明确即可首次保存。同行关系能明确推出人数时必须同时提供 travelerCount；任何指向具体同行人的行动、体力、设施、时间或饮食要求必须放入 travelerProfiles，不保留诊断文本。",
         parameters: Type.Object({
           destination: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
-          dates: Type.Optional(Type.String({ maxLength: 120, description: "明确日期尽量写成 YYYY-MM-DD 至 YYYY-MM-DD；模糊日期保持用户原意。" })),
+          dates: Type.Optional(Type.String({ maxLength: 120, description: "用户明确说出年份时可写 YYYY-MM-DD；没有明确年份时必须保留用户的无年份原话，不能擅自补年份。" })),
           durationDays: Type.Optional(Type.Integer({ minimum: 1, maximum: 60 })),
           origin: Type.Optional(Type.String({ maxLength: 120 })),
           arrivalMode: Type.Optional(Type.String({ maxLength: 80 })),
@@ -431,7 +488,7 @@ export class TravelConversationAgent {
         execute: async () => {
           if (!activeTripId) return toolFailure("trip_not_created");
           const view = await this.travelService.getTripControlView(activeTripId);
-          return toolResult(view, { status: "ready", tripId: activeTripId, revision: view.revision });
+          return toolResult(planDigest(view), { status: "ready", tripId: activeTripId, revision: view.revision });
         },
       },
       {
@@ -461,13 +518,14 @@ export class TravelConversationAgent {
           const hasExistingPlan = currentPlan.pendingProposals.length > 0 || Object.values(currentPlan.byDomain).some((nodes) => nodes.length > 0);
           const domains = hasExistingPlan ? params.domains : LINKED_TRAVEL_DOMAINS;
           const result = await this.travelService.researchTripOptions({ tripId: activeTripId, capability: "linked_travel_research", domains, question: params.question });
-          return toolResult(result, { status: result.status, capability: "linked_travel_research", tripId: activeTripId, proposalId: result.proposal?.proposalId ?? null });
+          return toolResult(researchDigest(result), { status: result.status, capability: "linked_travel_research", tripId: activeTripId, proposalId: result.proposal?.proposalId ?? null });
         },
       },
     ];
     const promptConversation = { ...conversation, messages: conversation.messages.slice(0, -1) };
+    const referenceTime = new Date(this.clock?.() ?? Date.now()).toISOString();
     const agent = new Agent({
-      initialState: { systemPrompt: parentSystemPrompt({ conversation: promptConversation, control }), model, tools, thinkingLevel: configuration.thinkingLevel ?? (configuration.provider === "deepseek" ? "high" : "low") },
+      initialState: { systemPrompt: parentSystemPrompt({ conversation: promptConversation, control, referenceTime }), model, tools, thinkingLevel: configuration.thinkingLevel ?? (configuration.provider === "deepseek" ? "high" : "low") },
       streamFn: models.streamSimple.bind(models),
       toolExecution: "sequential",
       sessionId: conversation.conversationId,

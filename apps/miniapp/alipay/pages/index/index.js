@@ -44,20 +44,25 @@ function planModel(plan) {
   const proposalDomains = proposal ? ["play", "food", "stay", "transport"].map((key) => ({
     key,
     label: labels[key],
-    candidates: (proposal.byDomain[key] || []).map((candidate, index) => ({ ...candidate, selected: index === 0, photo: candidate.media && candidate.media[0] ? candidate.media[0].url : "" })),
+    candidates: (proposal.byDomain[key] || []).map((candidate) => ({ ...candidate, selected: candidate.selected === true, photo: candidate.media && candidate.media[0] ? candidate.media[0].url : "", facilityText: candidate.operability && candidate.operability.mappedFacilities && candidate.operability.mappedFacilities.length ? `设施参考：${candidate.operability.mappedFacilities.map((facility) => facility.label).join("、")} · 非实时` : "" })),
+  })).filter((domain) => domain.candidates.length).map((domain) => ({ ...domain, hasSelection: domain.candidates.some((candidate) => candidate.selected) })) : [];
+  const accepted = plan ? Object.values(plan.byDomain || {}).flatMap((items) => items.filter((item) => item.selected)).map((item) => ({
+    ...item,
+    scheduleLabel: item.time || (item.operability && (item.operability.departureAt || item.operability.arrivalAt)) || "待排入日程",
+    facilities: ((item.operability && item.operability.mappedFacilities) || []).map((facility) => ({ ...facility, note: `${facility.label} · 非实时` })),
   })) : [];
-  const markers = proposalDomains.flatMap((domain) => domain.candidates).filter((candidate) => candidate.location && candidate.location.coordinates).map((candidate, index) => ({
+  const mapNodes = proposalDomains.length ? proposalDomains.flatMap((domain) => domain.candidates) : accepted;
+  const markers = mapNodes.filter((candidate) => candidate.location && candidate.location.coordinates).map((candidate, index) => ({
     id: index + 1,
     longitude: candidate.location.coordinates.longitude,
     latitude: candidate.location.coordinates.latitude,
     title: candidate.title,
   }));
-  const accepted = plan ? Object.values(plan.byDomain || {}).flatMap((items) => items.filter((item) => item.selected)) : [];
-  return { proposal, proposalDomains, markers, accepted, mobility: mobilityModel(plan && plan.mobility) };
+  return { proposal, proposalDomains, activeDomainKey: proposalDomains[0] ? proposalDomains[0].key : "play", markers, accepted, mobility: mobilityModel(plan && plan.mobility) };
 }
 
 Page({
-  data: { signedIn: false, loading: false, conversations: [], conversation: null, input: "", trip: null, proposal: null, proposalDomains: [], markers: [], accepted: [], mobility: null, modelOptions: [], modelIndex: 0, selectedModelId: "deepseek-v4-flash", notice: "登录后直接说出旅行想法，不需要先创建行程。" },
+  data: { signedIn: false, loading: false, conversations: [], conversation: null, input: "", trip: null, proposal: null, proposalDomains: [], markers: [], accepted: [], mobility: null, activeView: "conversation", activeDomainKey: "play", modelOptions: [], modelIndex: 0, selectedModelId: "deepseek-v4-flash", notice: "登录后直接说出旅行想法，不需要先创建行程。" },
   signIn() {
     this.setData({ loading: true });
     my.getAuthCode({
@@ -100,6 +105,14 @@ Page({
     if (conversation.tripId) await this.loadTrip(conversation.tripId);
   },
   onInput(event) { this.setData({ input: event.detail.value }); },
+  switchView(event) {
+    const activeView = event.currentTarget.dataset.view;
+    if (activeView && (activeView === "conversation" || this.data.trip)) this.setData({ activeView });
+  },
+  switchDecisionDomain(event) {
+    const activeDomainKey = event.currentTarget.dataset.domain;
+    if (activeDomainKey) this.setData({ activeDomainKey });
+  },
   onModelChange(event) {
     const modelIndex = Number(event.detail.value);
     const selectedModelId = this.data.modelOptions[modelIndex] && this.data.modelOptions[modelIndex].id;
@@ -112,7 +125,10 @@ Page({
     try {
       const result = await app.request(`/api/conversations/${encodeURIComponent(this.data.conversation.conversationId)}/messages`, { method: "POST", data: { text, modelId: this.data.selectedModelId } });
       this.setData({ conversation: result.conversation, notice: "" });
-      if (result.tripId || result.conversation.tripId) await this.loadTrip(result.tripId || result.conversation.tripId);
+      if (result.tripId || result.conversation.tripId) {
+        await this.loadTrip(result.tripId || result.conversation.tripId);
+        this.setData({ activeView: "itinerary" });
+      }
     } catch (error) {
       this.setData({ input: text, notice: message(error) });
     } finally {
@@ -129,17 +145,21 @@ Page({
   selectCandidate(event) {
     const { domain, nodeId } = event.currentTarget.dataset;
     const proposalDomains = this.data.proposalDomains.map((item) => item.key === domain ? { ...item, candidates: item.candidates.map((candidate) => ({ ...candidate, selected: candidate.nodeId === nodeId })) } : item);
-    this.setData({ proposalDomains });
+    this.setData({ proposalDomains: proposalDomains.map((domainItem) => ({ ...domainItem, hasSelection: domainItem.candidates.some((candidate) => candidate.selected) })) });
   },
   async acceptProposal() {
     if (!this.data.proposal || !this.data.trip || this.data.loading) return;
+    if (this.data.proposalDomains.some((domain) => domain.candidates.length && !domain.candidates.some((candidate) => candidate.selected))) {
+      this.setData({ notice: "请先完成每一项选择，再确认整份方案。" });
+      return;
+    }
     const selections = Object.fromEntries(this.data.proposalDomains.map((domain) => [domain.key, domain.candidates.find((candidate) => candidate.selected)?.nodeId]).filter((item) => item[1]));
     this.setData({ loading: true });
     try {
       await app.request(`/api/trips/${encodeURIComponent(this.data.trip.tripId)}/proposals/${encodeURIComponent(this.data.proposal.proposalId)}/accept`, { method: "POST", data: { selections } });
       await app.request(`/api/trips/${encodeURIComponent(this.data.trip.tripId)}/mobility/refresh`, { method: "POST" });
       await this.loadTrip(this.data.trip.tripId);
-      this.setData({ notice: "方案已加入这趟旅行，仍可继续对话调整。" });
+      this.setData({ notice: "方案已加入这趟旅行，仍可继续对话调整。", activeView: "itinerary" });
     } catch (error) {
       this.setData({ notice: message(error) });
     } finally {
