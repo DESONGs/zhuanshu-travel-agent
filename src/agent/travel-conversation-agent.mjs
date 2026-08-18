@@ -409,8 +409,21 @@ export class TravelConversationAgent {
     }
 
     let activeTripId = conversation.tripId;
-    const control = activeTripId ? await this.travelService.getTripControlView(activeTripId).catch(() => null) : null;
+    let control = null;
+    if (activeTripId) {
+      try {
+        control = await this.travelService.getTripControlView(activeTripId);
+      } catch (error) {
+        if (error?.code !== "trip_not_found") throw error;
+      }
+    }
     const activities = [];
+    if (activeTripId && !control) {
+      activities.push({ toolName: "restore_trip_draft", status: "needs_rebuild" });
+      activeTripId = null;
+      conversation = { ...conversation, tripId: null };
+      control = null;
+    }
     const tools = [
       {
         name: "save_trip_understanding",
@@ -551,6 +564,8 @@ export class TravelConversationAgent {
       }
       responseText = userFacingAgentText(responseText);
       if (!responseText) throw agentError("empty_agent_response");
+      const recoveryActivity = activities.find((activity) => activity.toolName === "restore_trip_draft");
+      if (recoveryActivity && activeTripId) recoveryActivity.status = "recovered";
       conversation = appendMessage(conversation, { role: "assistant", text: responseText, modelId: selectedModelId, clock: this.clock });
       if (activeTripId !== conversation.tripId) conversation = { ...conversation, tripId: activeTripId };
       const saved = await this.conversationRepository.save(conversation, { expectedStorageVersion: stored.storageVersion });

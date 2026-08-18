@@ -25,6 +25,50 @@ function formatTime(value) {
   return Number.isNaN(date.getTime()) ? "刚刚" : new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(date);
 }
 
+function formatConversationRecency(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "刚刚更新";
+  const now = new Date();
+  const sameDay = now.toDateString() === date.toDateString();
+  return sameDay
+    ? `今天 ${new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(date)}`
+    : new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" }).format(date);
+}
+
+function clamp(value, minimum, maximum) {
+  return Math.min(maximum, Math.max(minimum, value));
+}
+
+function storedPaneLayout() {
+  if (typeof window === "undefined") return { sessions: 236, conversation: 420, itinerary: 480 };
+  try {
+    const stored = JSON.parse(window.localStorage.getItem("travel-agent-pane-layout-v1") || "{}");
+    return {
+      sessions: clamp(Number(stored.sessions) || 236, 200, 340),
+      conversation: clamp(Number(stored.conversation) || 420, 340, 720),
+      itinerary: clamp(Number(stored.itinerary) || 480, 330, 760),
+    };
+  } catch {
+    return { sessions: 236, conversation: 420, itinerary: 480 };
+  }
+}
+
+function ResizeHandle({ className = "", label, onPointerDown, onNudge }) {
+  return <div
+    className={`pane-resizer ${className}`}
+    role="separator"
+    aria-label={label}
+    aria-orientation="vertical"
+    tabIndex={0}
+    onPointerDown={onPointerDown}
+    onKeyDown={(event) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      event.preventDefault();
+      onNudge(event.key === "ArrowLeft" ? -24 : 24);
+    }}
+  ><span /></div>;
+}
+
 function formatCheckedAt(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "核验时间未知";
@@ -233,7 +277,7 @@ function Composer({ value, onChange, onSubmit, loading }) {
 function ActivityStrip({ activities }) {
   if (!activities?.length) return null;
   const labels = { save_trip_understanding: "已记住旅行要求", research_trip_options: "正在查找吃住行玩", get_trip_control_view: "已读取旅行要求", get_trip_plan_view: "已读取当前方案", accept_trip_change: "已确认方案", refresh_trip_mobility: "已核验城市内移动", reject_trip_change: "已放弃候选" };
-  return <div className="activity-strip" aria-live="polite" aria-label="本轮处理进度">{activities.map((activity, index) => <span key={`${activity.toolName}-${index}`} className={["provider_unavailable", "AUTH_REQUIRED", "ACCOUNT_LIMITED", "RATE_LIMITED", "SOURCE_UNAVAILABLE", "EMPTY_VERIFIED"].includes(activity.status) ? "warning" : ""}>{activity.toolName === "research_trip_options" && ["provider_unavailable", "AUTH_REQUIRED", "SOURCE_UNAVAILABLE"].includes(activity.status) ? "没有取得实时地点资料" : activity.toolName === "research_trip_options" && activity.status === "ACCOUNT_LIMITED" ? "地图资料暂时无法访问" : activity.toolName === "research_trip_options" && activity.status === "RATE_LIMITED" ? "实时资料请求较多，请稍后再试" : activity.toolName === "research_trip_options" && activity.status === "EMPTY_VERIFIED" ? "暂未找到可靠地点资料" : activity.toolName === "refresh_trip_mobility" && activity.status === "provider_unavailable" ? "城市路线资料暂不可用" : activity.toolName === "refresh_trip_mobility" && activity.status === "needs_context" ? "确认更多地点后再核验路线" : `${labels[activity.toolName] ?? "正在处理旅行要求"}${activity.status === "proposed" ? "，可以在方案中比较" : ""}`}</span>)}</div>;
+  return <div className="activity-strip" aria-live="polite" aria-label="本轮处理进度">{activities.map((activity, index) => <span key={`${activity.toolName}-${index}`} className={["provider_unavailable", "AUTH_REQUIRED", "ACCOUNT_LIMITED", "RATE_LIMITED", "SOURCE_UNAVAILABLE", "EMPTY_VERIFIED"].includes(activity.status) ? "warning" : ""}>{activity.toolName === "restore_trip_draft" ? activity.status === "recovered" ? "已恢复旅行草案" : "旅行草案需要恢复" : activity.toolName === "research_trip_options" && ["provider_unavailable", "AUTH_REQUIRED", "SOURCE_UNAVAILABLE"].includes(activity.status) ? "没有取得实时地点资料" : activity.toolName === "research_trip_options" && activity.status === "ACCOUNT_LIMITED" ? "地图资料暂时无法访问" : activity.toolName === "research_trip_options" && activity.status === "RATE_LIMITED" ? "实时资料请求较多，请稍后再试" : activity.toolName === "research_trip_options" && activity.status === "EMPTY_VERIFIED" ? "暂未找到可靠地点资料" : activity.toolName === "refresh_trip_mobility" && activity.status === "provider_unavailable" ? "城市路线资料暂不可用" : activity.toolName === "refresh_trip_mobility" && activity.status === "needs_context" ? "确认更多地点后再核验路线" : `${labels[activity.toolName] ?? "正在处理旅行要求"}${activity.status === "proposed" ? "，可以在方案中比较" : ""}`}</span>)}</div>;
 }
 
 function CandidatePhoto({ candidate }) {
@@ -453,7 +497,7 @@ function TravelerCareSummary({ trip }) {
   </section>;
 }
 
-function PlanCanvas({ conversation, trip, plan, dataUnavailable, onRefresh, onRetryResearch, onAcceptProposal, onRejectProposal, onPrefill, activeMobileView, onMobileViewChange, loading }) {
+function PlanCanvas({ conversation, trip, plan, tripRecovery, dataUnavailable, onRefresh, onRetryResearch, onRecoverTrip, onAcceptProposal, onRejectProposal, onPrefill, activeMobileView, onMobileViewChange, loading, itineraryWidth, onResizeItinerary, onNudgeItinerary }) {
   const items = useMemo(() => Object.entries(plan?.byDomain ?? {}).flatMap(([domain, nodes]) => nodes.filter((node) => node.selected).map((node) => ({ ...node, domain }))), [plan]);
   const proposal = plan?.pendingProposals?.[0] ?? null;
   const proposalCandidates = useMemo(() => proposal ? DOMAIN_ITEMS.flatMap(({ key }) => (proposal.byDomain?.[key] ?? []).map((node) => ({ ...node, domain: key }))) : [], [proposal]);
@@ -479,8 +523,14 @@ function PlanCanvas({ conversation, trip, plan, dataUnavailable, onRefresh, onRe
   }, [plan?.mobility, activeLegId]);
   const selectedNode = workspaceNodes.find((node) => node.nodeId === selectedNodeId) ?? workspaceNodes[0] ?? null;
   const selectedFacilities = selectedNode?.operability?.mappedFacilities ?? [];
-  return <section className={`trip-workspace mobile-mode-${activeMobileView}`} id="trip-plan-canvas">
-    {!trip ? <div className="workspace-empty canvas-empty pre-trip"><div className="canvas-illustration"><MapPin weight="duotone" /><Train weight="duotone" /><MapPin weight="fill" /></div><h2>先说想法，方案再出现</h2><p>不需要先填行程表。告诉我目的地、时间、同行人或一句模糊期待，助手会先理解，再把吃、住、行、玩放进同一趟旅行。</p><div className="canvas-checks"><span><CheckCircle weight="fill" />先理解，再追问必要信息</span><span><CheckCircle weight="fill" />地图、路线和地点同步比较</span><span><CheckCircle weight="fill" />确认后才加入旅行</span></div></div> : <>
+  return <section className={`trip-workspace mobile-mode-${activeMobileView}`} id="trip-plan-canvas" style={{ "--itinerary-width": `${itineraryWidth}px` }}>
+    {!trip ? tripRecovery ? <div className="workspace-empty recovery-launchpad">
+      <div className="recovery-card"><span className="recovery-icon"><ArrowsClockwise weight="bold" /></span><span className="eyebrow">继续这段对话</span><h2>旅行要求还在，草案需要重新建立</h2><p>这段历史对话保存完整，但原来的旅行草案已经丢失。重新建立后，助手会沿用你说过的目的地、同行人和偏好，不需要从头填写。</p><button className="button primary" type="button" onClick={onRecoverTrip} disabled={loading}>{loading ? <CircleNotch className="spin" /> : <ArrowsClockwise />}恢复并继续规划</button><small>不会自动确认、购买或覆盖其他旅行。</small></div>
+      <div className="launchpad-preview"><span className="eyebrow">恢复后会出现</span><div className="launch-domain-grid">{DOMAIN_ITEMS.map(({ key, label, icon: Icon }) => <div key={key}><Icon weight="duotone" /><strong>{label}</strong><span>{key === "transport" ? "路线与换乘" : key === "stay" ? "位置与住宿" : key === "food" ? "本地餐饮" : "体验与节奏"}</span></div>)}</div><p><MapTrifold />地图、地点图片、路线和设施会与候选一起出现。</p></div>
+    </div> : <div className="workspace-empty planning-launchpad">
+      <section className="launchpad-copy"><span className="eyebrow">从一句话到可确认方案</span><h2>{conversation?.messages?.length ? "我已保留刚才的想法" : "先说最重要的，其他交给旅行助手"}</h2><p>{conversation?.messages?.length ? "继续补充或重新发送需求，助手会把吃、住、行、玩放进同一趟旅行，而不是让你先手工做行程。" : "有目的地就直接说；还没决定，也可以只描述假期、同行人和想要的感觉。"}</p><div className="launch-actions"><button type="button" onClick={() => { onPrefill("我想去……，时间是……，同行人有……"); onMobileViewChange("conversation"); }}><CalendarBlank /><span><strong>已有目的地和时间</strong><small>一句话开始规划</small></span></button><button type="button" onClick={() => { onPrefill("还没决定去哪。假期有……天，和……同行，希望……"); onMobileViewChange("conversation"); }}><Compass /><span><strong>帮我决定去哪</strong><small>先从期待和限制出发</small></span></button><button type="button" onClick={() => { onPrefill("这是我已有的旅行想法，请帮我整理并补全："); onMobileViewChange("conversation"); }}><List /><span><strong>整理已有想法</strong><small>粘贴零散攻略或安排</small></span></button></div></section>
+      <section className="launchpad-preview"><span className="eyebrow">方案会这样形成</span><div className="launch-domain-grid">{DOMAIN_ITEMS.map(({ key, label, icon: Icon }) => <div key={key}><Icon weight="duotone" /><strong>{label}</strong><span>{key === "transport" ? "路线与换乘" : key === "stay" ? "位置与住宿" : key === "food" ? "本地餐饮" : "体验与节奏"}</span></div>)}</div><div className="launch-map-preview"><MapTrifold weight="duotone" /><div><strong>地图和行程同步出现</strong><p>候选、图片、路线、卫生间和电梯等设施资料会放在一起比较。</p></div></div><div className="launch-proof"><CheckCircle weight="fill" />只在你确认后加入旅行</div></section>
+    </div> : <>
       <section className="itinerary-pane" aria-label="旅行安排">
         <div className="canvas-topline"><div><span className="eyebrow">行程</span><h2>{trip.destination || "目的地待补充"}</h2></div><button className="quiet-button" onClick={onRefresh} disabled={loading}><ArrowsClockwise />刷新</button></div>
         <div className="trip-brief-bar">{tripBriefChips(trip).map((chip) => <button key={chip.key} type="button" className={chip.missing ? "missing" : ""} onClick={() => { onPrefill(chip.prompt); onMobileViewChange("conversation"); }}>{chip.key === "dates" ? <CalendarBlank /> : chip.key === "pace" ? <PersonSimpleWalk /> : <MapPin />}<span>{chip.label}</span>{chip.missing && <small>补充</small>}</button>)}</div>
@@ -493,6 +543,7 @@ function PlanCanvas({ conversation, trip, plan, dataUnavailable, onRefresh, onRe
           <PlanQualityNotice qa={plan?.qa} />
         </> : dataUnavailable ? <div className="canvas-empty blocked-research"><WarningCircle weight="duotone" /><h3>暂时找不到实时地点资料</h3><p>你的旅行要求已经记住了。等资料恢复后再继续查找，之前说过的内容不用重来。</p><button className="button retry" onClick={onRetryResearch} disabled={loading}><ArrowsClockwise />重新查找旅行方案</button></div> : <div className="canvas-empty"><Sparkle weight="duotone" /><h3>还差一点旅行信息</h3><p>继续在对话中补充。助手只会追问真正影响方案的问题。</p></div>}
       </section>
+      <ResizeHandle className="map-resizer" label="调整行程与地图宽度" onPointerDown={onResizeItinerary} onNudge={onNudgeItinerary} />
       <section className="map-pane" aria-label="地图、路线和设施">
         <header className="map-pane-heading"><div><span className="eyebrow">地图与路线</span><h2>{selectedNode?.title || trip.destination || "地点待确认"}</h2><p>{selectedNode ? `${domainMeta(selectedNode.domain).label}的安排 · ${selectedNode.location?.district || selectedNode.location?.label || "位置资料待补"}` : "确认地点后会联动路线和设施"}</p></div>{selectedNode?.operability?.navigationUrl ? <a href={selectedNode.operability.navigationUrl} target="_blank" rel="noreferrer"><NavigationArrow />打开高德</a> : null}</header>
         <TripMapPreview tripId={trip.tripId} plan={plan} />
@@ -505,8 +556,11 @@ function PlanCanvas({ conversation, trip, plan, dataUnavailable, onRefresh, onRe
   </section>;
 }
 
-function ConversationPicker({ conversations, activeId, onPick, onNew }) {
-  return <aside className="conversation-picker"><div><span className="eyebrow">你的旅行对话</span><h2>继续编辑</h2></div><button className="new-chat" onClick={onNew}><Plus />新对话</button><div className="conversation-list">{conversations.length ? conversations.map((conversation) => <button key={conversation.conversationId} onClick={() => onPick(conversation.conversationId)} className={conversation.conversationId === activeId ? "active" : ""}><strong>{conversation.messages.find((message) => message.role === "user")?.text || "新的旅行想法"}</strong><small>{conversation.tripId ? "已建立旅行草案" : "等待旅行需求"}</small></button>) : <p>还没有对话。</p>}</div></aside>;
+function ConversationPicker({ conversations, activeId, unavailableTripIds, onPick, onNew }) {
+  return <aside className="conversation-picker"><div><span className="eyebrow">你的旅行对话</span><h2>继续编辑</h2></div><button className="new-chat" onClick={onNew}><Plus />新对话</button><div className="conversation-list">{conversations.length ? conversations.map((conversation) => {
+    const needsRecovery = conversation.tripId && unavailableTripIds?.has(conversation.tripId);
+    return <button key={conversation.conversationId} onClick={() => onPick(conversation.conversationId)} className={conversation.conversationId === activeId ? "active" : ""}><strong>{conversation.messages.find((message) => message.role === "user")?.text || "新的旅行想法"}</strong><span className="conversation-meta"><small className={needsRecovery ? "needs-recovery" : ""}>{needsRecovery ? "草案需恢复" : conversation.tripId ? "已建立旅行草案" : "等待旅行需求"}</small><time>{formatConversationRecency(conversation.updatedAt)}</time></span></button>;
+  }) : <p>还没有对话。</p>}</div></aside>;
 }
 
 function TravelEditor({ session, onLogout }) {
@@ -516,33 +570,76 @@ function TravelEditor({ session, onLogout }) {
   const [pendingText, setPendingText] = useState("");
   const [trip, setTrip] = useState(null);
   const [plan, setPlan] = useState(null);
+  const [tripRecovery, setTripRecovery] = useState(null);
+  const [unavailableTripIds, setUnavailableTripIds] = useState(() => new Set());
   const [providerStatus, setProviderStatus] = useState(null);
   const [selectedModelId, setSelectedModelId] = useState("");
   const [mobileView, setMobileView] = useState("conversation");
   const [historyOpen, setHistoryOpen] = useState(false);
   const [status, setStatus] = useState({ loading: true });
+  const [paneLayout, setPaneLayout] = useState(storedPaneLayout);
   const scrollerRef = useRef(null);
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("travel-agent-pane-layout-v1", JSON.stringify(paneLayout));
+    } catch {
+      // Embedded clients may disable persistent storage; resizing still works for the current session.
+    }
+  }, [paneLayout]);
+  const resizePane = useCallback((key, event, minimum, maximum) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = paneLayout[key];
+    const boundedMaximum = Math.max(minimum, maximum);
+    document.body.classList.add("resizing-pane");
+    const move = (nextEvent) => setPaneLayout((current) => ({ ...current, [key]: clamp(startWidth + nextEvent.clientX - startX, minimum, boundedMaximum) }));
+    const stop = () => {
+      document.body.classList.remove("resizing-pane");
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop, { once: true });
+    window.addEventListener("pointercancel", stop, { once: true });
+  }, [paneLayout]);
+  const nudgePane = useCallback((key, delta, minimum, maximum) => {
+    setPaneLayout((current) => ({ ...current, [key]: clamp(current[key] + delta, minimum, Math.max(minimum, maximum)) }));
+  }, []);
   const refreshConversations = useCallback(async () => {
-    const result = await api.listConversations();
+    const [result, tripList] = await Promise.all([api.listConversations(), api.listTrips()]);
+    const availableTripIds = new Set((tripList.trips ?? []).map((item) => item.tripId));
+    setUnavailableTripIds(new Set(result.conversations.map((item) => item.tripId).filter((tripId) => tripId && !availableTripIds.has(tripId))));
     setConversations(result.conversations);
     return result.conversations;
   }, []);
   const loadTrip = useCallback(async (tripId) => {
-    if (!tripId) { setTrip(null); setPlan(null); return; }
-    const [control, nextPlan] = await Promise.all([api.control(tripId), api.plan(tripId)]);
-    setTrip({
-      tripId,
-      destination: control.brief.destination,
-      dates: control.brief.dates,
-      durationDays: control.brief.durationDays,
-      origin: control.brief.origin,
-      arrivalMode: control.brief.arrivalMode,
-      travelerCount: control.travelers.length,
-      travelers: control.travelers,
-      totalBudget: control.brief.totalBudget,
-      pace: control.brief.pace,
-    });
-    setPlan(nextPlan);
+    if (!tripId) { setTrip(null); setPlan(null); setTripRecovery(null); return false; }
+    try {
+      const [control, nextPlan] = await Promise.all([api.control(tripId), api.plan(tripId)]);
+      setTrip({
+        tripId,
+        destination: control.brief.destination,
+        dates: control.brief.dates,
+        durationDays: control.brief.durationDays,
+        origin: control.brief.origin,
+        arrivalMode: control.brief.arrivalMode,
+        travelerCount: control.travelers.length,
+        travelers: control.travelers,
+        totalBudget: control.brief.totalBudget,
+        pace: control.brief.pace,
+      });
+      setPlan(nextPlan);
+      setTripRecovery(null);
+      return true;
+    } catch (error) {
+      if (error.code !== "trip_not_found") throw error;
+      setTrip(null);
+      setPlan(null);
+      setTripRecovery({ tripId });
+      return false;
+    }
   }, []);
   useEffect(() => {
     if (!scrollerRef.current) return;
@@ -554,8 +651,8 @@ function TravelEditor({ session, onLogout }) {
       const selected = await api.conversation(conversationId);
       setConversation(selected);
       setSelectedModelId(selected.modelId);
-      await loadTrip(selected.tripId);
-      setMobileView(selected.tripId ? "itinerary" : "conversation");
+      const loaded = await loadTrip(selected.tripId);
+      setMobileView(loaded ? "itinerary" : "conversation");
       setHistoryOpen(false);
       setStatus({});
     } catch (error) { setStatus({ error: messageError(error) }); }
@@ -573,7 +670,7 @@ function TravelEditor({ session, onLogout }) {
     try {
       const modelId = selectedModelId || providerStatus?.modelSelection?.defaultModelId || "deepseek-v4-flash";
       const created = await api.createConversation({ modelId });
-      setConversation(created); setTrip(null); setPlan(null); setDraft(""); setMobileView("conversation"); setHistoryOpen(false);
+      setConversation(created); setTrip(null); setPlan(null); setTripRecovery(null); setDraft(""); setMobileView("conversation"); setHistoryOpen(false);
       setSelectedModelId(created.modelId);
       await refreshConversations(); setStatus({});
     } catch (error) { setStatus({ error: messageError(error) }); }
@@ -622,16 +719,19 @@ function TravelEditor({ session, onLogout }) {
   const quickReplies = quickRepliesForTrip(trip);
   return <main className="editor-shell">
     <header className="editor-topbar"><button className="history-button" type="button" onClick={() => setHistoryOpen(true)} aria-label="打开旅行对话记录"><ChatsCircle weight="duotone" /><span>对话记录</span></button><div className="brand"><MapPin weight="fill" /> Travel Agent</div><div className="topbar-copy"><span>{trip?.destination || "旅行助手"}</span><small>{trip ? `${trip.dates || (trip.durationDays ? `${trip.durationDays} 天` : "时间待补")} · ${trip.travelerCount} 人` : "从一句话到可确认方案"}</small></div><nav className="mobile-workspace-tabs" aria-label="旅行工作区"><button type="button" className={mobileView === "conversation" ? "active" : ""} onClick={() => setMobileView("conversation")}><ChatsCircle />对话</button><button type="button" className={mobileView === "itinerary" ? "active" : ""} disabled={!trip} onClick={() => setMobileView("itinerary")}><List />行程</button><button type="button" className={mobileView === "map" ? "active" : ""} disabled={!trip} onClick={() => setMobileView("map")}><MapTrifold />地图</button></nav><div className="account-actions"><span>{session.displayName || SESSION_PROVIDER_LABELS[session.provider] || "旅行者"}</span><button className="icon-button" onClick={onLogout} aria-label="退出登录"><SignOut /></button></div></header>
-    {historyOpen ? <div className="history-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setHistoryOpen(false); }}><div className="history-drawer" role="dialog" aria-modal="true" aria-label="旅行对话记录"><button className="history-close icon-button" type="button" onClick={() => setHistoryOpen(false)} aria-label="关闭旅行对话记录"><X /></button><ConversationPicker conversations={conversations} activeId={conversation?.conversationId} onPick={selectConversation} onNew={createConversation} /></div></div> : null}
-    <div className="editor-layout">
+    {historyOpen ? <div className="history-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setHistoryOpen(false); }}><div className="history-drawer" role="dialog" aria-modal="true" aria-label="旅行对话记录"><button className="history-close icon-button" type="button" onClick={() => setHistoryOpen(false)} aria-label="关闭旅行对话记录"><X /></button><ConversationPicker conversations={conversations} activeId={conversation?.conversationId} unavailableTripIds={unavailableTripIds} onPick={selectConversation} onNew={createConversation} /></div></div> : null}
+    <div className="editor-layout" style={{ "--sessions-width": `${paneLayout.sessions}px`, "--conversation-width": `${paneLayout.conversation}px` }}>
+      <ConversationPicker conversations={conversations} activeId={conversation?.conversationId} unavailableTripIds={unavailableTripIds} onPick={selectConversation} onNew={createConversation} />
+      <ResizeHandle className="session-resizer" label="调整对话记录宽度" onPointerDown={(event) => resizePane("sessions", event, 200, 340)} onNudge={(delta) => nudgePane("sessions", delta, 200, 340)} />
       <section className={`conversation-panel ${mobileView !== "conversation" ? "mobile-hidden" : ""}`}>
-        <header className="conversation-header"><div><span className="eyebrow">旅行对话</span><h2>{conversation?.tripId ? "继续完善这趟旅行" : "描述你的旅行想法"}</h2></div>{conversation?.tripId ? <span className="draft-state"><CheckCircle weight="fill" />已记住旅行要求</span> : <span className="draft-state muted">从一句话开始</span>}</header>
+        <header className="conversation-header"><div><span className="eyebrow">旅行对话</span><h2>{trip ? "继续完善这趟旅行" : tripRecovery ? "恢复这趟旅行" : "描述你的旅行想法"}</h2></div>{trip ? <span className="draft-state"><CheckCircle weight="fill" />已记住旅行要求</span> : tripRecovery ? <span className="draft-state recovery"><ArrowsClockwise />草案需恢复</span> : <span className="draft-state muted">从一句话开始</span>}</header>
         {status.error && <div className="chat-error" role="alert"><WarningCircle />{status.error}<button onClick={() => setStatus({})}>关闭提示</button></div>}
         <div className="message-scroller" ref={scrollerRef}>{!conversation?.messages?.length ? pendingText && status.loading ? <><article className="chat-message user pending"><div className="message-avatar">你</div><div className="message-copy"><MessageBody text={pendingText} /><time>正在发送</time></div></article><ThinkingMessage /></> : <ConversationIntro onPrompt={(prompt) => submitMessage(prompt)} /> : <>{conversation.messages.map((message) => <MessageBubble key={message.messageId} message={message} />)}{status.loading && <ThinkingMessage />}<ActivityStrip activities={status.activities} /></>}</div>
         {trip && quickReplies.length ? <div className="quick-replies" aria-label="快捷调整旅行要求">{quickReplies.map((reply) => <button key={reply.label} type="button" disabled={status.loading} onClick={() => reply.prefill ? setDraft(reply.prefill) : submitMessage(reply.text)}>{reply.label}</button>)}</div> : null}
         <Composer value={draft} onChange={setDraft} onSubmit={submitMessage} loading={status.loading} />
       </section>
-      <PlanCanvas conversation={conversation} trip={trip} plan={plan} dataUnavailable={providerStatus?.data?.amapOfficialMcp === "blocked" && !["available_read_only", "trial_read_only"].includes(providerStatus?.data?.fliggyFlyAi) && providerStatus?.data?.tuniuOfficialMcp !== "available_read_only"} onRefresh={() => loadTrip(conversation?.tripId).catch((error) => setStatus({ error: messageError(error) }))} onRetryResearch={() => submitMessage("继续规划，请重新查找吃、住、行、玩方案。") } onAcceptProposal={acceptProposal} onRejectProposal={rejectProposal} onPrefill={setDraft} activeMobileView={mobileView} onMobileViewChange={setMobileView} loading={status.loading} />
+      <ResizeHandle className="workspace-resizer" label="调整对话与方案宽度" onPointerDown={(event) => resizePane("conversation", event, 340, Math.min(720, window.innerWidth - paneLayout.sessions - 520))} onNudge={(delta) => nudgePane("conversation", delta, 340, Math.min(720, window.innerWidth - paneLayout.sessions - 520))} />
+      <PlanCanvas conversation={conversation} trip={trip} plan={plan} tripRecovery={tripRecovery} dataUnavailable={providerStatus?.data?.amapOfficialMcp === "blocked" && !["available_read_only", "trial_read_only"].includes(providerStatus?.data?.fliggyFlyAi) && providerStatus?.data?.tuniuOfficialMcp !== "available_read_only"} onRefresh={() => loadTrip(conversation?.tripId).catch((error) => setStatus({ error: messageError(error) }))} onRetryResearch={() => submitMessage("继续规划，请重新查找吃、住、行、玩方案。") } onRecoverTrip={() => submitMessage("请根据这段对话中已经说明的旅行要求，重新建立旅行草案并继续规划吃、住、行、玩。") } onAcceptProposal={acceptProposal} onRejectProposal={rejectProposal} onPrefill={setDraft} activeMobileView={mobileView} onMobileViewChange={setMobileView} loading={status.loading} itineraryWidth={paneLayout.itinerary} onResizeItinerary={(event) => resizePane("itinerary", event, 330, Math.max(330, event.currentTarget.parentElement.getBoundingClientRect().width - 390))} onNudgeItinerary={(delta) => nudgePane("itinerary", delta, 330, Math.max(330, document.getElementById("trip-plan-canvas")?.getBoundingClientRect().width - 390 || 760))} />
     </div>
   </main>;
 }

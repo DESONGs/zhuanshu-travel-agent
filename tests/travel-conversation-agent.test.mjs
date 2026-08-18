@@ -56,6 +56,50 @@ test("fixture: Pi conversation loop creates and reads a travel draft through bou
   assert.equal(control.travelers[2].careNeeds.schedule.latestDinnerTime, "19:00");
 });
 
+test("a conversation whose trip draft is missing rebuilds instead of retrying a dead trip id", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "travel-conversation-recovery-"));
+  const tripStore = new TripStore({ rootDir: join(rootDir, "trips") });
+  const travelService = new TravelService({ store: tripStore });
+  const faux = fauxProvider({ provider: "fixture-pi", models: [{ id: "fixture-parent" }] });
+  const models = createModels();
+  models.setProvider(faux.provider);
+  faux.setResponses([
+    fauxAssistantMessage(fauxToolCall("save_trip_understanding", {
+      destination: "大理",
+      dates: "国庆五天",
+      travelerCount: 3,
+      partyProfile: "和父母同行",
+      pace: "轻松",
+      lodgingPreference: "住得方便",
+      foodPreferences: ["本地菜"],
+    }), { stopReason: "toolUse" }),
+    fauxAssistantMessage("旅行草案已经重新建立，我会从这里继续规划。"),
+  ]);
+  const conversationRepository = new FileConversationRepository({ rootDir: join(rootDir, "conversations") });
+  const agent = new TravelConversationAgent({
+    travelService,
+    conversationRepository,
+    modelRuntime: { models, model: faux.getModel("fixture-parent") },
+  });
+  const conversation = await agent.createConversation({ userId: "user_recovery", tripId: "trip_missing" });
+
+  const turn = await agent.reply({
+    conversationId: conversation.conversationId,
+    userId: "user_recovery",
+    text: "继续规划，还是国庆和父母去大理五天。",
+  });
+
+  assert.equal(turn.status, "completed");
+  assert.notEqual(turn.tripId, "trip_missing");
+  assert.equal(turn.conversation.tripId, turn.tripId);
+  assert.deepEqual(turn.activities.map(({ toolName, status }) => ({ toolName, status })), [
+    { toolName: "restore_trip_draft", status: "recovered" },
+    { toolName: "save_trip_understanding", status: "saved" },
+  ]);
+  assert.equal((await tripStore.list()).length, 1);
+  assert.equal((await travelService.getTripControlView(turn.tripId)).brief.destination, "大理");
+});
+
 test("the model saves understood trip facts and asks one useful question without inventing destination facts", async () => {
   const rootDir = await mkdtemp(join(tmpdir(), "travel-conversation-context-"));
   const tripStore = new TripStore({ rootDir: join(rootDir, "trips") });

@@ -358,3 +358,80 @@ input,select,textarea { min-height:48px; width:100%; border:1px solid #cbd0d5; b
   .map-pane .trip-map-preview>img { aspect-ratio:4 / 3; }
   .map-pane-heading>a { padding:0 8px; }
 }
+
+/* Resizable desktop workspace and useful pre-trip states. */
+.history-button { display:none; }
+.editor-layout {
+  grid-template-columns:var(--sessions-width,236px) 6px var(--conversation-width,420px) 6px minmax(0,1fr);
+  max-width:none;
+}
+.editor-layout>.conversation-picker { display:flex; min-width:0; height:100%; }
+.conversation-meta { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.conversation-meta time { flex:none; color:#8a959c; font-size:9px; }
+.conversation-meta .needs-recovery { color:#a05b15; }
+.draft-state.recovery { color:#9a5b18; background:#fff4e5; }
+.pane-resizer { width:6px; min-width:6px; height:100%; position:relative; z-index:6; cursor:col-resize; touch-action:none; background:#f6f8f9; }
+.pane-resizer::before { content:""; position:absolute; inset:0 -3px; }
+.pane-resizer span { width:2px; height:42px; position:absolute; left:2px; top:50%; transform:translateY(-50%); border-radius:999px; background:#d5dde1; transition:height 160ms ease,background 160ms ease; }
+.pane-resizer:hover span,.pane-resizer:focus-visible span,body.resizing-pane .pane-resizer span { height:64px; background:#7894a4; }
+.pane-resizer:focus-visible { outline:2px solid rgb(33 109 215 / 42%); outline-offset:-2px; }
+body.resizing-pane { cursor:col-resize; user-select:none; }
+.trip-workspace { grid-template-columns:minmax(330px,var(--itinerary-width,480px)) 6px minmax(360px,1fr); }
+.map-resizer { background:#e9eff2; }
+.itinerary-pane { border-right:0; }
+
+.planning-launchpad,.recovery-launchpad { min-width:0; padding:clamp(30px,4vw,56px); display:grid; grid-template-columns:minmax(290px,.9fr) minmax(310px,1.1fr); align-items:center; gap:clamp(24px,3.4vw,48px); overflow-y:auto; overflow-x:hidden; background:linear-gradient(135deg,#fbfcfc 0%,#f4f8f9 52%,#edf3f5 100%); }
+.launchpad-copy,.recovery-card { max-width:560px; }
+.launchpad-copy h2,.recovery-card h2 { margin-top:10px; font-family:"DM Serif Display","Noto Sans SC",serif; font-size:clamp(35px,3.7vw,58px); line-height:1.06; font-weight:400; letter-spacing:-.045em; text-wrap:balance; }
+.launchpad-copy>p,.recovery-card>p { margin-top:16px; max-width:54ch; color:#566772; font-size:14px; line-height:1.75; }
+.launch-actions { margin-top:26px; display:grid; gap:9px; }
+.launch-actions button { width:100%; min-height:68px; padding:12px 14px; display:flex; align-items:center; gap:13px; border:1px solid #dbe3e7; border-radius:14px; color:#253943; background:rgb(255 255 255 / 82%); text-align:left; box-shadow:0 6px 18px rgb(45 70 84 / 4%); transition:transform 160ms ease,border-color 160ms ease,box-shadow 160ms ease; }
+.launch-actions button:hover { transform:translateY(-1px); border-color:#aac0cc; box-shadow:0 10px 24px rgb(45 70 84 / 8%); }
+.launch-actions button>svg { flex:none; width:34px; height:34px; padding:7px; border-radius:10px; color:#366a82; background:#edf6fa; }
+.launch-actions button>span { display:grid; gap:3px; }
+.launch-actions strong { font-size:13px; }
+.launch-actions small { color:#6e7d85; font-size:10px; }
+.launchpad-preview { padding:clamp(22px,3vw,36px); border:1px solid rgb(199 214 221 / 82%); border-radius:22px; background:rgb(255 255 255 / 82%); box-shadow:0 26px 70px rgb(34 67 86 / 10%); backdrop-filter:blur(12px); }
+.launch-domain-grid { margin-top:18px; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+.launch-domain-grid>div { min-height:94px; padding:14px; display:grid; grid-template-columns:auto 1fr; grid-template-rows:auto auto; align-content:center; column-gap:10px; border:1px solid #e1e8eb; border-radius:13px; background:#fbfcfc; }
+.launch-domain-grid svg { grid-row:1 / 3; align-self:center; color:#4f7488; font-size:26px; }
+.launch-domain-grid strong { font-size:14px; }
+.launch-domain-grid span { color:#77858d; font-size:10px; }
+.launch-map-preview { min-height:124px; margin-top:12px; padding:18px; display:flex; align-items:center; gap:15px; border-radius:14px; color:#eff8fb; background:linear-gradient(140deg,#23485d,#376f83); }
+.launch-map-preview>svg { flex:none; font-size:42px; }
+.launch-map-preview strong { font-size:13px; }
+.launch-map-preview p { margin-top:5px; color:#d7e7ed; font-size:10px; line-height:1.55; }
+.launch-proof { margin-top:13px; display:flex; align-items:center; gap:7px; color:#286146; font-size:10px; font-weight:700; }
+.launch-proof svg { color:#2d8a5a; font-size:17px; }
+.recovery-card { padding:clamp(24px,3.4vw,42px); border:1px solid #e5c89e; border-radius:22px; background:#fffaf2; box-shadow:0 18px 48px rgb(101 70 25 / 8%); }
+.recovery-card h2 { font-size:clamp(32px,3.2vw,50px); }
+.recovery-icon { width:48px; height:48px; margin-bottom:22px; display:grid; place-items:center; border-radius:14px; color:#9c5a15; background:#ffe7c6; font-size:24px; }
+.recovery-card .button { margin-top:24px; }
+.recovery-card>small { margin-top:12px; display:block; color:#85745f; font-size:9px; }
+.recovery-launchpad>.launchpad-preview>p { margin-top:16px; display:flex; align-items:center; gap:8px; color:#5f707a; font-size:10px; }
+.recovery-launchpad>.launchpad-preview>p svg { color:#47758d; font-size:19px; }
+
+@media (max-width:1180px) and (min-width:901px) {
+  .history-button { display:inline-flex; }
+  .editor-layout { grid-template-columns:var(--conversation-width,380px) 6px minmax(0,1fr); }
+  .editor-layout>.conversation-picker,.session-resizer { display:none; }
+  .planning-launchpad,.recovery-launchpad { padding:32px; grid-template-columns:1fr; align-content:start; }
+  .launchpad-copy,.recovery-card,.launchpad-preview { max-width:720px; width:100%; margin-inline:auto; }
+}
+
+@media (max-width:900px) {
+  .history-button { display:inline-flex; }
+  .editor-layout>.conversation-picker,.pane-resizer { display:none; }
+  .planning-launchpad,.recovery-launchpad { min-height:100%; padding:28px 20px; grid-template-columns:1fr; align-content:start; }
+  .launchpad-copy h2,.recovery-card h2 { font-size:36px; }
+  .launch-actions { margin-top:20px; }
+}
+
+@media (max-width:560px) {
+  .planning-launchpad,.recovery-launchpad { padding:24px 16px 34px; gap:20px; }
+  .launchpad-copy h2,.recovery-card h2 { font-size:31px; }
+  .launchpad-copy>p,.recovery-card>p { font-size:13px; }
+  .launchpad-preview { padding:18px; border-radius:17px; }
+  .launch-domain-grid>div { min-height:78px; padding:10px; }
+  .launch-map-preview { min-height:108px; padding:14px; }
+}
