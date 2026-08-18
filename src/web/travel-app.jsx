@@ -230,8 +230,9 @@ function ConversationIntro({ onPrompt }) {
   </section>;
 }
 
-function Composer({ value, onChange, onSubmit, loading }) {
-  const inputRef = useRef(null);
+function Composer({ value, onChange, onSubmit, loading, inputRef, contextLabel, onClearContext }) {
+  const fallbackInputRef = useRef(null);
+  const resolvedInputRef = inputRef ?? fallbackInputRef;
   const recognitionRef = useRef(null);
   const [voiceState, setVoiceState] = useState("idle");
   const [voiceNotice, setVoiceNotice] = useState("");
@@ -263,8 +264,9 @@ function Composer({ value, onChange, onSubmit, loading }) {
     recognitionRef.current = recognition;
     recognition.start();
   };
-  return <form className="chat-composer" onSubmit={(event) => { event.preventDefault(); onSubmit(value); }}>
-    <textarea ref={inputRef} value={value} onChange={(event) => onChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); onSubmit(value); } }} rows={1} maxLength={4_000} placeholder="例如：国庆和父母去大理 5 天，轻松一点，住得方便，想吃本地菜。" />
+  return <form className={`chat-composer ${contextLabel ? "has-context" : ""}`} onSubmit={(event) => { event.preventDefault(); onSubmit(value); }}>
+    {contextLabel ? <div className="composer-context" role="status"><span>正在补充 <strong>{contextLabel}</strong></span><button type="button" onClick={onClearContext}>取消</button></div> : null}
+    <textarea ref={resolvedInputRef} value={value} onChange={(event) => onChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); onSubmit(value); } }} rows={1} maxLength={4_000} placeholder="例如：国庆和父母去大理 5 天，轻松一点，住得方便，想吃本地菜。" />
     <div className="composer-footer">
       <button type="button" className={`voice-button ${voiceState}`} onClick={toggleVoice} aria-label={voiceState === "listening" ? "停止语音输入" : "开始语音输入"} aria-pressed={voiceState === "listening"}>{voiceState === "listening" ? <StopCircle weight="fill" /> : <Microphone weight="bold" />}</button>
       <span className="composer-privacy">{voiceNotice || "语音会先转成文字，由你确认后再发送"}</span>
@@ -440,8 +442,8 @@ function PlaceDetailSheet({ node, plan, tripId, onClose }) {
   </div>;
 }
 
-function WeatherPlanningCard({ weather }) {
-  if (!weather) return <section className="weather-card pending"><CloudSun weight="duotone" /><div><strong>天气待核验</strong><p>生成方案时会先核验旅行日期与目的地天气，再安排户外体验、换乘缓冲、住宿和餐饮动线。</p></div></section>;
+function WeatherPlanningCard({ weather, onEdit }) {
+  if (!weather) return <section className="weather-card pending editable-weather"><CloudSun weight="duotone" /><div><strong>天气待核验</strong><p>生成方案时会先核验旅行日期与目的地天气，再安排户外体验、换乘缓冲、住宿和餐饮动线。</p></div><button type="button" onClick={() => onEdit?.("我想补充具体旅行日期：", "旅行日期")}>补充日期<PaperPlaneRight /></button></section>;
   const coverageLabel = weather.coverage === "covered" ? "覆盖旅行日期" : weather.coverage === "partial" ? "覆盖部分日期" : weather.coverage === "outside_forecast_window" ? "尚未进入预报期" : "旅行日期待明确";
   const title = weather.planningImpact?.active
     ? "天气正在影响这版方案"
@@ -454,8 +456,9 @@ function WeatherPlanningCard({ weather }) {
   const days = ["covered", "partial"].includes(weather.coverage)
     ? (weather.forecastDays ?? []).filter((day) => tripDates.has(day.date)).slice(0, 4)
     : [];
-  return <section className={`weather-card ${weather.planningImpact?.severity ?? "none"}`}>
-    <header><span><CloudSun weight="duotone" /></span><div><strong>{title}</strong><p>{weather.city || weather.destination} · {coverageLabel}{weather.reportTime ? ` · ${weather.reportTime} 发布` : ""}</p></div></header>
+  const datePrompt = weather.coverage === "dates_unknown" || weather.coverage === "outside_forecast_window" ? "我想补充具体旅行日期：" : "我想调整旅行日期，目前计划是：";
+  return <section className={`weather-card ${weather.planningImpact?.severity ?? "none"} editable-weather`}>
+    <header><span><CloudSun weight="duotone" /></span><div><strong>{title}</strong><p>{weather.city || weather.destination} · {coverageLabel}{weather.reportTime ? ` · ${weather.reportTime} 发布` : ""}</p></div><button type="button" onClick={() => onEdit?.(datePrompt, "旅行日期与天气")}>{weather.coverage === "dates_unknown" ? "补充日期" : "调整日期"}<PaperPlaneRight /></button></header>
     {days.length ? <div className="weather-days">{days.map((day) => <div key={day.date}><small>{day.date.slice(5).replace("-", "/")}</small><strong>{day.dayCondition || "天气待定"}</strong><span>{day.highC ?? "–"}° / {day.lowC ?? "–"}°</span></div>)}</div> : null}
     {weather.planningImpact?.active ? <div className="weather-guidance">{DOMAIN_ITEMS.map(({ key, label }) => weather.planningImpact.guidance?.[key] ? <p key={key}><strong>{label}</strong>{weather.planningImpact.guidance[key]}</p> : null)}</div> : weather.caveat ? <p className="weather-caveat">{weather.caveat}</p> : null}
     <footer><a href={weather.sourceDocumentation} target="_blank" rel="noreferrer">{weather.attribution || (weather.provider === "amap_weather" ? "高德天气" : "天气来源")} · {formatCheckedAt(weather.checkedAt)}</a></footer>
@@ -541,18 +544,21 @@ function travelerCareLabels(traveler) {
   return labels;
 }
 
-function TravelerCareSummary({ trip }) {
+function TravelerCareSummary({ trip, onEdit }) {
   const travelers = (trip?.travelers ?? []).map((traveler) => ({ ...traveler, labels: travelerCareLabels(traveler) }));
   const specific = travelers.filter((traveler) => traveler.labels.length || traveler.relationship || !/^同行人 \d+$/.test(traveler.displayName ?? ""));
   const facts = [
-    trip?.totalBudget != null ? { icon: CurrencyCircleDollar, text: `总预算 ¥${new Intl.NumberFormat("zh-CN").format(trip.totalBudget)}` } : null,
-    trip?.pace ? { icon: PersonSimpleWalk, text: `整体节奏：${trip.pace}` } : null,
+    { key: "budget", icon: CurrencyCircleDollar, title: trip?.totalBudget != null ? `总预算 ¥${new Intl.NumberFormat("zh-CN").format(trip.totalBudget)}` : "总预算待补", detail: "影响住宿、交通与餐饮取舍", prompt: trip?.totalBudget != null ? `我想调整这趟旅行的总预算，目前是 ¥${new Intl.NumberFormat("zh-CN").format(trip.totalBudget)}。新的预算是：` : "这趟旅行的总预算是：", missing: trip?.totalBudget == null },
+    { key: "pace", icon: PersonSimpleWalk, title: trip?.pace ? `整体节奏：${trip.pace}` : "旅行节奏待补", detail: "影响每天强度、步行与休息", prompt: trip?.pace ? `我想调整整趟旅行的节奏，目前是“${trip.pace}”。希望改为：` : "我希望整趟旅行的节奏是：", missing: !trip?.pace },
   ].filter(Boolean);
-  if (!facts.length && !specific.length && (trip?.travelerCount ?? 0) <= 1) return null;
   return <section className="traveler-care" aria-labelledby="traveler-care-title">
-    <header><span><Heart weight="fill" /></span><div><strong id="traveler-care-title">同行人的安排重点</strong><p>按每个人分别保存，只使用会影响路线、住宿、活动和餐饮的要求。</p></div></header>
-    {facts.length ? <div className="trip-fact-chips">{facts.map(({ icon: Icon, text }) => <span key={text}><Icon />{text}</span>)}</div> : null}
-    {specific.length ? <ul>{specific.map((traveler) => <li key={traveler.travelerId}><div><strong>{traveler.displayName || "同行人"}</strong>{traveler.relationship && traveler.relationship !== traveler.displayName ? <span>{traveler.relationship}</span> : null}</div><p>{traveler.labels.length ? traveler.labels.join(" · ") : "已分别记录，暂无额外行动要求"}</p></li>)}</ul> : <p className="care-empty">还没有分别记录同行人的行动需求；可以继续告诉我谁需要少走路、少换乘、固定休息或特定设施。</p>}
+    <header><span><Heart weight="fill" /></span><div><strong id="traveler-care-title">同行人的安排重点</strong><p>点击预算、节奏或某位同行人，会回到对话输入；发送后 Agent 才会更新方案。</p></div></header>
+    <div className="trip-fact-actions">{facts.map(({ key, icon: Icon, title, detail, prompt, missing }) => <button key={key} type="button" className={missing ? "missing" : ""} onClick={() => onEdit?.(prompt, key === "budget" ? "旅行预算" : "旅行节奏")}><span><Icon /></span><span><strong>{title}</strong><small>{detail}</small></span><CaretDown /></button>)}</div>
+    {specific.length ? <ul>{specific.map((traveler) => {
+      const name = traveler.displayName || traveler.relationship || "同行人";
+      const existing = traveler.labels.length ? `目前已记录：${traveler.labels.join("、")}；` : "目前还没有额外行动要求；";
+      return <li key={traveler.travelerId}><button type="button" className="traveler-edit-row" onClick={() => onEdit?.(`关于${name}的出行要求，${existing}我想补充或调整：`, `${name}的出行要求`)}><span className="traveler-copy"><span><strong>{name}</strong>{traveler.relationship && traveler.relationship !== traveler.displayName ? <em>{traveler.relationship}</em> : null}</span><small>{traveler.labels.length ? traveler.labels.join(" · ") : "暂无额外行动要求"}</small></span><span className="traveler-edit-label">补充或修改<CaretDown /></span></button></li>;
+    })}</ul> : <button type="button" className="care-empty editable" onClick={() => onEdit?.("请分别记录同行人的行动需求，例如谁需要少走路、少换乘、固定休息或特定设施：", "同行人的出行要求")}>还没有分别记录同行人的行动需求<span>现在补充<CaretDown /></span></button>}
   </section>;
 }
 
@@ -593,11 +599,11 @@ function PlanCanvas({ conversation, trip, plan, tripRecovery, dataUnavailable, o
         <div className="canvas-topline"><div><span className="eyebrow">行程</span><h2>{trip.destination || "目的地待补充"}</h2></div><button className="quiet-button" onClick={onRefresh} disabled={loading}><ArrowsClockwise />刷新</button></div>
         <div className="trip-brief-bar">{tripBriefChips(trip).map((chip) => <button key={chip.key} type="button" className={chip.missing ? "missing" : ""} onClick={() => { onPrefill(chip.prompt); onMobileViewChange("conversation"); }}>{chip.key === "dates" ? <CalendarBlank /> : chip.key === "pace" ? <PersonSimpleWalk /> : <MapPin />}<span>{chip.label}</span>{chip.missing && <small>补充</small>}</button>)}</div>
         {!proposal ? <PlanNextStep trip={trip} plan={plan} onPrefill={onPrefill} onMobileViewChange={onMobileViewChange} /> : null}
-        <details className="planning-context"><summary>预算、同行人和天气</summary><TravelerCareSummary trip={trip} /><WeatherPlanningCard weather={plan?.weather} /></details>
+        <details className="planning-context"><summary><span><strong>预算、同行人和天气</strong><small>{trip.totalBudget != null ? `预算 ¥${new Intl.NumberFormat("zh-CN").format(trip.totalBudget)}` : "预算待补"} · {trip.travelerCount || 1} 人 · {hasSpecificTravelDates(trip.dates) ? "日期已明确" : "日期待补"}</small></span><span>查看与编辑</span></summary><TravelerCareSummary trip={trip} onEdit={onPrefill} /><WeatherPlanningCard weather={plan?.weather} onEdit={onPrefill} /></details>
         <div className="domain-coverage compact">{DOMAIN_ITEMS.map(({ key, label, icon: Icon }) => { const acceptedCount = plan?.byDomain?.[key]?.filter((node) => node.selected).length ?? 0; const pendingCount = proposal?.byDomain?.[key]?.length ?? 0; return <div key={key} className={acceptedCount || pendingCount ? "covered" : ""}><Icon weight="duotone" /><span>{label}</span><small>{acceptedCount ? "已选" : pendingCount ? `${pendingCount} 个候选` : "待研究"}</small></div>; })}</div>
         {proposal ? <ProposalPanel proposal={proposal} selections={selections} onSelect={(domain, nodeId) => setSelections((current) => ({ ...current, [domain]: nodeId }))} onPreviewCandidate={setDetailNodeId} onAccept={onAcceptProposal} onReject={onRejectProposal} loading={loading} /> : items.length ? <>
           <div className="accepted-heading"><div><span className="eyebrow">已经选好</span><h3>先看概览，需要时再展开详情</h3></div><span>仍可通过对话调整</span></div>
-          <div className="journey-card-grid">{items.map((item, index) => { const meta = domainMeta(item.domain); const Icon = meta.icon; return <article key={item.nodeId} className="journey-card">{item.media?.[0] ? <img src={item.media[0].url} alt={item.media[0].title || `${item.title}实景图`} loading="lazy" referrerPolicy="no-referrer" /> : <div className="journey-card-no-media"><Icon weight="duotone" /></div>}<div className="journey-card-copy"><span><Icon weight="duotone" />{meta.label} · 第 {index + 1} 项</span><h4>{item.title}</h4><p>{item.summary || "待补充说明"}</p><small><Clock />{scheduleLabel(item)}</small><em>{acceptedSourceLabel(item)}</em></div><footer><button type="button" onClick={() => setDetailNodeId(item.nodeId)}><MapTrifold />查看照片、地图与设施</button></footer></article>; })}</div>
+          <div className="journey-card-grid">{items.map((item, index) => { const meta = domainMeta(item.domain); const Icon = meta.icon; return <article key={item.nodeId} className="journey-card">{item.media?.[0] ? <img src={item.media[0].url} alt={item.media[0].title || `${item.title}实景图`} loading="lazy" referrerPolicy="no-referrer" /> : <div className="journey-card-no-media"><Icon weight="duotone" /></div>}<div className="journey-card-copy"><span><Icon weight="duotone" />{meta.label} · 第 {index + 1} 项</span><h4>{item.title}</h4><p>{item.summary || "待补充说明"}</p><small><Clock />{scheduleLabel(item)}</small><em>{acceptedSourceLabel(item)}</em></div><footer><button className="journey-detail-button" type="button" aria-label={`打开${item.title}的照片、地图与设施详情`} onClick={() => setDetailNodeId(item.nodeId)}><span className="journey-detail-icon"><MapTrifold weight="duotone" /></span><span><strong>打开地点详情</strong><small>照片 · 地图 · 设施</small></span><CaretDown /></button></footer></article>; })}</div>
           <PlanQualityNotice qa={plan?.qa} />
           <MobilityPlanningCard mobility={plan?.mobility} activeLegId={activeLegId} onSelectLeg={setActiveLegId} />
         </> : dataUnavailable ? <div className="canvas-empty blocked-research"><WarningCircle weight="duotone" /><h3>暂时找不到实时地点资料</h3><p>你的旅行要求已经记住了。等资料恢复后再继续查找，之前说过的内容不用重来。</p><button className="button retry" onClick={onRetryResearch} disabled={loading}><ArrowsClockwise />重新查找旅行方案</button></div> : <div className="canvas-empty"><Sparkle weight="duotone" /><h3>还差一点旅行信息</h3><p>继续在对话中补充。助手只会追问真正影响方案的问题。</p></div>}
@@ -628,9 +634,12 @@ function TravelEditor({ session, onLogout }) {
   const [selectedModelId, setSelectedModelId] = useState("");
   const [mobileView, setMobileView] = useState("conversation");
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [conversationCollapsed, setConversationCollapsed] = useState(false);
+  const [draftContext, setDraftContext] = useState("");
   const [status, setStatus] = useState({ loading: true });
   const [paneLayout, setPaneLayout] = useState(storedPaneLayout);
   const scrollerRef = useRef(null);
+  const composerRef = useRef(null);
   useEffect(() => {
     try {
       window.localStorage.setItem("travel-agent-pane-layout-v1", JSON.stringify(paneLayout));
@@ -722,7 +731,7 @@ function TravelEditor({ session, onLogout }) {
     try {
       const modelId = selectedModelId || providerStatus?.modelSelection?.defaultModelId || "deepseek-v4-flash";
       const created = await api.createConversation({ modelId });
-      setConversation(created); setTrip(null); setPlan(null); setTripRecovery(null); setDraft(""); setMobileView("conversation"); setHistoryOpen(false);
+      setConversation(created); setTrip(null); setPlan(null); setTripRecovery(null); setDraft(""); setDraftContext(""); setConversationCollapsed(false); setMobileView("conversation"); setHistoryOpen(false);
       setSelectedModelId(created.modelId);
       await refreshConversations(); setStatus({});
     } catch (error) { setStatus({ error: messageError(error) }); }
@@ -730,7 +739,7 @@ function TravelEditor({ session, onLogout }) {
   const submitMessage = async (text) => {
     const clean = text.trim();
     if (!clean || status.loading) return;
-    setStatus({ loading: true }); setPendingText(clean); setDraft("");
+    setStatus({ loading: true }); setPendingText(clean); setDraft(""); setDraftContext("");
     try {
       let current = conversation;
       const modelId = selectedModelId || providerStatus?.modelSelection?.defaultModelId || "deepseek-v4-flash";
@@ -768,22 +777,38 @@ function TravelEditor({ session, onLogout }) {
       setStatus({ activities: [{ toolName: "reject_trip_change", status: "rejected_by_user" }] });
     } catch (error) { setStatus({ error: messageError(error) }); }
   };
+  const prepareDraft = useCallback((text, contextLabel = "") => {
+    setDraft(text);
+    setDraftContext(contextLabel);
+    setConversationCollapsed(false);
+    setMobileView("conversation");
+    window.requestAnimationFrame(() => {
+      composerRef.current?.focus();
+      composerRef.current?.setSelectionRange(text.length, text.length);
+      composerRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    });
+  }, []);
+  const updateDraft = useCallback((value) => {
+    setDraft(value);
+    if (!value.trim()) setDraftContext("");
+  }, []);
   const quickReplies = quickRepliesForTrip(trip);
   return <main className="editor-shell">
     <header className="editor-topbar"><button className="history-button" type="button" onClick={() => setHistoryOpen(true)} aria-label="打开旅行对话记录"><ChatsCircle weight="duotone" /><span>对话记录</span></button><div className="brand"><MapPin weight="fill" /> Travel Agent</div><div className="topbar-copy"><span>{trip?.destination || "旅行助手"}</span><small>{trip ? `${trip.dates || (trip.durationDays ? `${trip.durationDays} 天` : "时间待补")} · ${trip.travelerCount} 人` : "从一句话到可确认方案"}</small></div><nav className="mobile-workspace-tabs" aria-label="旅行工作区"><button type="button" className={mobileView === "conversation" ? "active" : ""} onClick={() => setMobileView("conversation")}><ChatsCircle />对话</button><button type="button" className={mobileView === "itinerary" ? "active" : ""} disabled={!trip} onClick={() => setMobileView("itinerary")}><List />行程</button></nav><div className="account-actions"><span>{session.displayName || SESSION_PROVIDER_LABELS[session.provider] || "旅行者"}</span><button className="icon-button" onClick={onLogout} aria-label="退出登录"><SignOut /></button></div></header>
     {historyOpen ? <div className="history-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setHistoryOpen(false); }}><div className="history-drawer" role="dialog" aria-modal="true" aria-label="旅行对话记录"><button className="history-close icon-button" type="button" onClick={() => setHistoryOpen(false)} aria-label="关闭旅行对话记录"><X /></button><ConversationPicker conversations={conversations} activeId={conversation?.conversationId} unavailableTripIds={unavailableTripIds} onPick={selectConversation} onNew={createConversation} /></div></div> : null}
-    <div className="editor-layout" style={{ "--sessions-width": `${paneLayout.sessions}px`, "--conversation-width": `${paneLayout.conversation}px` }}>
+    <div className={`editor-layout ${conversationCollapsed ? "conversation-collapsed" : ""}`} style={{ "--sessions-width": `${paneLayout.sessions}px`, "--conversation-width": `${paneLayout.conversation}px` }}>
       <ConversationPicker conversations={conversations} activeId={conversation?.conversationId} unavailableTripIds={unavailableTripIds} onPick={selectConversation} onNew={createConversation} />
       <ResizeHandle className="session-resizer" label="调整对话记录宽度" onPointerDown={(event) => resizePane("sessions", event, 200, 340)} onNudge={(delta) => nudgePane("sessions", delta, 200, 340)} />
+      <button className="conversation-reopen" type="button" onClick={() => setConversationCollapsed(false)} aria-label="展开旅行对话"><ChatsCircle weight="duotone" /><span>展开对话</span><CaretDown /></button>
       <section className={`conversation-panel ${mobileView !== "conversation" ? "mobile-hidden" : ""}`}>
-        <header className="conversation-header"><div><span className="eyebrow">旅行对话</span><h2>{trip ? "继续完善这趟旅行" : tripRecovery ? "恢复这趟旅行" : "描述你的旅行想法"}</h2></div>{trip ? <span className="draft-state"><CheckCircle weight="fill" />已记住旅行要求</span> : tripRecovery ? <span className="draft-state recovery"><ArrowsClockwise />草案需恢复</span> : <span className="draft-state muted">从一句话开始</span>}</header>
+        <header className="conversation-header"><div><span className="eyebrow">旅行对话</span><h2>{trip ? "继续完善这趟旅行" : tripRecovery ? "恢复这趟旅行" : "描述你的旅行想法"}</h2></div><div className="conversation-header-actions">{trip ? <span className="draft-state"><CheckCircle weight="fill" />已记住旅行要求</span> : tripRecovery ? <span className="draft-state recovery"><ArrowsClockwise />草案需恢复</span> : <span className="draft-state muted">从一句话开始</span>}<button className="conversation-collapse-button" type="button" onClick={() => setConversationCollapsed(true)} aria-label="收起旅行对话"><CaretDown /><span>收起</span></button></div></header>
         {status.error && <div className="chat-error" role="alert"><WarningCircle />{status.error}<button onClick={() => setStatus({})}>关闭提示</button></div>}
         <div className="message-scroller" ref={scrollerRef}>{!conversation?.messages?.length ? pendingText && status.loading ? <><article className="chat-message user pending"><div className="message-avatar">你</div><div className="message-copy"><MessageBody text={pendingText} /><time>正在发送</time></div></article><ThinkingMessage /></> : <ConversationIntro onPrompt={(prompt) => submitMessage(prompt)} /> : <>{conversation.messages.map((message) => <MessageBubble key={message.messageId} message={message} />)}{status.loading && <ThinkingMessage />}<ActivityStrip activities={status.activities} /></>}</div>
-        {trip && quickReplies.length ? <div className="quick-replies" aria-label="快捷调整旅行要求">{quickReplies.map((reply) => <button key={reply.label} type="button" disabled={status.loading} onClick={() => reply.prefill ? setDraft(reply.prefill) : submitMessage(reply.text)}>{reply.label}</button>)}</div> : null}
-        <Composer value={draft} onChange={setDraft} onSubmit={submitMessage} loading={status.loading} />
+        {trip && quickReplies.length ? <div className="quick-replies" aria-label="快捷调整旅行要求">{quickReplies.map((reply) => <button key={reply.label} type="button" disabled={status.loading} onClick={() => reply.prefill ? prepareDraft(reply.prefill, reply.label) : submitMessage(reply.text)}>{reply.label}</button>)}</div> : null}
+        <Composer value={draft} onChange={updateDraft} onSubmit={submitMessage} loading={status.loading} inputRef={composerRef} contextLabel={draftContext} onClearContext={() => { setDraft(""); setDraftContext(""); composerRef.current?.focus(); }} />
       </section>
       <ResizeHandle className="workspace-resizer" label="调整对话与方案宽度" onPointerDown={(event) => resizePane("conversation", event, 340, Math.min(720, window.innerWidth - paneLayout.sessions - 520))} onNudge={(delta) => nudgePane("conversation", delta, 340, Math.min(720, window.innerWidth - paneLayout.sessions - 520))} />
-      <PlanCanvas conversation={conversation} trip={trip} plan={plan} tripRecovery={tripRecovery} dataUnavailable={providerStatus?.data?.amapOfficialMcp === "blocked" && !["available_read_only", "trial_read_only"].includes(providerStatus?.data?.fliggyFlyAi) && providerStatus?.data?.tuniuOfficialMcp !== "available_read_only"} onRefresh={() => loadTrip(conversation?.tripId).catch((error) => setStatus({ error: messageError(error) }))} onRetryResearch={() => submitMessage("继续规划，请重新查找吃、住、行、玩方案。") } onRecoverTrip={() => submitMessage("请根据这段对话中已经说明的旅行要求，重新建立旅行草案并继续规划吃、住、行、玩。") } onAcceptProposal={acceptProposal} onRejectProposal={rejectProposal} onPrefill={setDraft} activeMobileView={mobileView} onMobileViewChange={setMobileView} loading={status.loading} />
+      <PlanCanvas conversation={conversation} trip={trip} plan={plan} tripRecovery={tripRecovery} dataUnavailable={providerStatus?.data?.amapOfficialMcp === "blocked" && !["available_read_only", "trial_read_only"].includes(providerStatus?.data?.fliggyFlyAi) && providerStatus?.data?.tuniuOfficialMcp !== "available_read_only"} onRefresh={() => loadTrip(conversation?.tripId).catch((error) => setStatus({ error: messageError(error) }))} onRetryResearch={() => submitMessage("继续规划，请重新查找吃、住、行、玩方案。") } onRecoverTrip={() => submitMessage("请根据这段对话中已经说明的旅行要求，重新建立旅行草案并继续规划吃、住、行、玩。") } onAcceptProposal={acceptProposal} onRejectProposal={rejectProposal} onPrefill={prepareDraft} activeMobileView={mobileView} onMobileViewChange={setMobileView} loading={status.loading} />
     </div>
   </main>;
 }

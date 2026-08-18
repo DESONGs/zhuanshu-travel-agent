@@ -9,6 +9,15 @@ const app = createHttpApp({
   allowedOrigins: new Set(String(runtimeEnv.TRAVEL_AGENT_CORS_ORIGINS ?? "").split(",").map((origin) => origin.trim()).filter(Boolean)),
 });
 
-app.listen(port, "127.0.0.1", () => {
+const server = app.listen(port, "127.0.0.1", () => {
   process.stdout.write(`Travel Agent API listening on http://127.0.0.1:${port}\n`);
+});
+
+// Keep the CLI entrypoint attached to the listening socket even when an optional
+// provider dependency unrefs other handles during startup (observed on Node 26).
+server.ref();
+
+await new Promise((resolve, reject) => {
+  server.once("close", resolve);
+  server.once("error", reject);
 });

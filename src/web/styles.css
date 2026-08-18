@@ -544,3 +544,89 @@ body.resizing-pane { cursor:col-resize; user-select:none; }
   .journey-card>img,.journey-card-no-media { width:108px; min-height:196px; }
   .journey-card footer { padding-left:12px; padding-right:12px; }
 }
+
+/* Conversation space control and editable trip context. */
+.conversation-header-actions { flex:none; display:flex; align-items:center; gap:8px; }
+.conversation-collapse-button { min-height:30px; padding:0 8px; display:inline-flex; align-items:center; gap:4px; border:1px solid #dce3e6; border-radius:9px; color:#65757e; background:#f8fafb; font-size:9px; font-weight:700; }
+.conversation-collapse-button:hover { color:#315b6f; border-color:#b8cbd4; background:#f1f7f9; }
+.conversation-collapse-button svg { transform:rotate(90deg); font-size:13px; }
+.conversation-reopen { display:none; min-width:0; height:100%; padding:18px 0; border:0; border-right:1px solid #dce3e6; color:#557180; background:#f8fafb; flex-direction:column; align-items:center; justify-content:flex-start; gap:12px; font-size:9px; font-weight:700; }
+.conversation-reopen:hover { color:#234f64; background:#eef5f7; }
+.conversation-reopen>svg:first-child { font-size:20px; }
+.conversation-reopen>svg:last-child { margin-top:auto; transform:rotate(-90deg); }
+.conversation-reopen span { writing-mode:vertical-rl; letter-spacing:.12em; }
+.editor-layout.conversation-collapsed { grid-template-columns:var(--sessions-width,236px) 6px 48px minmax(0,1fr); }
+.editor-layout.conversation-collapsed>.conversation-panel,
+.editor-layout.conversation-collapsed>.workspace-resizer { display:none; }
+.editor-layout.conversation-collapsed>.conversation-reopen { display:flex; }
+
+.composer-context { margin-bottom:8px; padding:8px 10px; display:flex; align-items:center; justify-content:space-between; gap:10px; border-radius:9px; color:#315466; background:#edf6f8; font-size:10px; }
+.composer-context strong { color:#173f53; }
+.composer-context button { padding:3px 5px; border:0; color:#5d7480; background:transparent; font-size:9px; font-weight:700; }
+.chat-composer.has-context textarea { border-color:#8eafbd; box-shadow:0 0 0 3px rgb(76 130 153 / 9%); }
+
+.planning-context>summary { min-height:54px; padding:10px 13px; display:flex; align-items:center; justify-content:space-between; gap:16px; }
+.planning-context>summary>span:first-child { display:grid; gap:3px; }
+.planning-context>summary strong { font-size:11px; }
+.planning-context>summary small { color:#78858c; font-size:8px; font-weight:500; }
+.planning-context>summary>span:last-child { flex:none; color:#527687; font-size:9px; }
+.planning-context[open]>summary>span:last-child { color:#6d7c84; }
+.planning-context>.traveler-care { padding:0 0 14px; background:transparent; }
+.traveler-care>header { padding:2px 2px 0; }
+.traveler-care>header>div { min-width:0; }
+.trip-fact-actions { margin-top:12px; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:7px; }
+.trip-fact-actions>button { min-width:0; min-height:58px; padding:9px; display:grid; grid-template-columns:30px minmax(0,1fr) 14px; align-items:center; gap:8px; border:1px solid #eadfdb; border-radius:10px; color:#4b555a; background:#fff; text-align:left; transition:border-color 150ms ease,background 150ms ease,box-shadow 150ms ease; }
+.trip-fact-actions>button:hover { border-color:#c9aba4; background:#fffcfb; box-shadow:0 5px 15px rgb(91 64 57 / 6%); }
+.trip-fact-actions>button.missing { border-style:dashed; color:#80542c; background:#fffaf2; }
+.trip-fact-actions>button>span:first-child { width:30px; height:30px; display:grid; place-items:center; border-radius:9px; color:#a55349; background:#fff0ed; font-size:17px; }
+.trip-fact-actions>button>span:nth-child(2) { min-width:0; display:grid; gap:2px; }
+.trip-fact-actions strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10px; }
+.trip-fact-actions small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#7b7774; font-size:8px; }
+.trip-fact-actions>button>svg { transform:rotate(-90deg); color:#9b817b; font-size:12px; }
+.traveler-care ul { grid-template-columns:repeat(3,minmax(0,1fr)); gap:7px; }
+.traveler-care li { min-width:0; padding:0; overflow:hidden; border:0; border-radius:10px; background:transparent; }
+.traveler-edit-row { width:100%; min-height:70px; padding:10px; display:flex; align-items:stretch; justify-content:space-between; gap:8px; border:1px solid #eee3df; border-radius:10px; color:#4c5053; background:#fff; text-align:left; }
+.traveler-edit-row:hover { border-color:#cdaea6; background:#fffcfb; }
+.traveler-copy { min-width:0; display:grid; align-content:space-between; gap:7px; }
+.traveler-copy>span { min-width:0; display:flex; align-items:baseline; gap:5px; }
+.traveler-copy strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10px; }
+.traveler-copy em { color:#9a7770; font-size:8px; font-style:normal; }
+.traveler-copy small { color:#6f6a67; font-size:8px; line-height:1.4; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.traveler-edit-label { flex:none; align-self:flex-end; display:flex; align-items:center; gap:2px; color:#8d6962; font-size:8px; font-weight:700; }
+.traveler-edit-label svg { transform:rotate(-90deg); font-size:10px; }
+.care-empty.editable { width:100%; margin-top:11px; display:flex; align-items:center; justify-content:space-between; gap:10px; color:#655e5b; text-align:left; }
+.care-empty.editable span { flex:none; display:flex; align-items:center; gap:3px; color:#8d5d52; font-weight:700; }
+.care-empty.editable svg { transform:rotate(-90deg); }
+.editable-weather>header { align-items:center; }
+.editable-weather>header>div { min-width:0; flex:1; }
+.editable-weather header>button,.weather-card.pending.editable-weather>button { flex:none; min-height:30px; padding:0 8px; display:inline-flex; align-items:center; gap:4px; border:1px solid #bfd3dc; border-radius:8px; color:#37677d; background:#fff; font-size:8px; font-weight:700; }
+.editable-weather header>button:hover,.weather-card.pending.editable-weather>button:hover { border-color:#87aebb; background:#f1f8fa; }
+.editable-weather header>button svg,.weather-card.pending.editable-weather>button svg { font-size:12px; }
+.weather-card.pending.editable-weather>div { min-width:0; flex:1; }
+
+.journey-card footer { padding-top:4px; }
+.journey-card footer .journey-detail-button { width:100%; min-height:48px; padding:7px 9px; display:grid; grid-template-columns:30px minmax(0,1fr) 14px; align-items:center; gap:8px; border-color:#d8e4e9; border-radius:11px; color:#355d70; background:#f8fbfc; text-align:left; }
+.journey-card footer .journey-detail-button:hover { border-color:#a8c2cd; background:#f0f7f9; box-shadow:0 5px 14px rgb(49 87 104 / 7%); }
+.journey-detail-icon { width:30px; height:30px; display:grid; place-items:center; border-radius:9px; color:#3f7288; background:#e8f2f6; font-size:17px; }
+.journey-detail-button>span:nth-child(2) { min-width:0; display:grid; gap:2px; }
+.journey-detail-button strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:9px; }
+.journey-detail-button small { color:#75868e; font-size:8px; font-weight:500; }
+.journey-detail-button>svg { transform:rotate(-90deg); color:#76909c; font-size:12px; }
+
+@media (max-width:1180px) and (min-width:901px) {
+  .editor-layout.conversation-collapsed { grid-template-columns:48px minmax(0,1fr); }
+}
+
+@media (max-width:900px) {
+  .conversation-collapse-button,.conversation-reopen { display:none !important; }
+  .editor-layout.conversation-collapsed { display:block; }
+  .editor-layout.conversation-collapsed>.conversation-panel:not(.mobile-hidden) { display:flex; }
+  .editor-layout.conversation-collapsed>.conversation-panel.mobile-hidden { display:none; }
+  .traveler-care ul { grid-template-columns:1fr; }
+}
+
+@media (max-width:560px) {
+  .conversation-header-actions .draft-state { display:none; }
+  .trip-fact-actions { grid-template-columns:1fr; }
+  .journey-card footer .journey-detail-button { min-height:44px; }
+}
