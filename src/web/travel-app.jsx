@@ -40,16 +40,15 @@ function clamp(value, minimum, maximum) {
 }
 
 function storedPaneLayout() {
-  if (typeof window === "undefined") return { sessions: 236, conversation: 420, itinerary: 480 };
+  if (typeof window === "undefined") return { sessions: 236, conversation: 420 };
   try {
     const stored = JSON.parse(window.localStorage.getItem("travel-agent-pane-layout-v1") || "{}");
     return {
       sessions: clamp(Number(stored.sessions) || 236, 200, 340),
       conversation: clamp(Number(stored.conversation) || 420, 340, 720),
-      itinerary: clamp(Number(stored.itinerary) || 480, 330, 760),
     };
   } catch {
-    return { sessions: 236, conversation: 420, itinerary: 480 };
+    return { sessions: 236, conversation: 420 };
   }
 }
 
@@ -333,7 +332,33 @@ function acceptedSourceLabel(item) {
   return item.sourceStatus === "verified_provider" ? "来源资料已核验" : "来源待核验";
 }
 
-function ProposalPanel({ proposal, selections, onSelect, onFocusCandidate, onAccept, onReject, loading }) {
+function amapMarkerUrl(node) {
+  const coordinates = node?.location?.coordinates;
+  if (!Number.isFinite(coordinates?.longitude) || !Number.isFinite(coordinates?.latitude)) return node?.operability?.navigationUrl ?? null;
+  const parameters = new URLSearchParams({
+    position: `${coordinates.longitude},${coordinates.latitude}`,
+    name: node.title,
+    src: "zhuanshu-travel-agent",
+    coordinate: coordinates.coordinateSystem === "WGS-84" ? "wgs84" : "gaode",
+    callnative: "0",
+  });
+  return `https://uri.amap.com/marker?${parameters}`;
+}
+
+function hasSpecificTravelDates(value) {
+  return (String(value ?? "").match(/20\d{2}-\d{2}-\d{2}/g) ?? []).length >= 2;
+}
+
+function PlanNextStep({ trip, plan, onPrefill, onMobileViewChange }) {
+  const steps = [];
+  if (!hasSpecificTravelDates(trip?.dates)) steps.push({ key: "dates", title: "补充具体日期", detail: "核验天气、房态和每天节奏", prompt: "我想补充具体旅行日期：" });
+  if (!trip?.origin) steps.push({ key: "origin", title: "补充出发地", detail: "补齐城际交通和首末日衔接", prompt: "我的出发地是：" });
+  if (!(plan?.byDomain?.food ?? []).some((node) => node.selected)) steps.push({ key: "food", title: "继续找本地菜", detail: "把餐饮放进住宿和游玩动线", prompt: "请继续查找适合我们、顺路的本地菜和餐厅。" });
+  if (!steps.length) return null;
+  return <section className="next-step-guide" aria-labelledby="next-step-title"><div><span className="eyebrow">接下来完成</span><h3 id="next-step-title">先补最影响整趟旅行的信息</h3></div><div className="next-step-actions">{steps.slice(0, 3).map((step, index) => <button key={step.key} type="button" onClick={() => { onPrefill(step.prompt); onMobileViewChange("conversation"); }}><span>{index + 1}</span><strong>{step.title}</strong><small>{step.detail}</small><NavigationArrow /></button>)}</div></section>;
+}
+
+function ProposalPanel({ proposal, selections, onSelect, onPreviewCandidate, onAccept, onReject, loading }) {
   const availableDomains = DOMAIN_ITEMS.filter(({ key }) => (proposal.byDomain?.[key]?.length ?? 0) > 0);
   const [activeDomain, setActiveDomain] = useState(availableDomains[0]?.key ?? DOMAIN_ITEMS[0].key);
   useEffect(() => {
@@ -352,9 +377,10 @@ function ProposalPanel({ proposal, selections, onSelect, onFocusCandidate, onAcc
         const locationLabel = candidate.location?.district || candidate.location?.label;
         const facilities = mappedFacilityLabels(detail);
         const selected = selections[currentDomain.key] === candidate.nodeId;
-        return <article key={candidate.nodeId} className={`candidate-option ${candidate.media?.[0] ? "has-photo" : "no-photo"} ${selected ? "selected" : ""}`} onClick={() => onFocusCandidate?.(candidate.nodeId)}>
+        return <article key={candidate.nodeId} className={`candidate-option ${candidate.media?.[0] ? "has-photo" : "no-photo"} ${selected ? "selected" : ""}`}>
           <label><input type="radio" name={`${proposal.proposalId}-${currentDomain.key}`} checked={selected} onChange={() => onSelect(currentDomain.key, candidate.nodeId)} /><CandidatePhoto candidate={candidate} /><span className="radio-mark" aria-hidden="true" /><span className="candidate-copy"><strong>{candidate.title}</strong><span>{candidate.summary || "地点详情仍待补充核验。"}</span><small>{[locationLabel, detail.rating ? `评分 ${detail.rating}` : null, detail.priceHint ? `参考消费 ${detail.priceHint}` : null, detail.weatherFit === "preferred" ? "天气优先" : detail.weatherFit === "caution" ? "天气需备选" : null].filter(Boolean).join(" · ")}</small>{facilities.length ? <em>设施参考：{facilities.join("、")} · 非实时，现场确认</em> : null}{currentDomain.key === "stay" && detail.lodgingDataNature === "amap_place_reference" ? <em>高德提供酒店位置与基础资料；指定日期房态、房型和价格仍待 OTA 核验</em> : currentDomain.key === "stay" && detail.inventoryVerified === false ? <em>酒店参考候选；指定日期房态、房型、早餐、退改和外宾资格需在 OTA 跳转页核验</em> : null}</span></label>
           <div className="candidate-links">
+            <button type="button" onClick={() => onPreviewCandidate(candidate.nodeId)}><MapTrifold />查看照片和详情</button>
             {detail.navigationUrl && <a href={detail.navigationUrl} target="_blank" rel="noreferrer"><NavigationArrow />在高德查看</a>}
             {detail.bookingUrl && <a href={detail.bookingUrl} target="_blank" rel="noreferrer"><NavigationArrow />在{detail.bookingProviderLabel || "供应方"}查看</a>}
           </div>
@@ -373,12 +399,45 @@ function TripMapPreview({ tripId, plan }) {
   return <figure className="trip-map-preview"><img src={api.mapUrl(tripId)} alt={hasRoutes ? "这趟旅行已核验移动路线的地图" : "这趟旅行候选地点的地图分布"} onError={() => setHidden(true)} /><figcaption><MapTrifold weight="duotone" /><span><strong>{hasRoutes ? "地点与移动路线" : "地点分布"}</strong>{hasRoutes ? "蓝色折线是当前推荐移动方式的路线估算。" : "地图只显示当前候选，确认前可继续比较。"}</span></figcaption></figure>;
 }
 
-function MapUnavailablePanel({ selectedNode }) {
-  const photo = selectedNode?.media?.[0];
-  return <section className={`map-unavailable-panel ${photo ? "with-photo" : ""}`}>
-    {photo ? <img src={photo.url} alt={photo.title || `${selectedNode.title}实景图`} loading="lazy" referrerPolicy="no-referrer" /> : <div className="map-unavailable-mark"><MapTrifold weight="duotone" /></div>}
-    <div><strong>当前未能显示地图</strong><p>地点地址和来源仍可比较；路线、出入口与设施需要等地图资料恢复后再核验。</p></div>
-  </section>;
+function PlaceDetailSheet({ node, plan, tripId, onClose }) {
+  const closeRef = useRef(null);
+  const [summaryExpanded, setSummaryExpanded] = useState(false);
+  useEffect(() => {
+    if (!node) return undefined;
+    setSummaryExpanded(false);
+    closeRef.current?.focus();
+    const closeOnEscape = (event) => { if (event.key === "Escape") onClose(); };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [node?.nodeId, onClose]);
+  if (!node) return null;
+  const detail = node.operability ?? {};
+  const meta = domainMeta(node.domain);
+  const facilities = detail.mappedFacilities ?? [];
+  const location = node.location?.address || node.location?.label || node.location?.district || "位置资料待补";
+  const mapUrl = amapMarkerUrl(node);
+  const facts = [
+    node.cost > 0 ? { label: "参考价格", value: `¥${new Intl.NumberFormat("zh-CN").format(node.cost)}` } : null,
+    detail.rating ? { label: "来源评分", value: String(detail.rating) } : null,
+    detail.roomName ? { label: "房型", value: detail.roomName } : null,
+    detail.meal ? { label: "早餐", value: detail.meal } : null,
+    detail.refundPolicy ? { label: "退改", value: detail.refundPolicy } : null,
+  ].filter(Boolean);
+  const sourceLabel = consumerProviderLabel(detail.sourceLabel || detail.bookingProviderLabel || "旅行资料来源");
+  const longSummary = String(node.summary ?? "").length > 320;
+  return <div className="place-detail-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <aside className="place-detail-sheet" role="dialog" aria-modal="true" aria-labelledby="place-detail-title">
+      <header className="place-detail-header"><div><span className="detail-domain"><meta.icon weight="duotone" />{meta.label}的详情</span><small>{sourceLabel} · {formatCheckedAt(detail.checkedAt)}</small></div><button ref={closeRef} type="button" className="icon-button" onClick={onClose} aria-label="关闭地点详情"><X /></button></header>
+      <div className="place-detail-scroll">
+        {node.media?.length ? <figure className={`place-gallery count-${Math.min(node.media.length, 4)}`}>{node.media.slice(0, 4).map((media, index) => <img key={`${media.url}-${index}`} src={media.url} alt={media.title || `${node.title}实景图 ${index + 1}`} loading="eager" referrerPolicy="no-referrer" />)}<figcaption>{node.media.length === 1 ? "当前来源返回 1 张实景图" : `当前来源返回 ${node.media.length} 张实景图`}</figcaption></figure> : <div className="detail-media-missing"><MapPin weight="duotone" /><span><strong>当前来源没有返回图片</strong><small>不会用通用风景图替代这个地点。</small></span></div>}
+        <section className="place-detail-intro"><span className="detail-domain"><meta.icon weight="duotone" />{meta.label}</span><h2 id="place-detail-title">{node.title}</h2><p className={summaryExpanded ? "expanded" : ""}>{node.summary || "当前来源只返回了地点名称和位置。"}</p>{longSummary ? <button type="button" className="detail-text-toggle" onClick={() => setSummaryExpanded((current) => !current)}>{summaryExpanded ? "收起介绍" : "展开完整介绍"}<CaretDown className={summaryExpanded ? "expanded" : ""} /></button> : null}</section>
+        {facts.length ? <section className="detail-facts" aria-label="地点关键信息">{facts.map((fact) => <div key={fact.label}><small>{fact.label}</small><strong>{fact.value}</strong></div>)}</section> : null}
+        <section className="detail-section location-detail"><header><div><MapTrifold weight="duotone" /></div><span><strong>位置与地图</strong><small>{location}</small></span></header>{plan?.mapPreviewAvailable ? <TripMapPreview tripId={tripId} plan={plan} /> : <div className="detail-map-status"><MapPin weight="fill" /><span><strong>产品内地图暂时不可用</strong><small>坐标和地址已保留；高德账户恢复后会补回地图、路线和出入口。</small></span></div>}{mapUrl ? <a className="detail-primary-link" href={mapUrl} target="_blank" rel="noreferrer"><NavigationArrow />在高德查看这个地点</a> : null}</section>
+        <section className="detail-section facilities-detail"><header><div><Elevator weight="duotone" /></div><span><strong>设施与可达性</strong><small>{facilities.length ? "地图资料 · 非实时 · 建议现场确认" : "当前来源尚未返回设施资料"}</small></span></header><FacilityReferences facilities={facilities} emptyText={node.domain === "stay" ? "当前酒店来源只返回了图片、位置和参考价格；电梯、停车、早餐、卫生间等设施需要在酒店详情页继续核验。" : "当前来源没有返回卫生间、电梯、坡道或储物设施；不代表现场没有，出发前仍需核验。"} />{detail.indoorMap || detail.indoor ? <p className="facility-note">已取得室内或楼层相关资料；入口、楼层和开放情况仍以现场为准。</p> : null}{detail.bookingUrl ? <a className="detail-primary-link" href={detail.bookingUrl} target="_blank" rel="noreferrer"><NavigationArrow />在{detail.bookingProviderLabel || "供应方"}查看完整图片与设施</a> : null}</section>
+        <section className="detail-source-note"><WarningCircle weight="fill" /><p>{acceptedSourceLabel(node)}。图片、价格、房态、营业状态和设施信息以跳转页或现场为准。</p></section>
+      </div>
+    </aside>
+  </div>;
 }
 
 function WeatherPlanningCard({ weather }) {
@@ -497,13 +556,13 @@ function TravelerCareSummary({ trip }) {
   </section>;
 }
 
-function PlanCanvas({ conversation, trip, plan, tripRecovery, dataUnavailable, onRefresh, onRetryResearch, onRecoverTrip, onAcceptProposal, onRejectProposal, onPrefill, activeMobileView, onMobileViewChange, loading, itineraryWidth, onResizeItinerary, onNudgeItinerary }) {
+function PlanCanvas({ conversation, trip, plan, tripRecovery, dataUnavailable, onRefresh, onRetryResearch, onRecoverTrip, onAcceptProposal, onRejectProposal, onPrefill, activeMobileView, onMobileViewChange, loading }) {
   const items = useMemo(() => Object.entries(plan?.byDomain ?? {}).flatMap(([domain, nodes]) => nodes.filter((node) => node.selected).map((node) => ({ ...node, domain }))), [plan]);
   const proposal = plan?.pendingProposals?.[0] ?? null;
   const proposalCandidates = useMemo(() => proposal ? DOMAIN_ITEMS.flatMap(({ key }) => (proposal.byDomain?.[key] ?? []).map((node) => ({ ...node, domain: key }))) : [], [proposal]);
   const workspaceNodes = items.length ? items : proposalCandidates;
   const [selections, setSelections] = useState({});
-  const [selectedNodeId, setSelectedNodeId] = useState(null);
+  const [detailNodeId, setDetailNodeId] = useState(null);
   const [activeLegId, setActiveLegId] = useState(null);
   useEffect(() => {
     if (!proposal) return setSelections({});
@@ -515,15 +574,14 @@ function PlanCanvas({ conversation, trip, plan, tripRecovery, dataUnavailable, o
     }).filter(([, nodeId]) => nodeId)));
   }, [proposal?.proposalId]);
   useEffect(() => {
-    if (!workspaceNodes.some((node) => node.nodeId === selectedNodeId)) setSelectedNodeId(workspaceNodes[0]?.nodeId ?? null);
-  }, [workspaceNodes, selectedNodeId]);
+    if (detailNodeId && !workspaceNodes.some((node) => node.nodeId === detailNodeId)) setDetailNodeId(null);
+  }, [workspaceNodes, detailNodeId]);
   useEffect(() => {
     const legs = plan?.mobility?.legs ?? [];
     if (!legs.some((leg) => leg.legId === activeLegId)) setActiveLegId(legs[0]?.legId ?? null);
   }, [plan?.mobility, activeLegId]);
-  const selectedNode = workspaceNodes.find((node) => node.nodeId === selectedNodeId) ?? workspaceNodes[0] ?? null;
-  const selectedFacilities = selectedNode?.operability?.mappedFacilities ?? [];
-  return <section className={`trip-workspace mobile-mode-${activeMobileView}`} id="trip-plan-canvas" style={{ "--itinerary-width": `${itineraryWidth}px` }}>
+  const detailNode = workspaceNodes.find((node) => node.nodeId === detailNodeId) ?? null;
+  return <section className={`trip-workspace mobile-mode-${activeMobileView}`} id="trip-plan-canvas">
     {!trip ? tripRecovery ? <div className="workspace-empty recovery-launchpad">
       <div className="recovery-card"><span className="recovery-icon"><ArrowsClockwise weight="bold" /></span><span className="eyebrow">继续这段对话</span><h2>旅行要求还在，草案需要重新建立</h2><p>这段历史对话保存完整，但原来的旅行草案已经丢失。重新建立后，助手会沿用你说过的目的地、同行人和偏好，不需要从头填写。</p><button className="button primary" type="button" onClick={onRecoverTrip} disabled={loading}>{loading ? <CircleNotch className="spin" /> : <ArrowsClockwise />}恢复并继续规划</button><small>不会自动确认、购买或覆盖其他旅行。</small></div>
       <div className="launchpad-preview"><span className="eyebrow">恢复后会出现</span><div className="launch-domain-grid">{DOMAIN_ITEMS.map(({ key, label, icon: Icon }) => <div key={key}><Icon weight="duotone" /><strong>{label}</strong><span>{key === "transport" ? "路线与换乘" : key === "stay" ? "位置与住宿" : key === "food" ? "本地餐饮" : "体验与节奏"}</span></div>)}</div><p><MapTrifold />地图、地点图片、路线和设施会与候选一起出现。</p></div>
@@ -534,24 +592,18 @@ function PlanCanvas({ conversation, trip, plan, tripRecovery, dataUnavailable, o
       <section className="itinerary-pane" aria-label="旅行安排">
         <div className="canvas-topline"><div><span className="eyebrow">行程</span><h2>{trip.destination || "目的地待补充"}</h2></div><button className="quiet-button" onClick={onRefresh} disabled={loading}><ArrowsClockwise />刷新</button></div>
         <div className="trip-brief-bar">{tripBriefChips(trip).map((chip) => <button key={chip.key} type="button" className={chip.missing ? "missing" : ""} onClick={() => { onPrefill(chip.prompt); onMobileViewChange("conversation"); }}>{chip.key === "dates" ? <CalendarBlank /> : chip.key === "pace" ? <PersonSimpleWalk /> : <MapPin />}<span>{chip.label}</span>{chip.missing && <small>补充</small>}</button>)}</div>
+        {!proposal ? <PlanNextStep trip={trip} plan={plan} onPrefill={onPrefill} onMobileViewChange={onMobileViewChange} /> : null}
         <details className="planning-context"><summary>预算、同行人和天气</summary><TravelerCareSummary trip={trip} /><WeatherPlanningCard weather={plan?.weather} /></details>
         <div className="domain-coverage compact">{DOMAIN_ITEMS.map(({ key, label, icon: Icon }) => { const acceptedCount = plan?.byDomain?.[key]?.filter((node) => node.selected).length ?? 0; const pendingCount = proposal?.byDomain?.[key]?.length ?? 0; return <div key={key} className={acceptedCount || pendingCount ? "covered" : ""}><Icon weight="duotone" /><span>{label}</span><small>{acceptedCount ? "已选" : pendingCount ? `${pendingCount} 个候选` : "待研究"}</small></div>; })}</div>
-        {proposal ? <ProposalPanel proposal={proposal} selections={selections} onSelect={(domain, nodeId) => { setSelections((current) => ({ ...current, [domain]: nodeId })); setSelectedNodeId(nodeId); }} onFocusCandidate={setSelectedNodeId} onAccept={onAcceptProposal} onReject={onRejectProposal} loading={loading} /> : items.length ? <>
-          <div className="accepted-heading"><div><span className="eyebrow">已确认安排</span><h3>按实际时间逐步补全</h3></div><span>仍可通过对话调整</span></div>
-          <ol className="journey-timeline">{items.map((item, index) => { const meta = domainMeta(item.domain); const Icon = meta.icon; const active = item.nodeId === selectedNode?.nodeId; return <li key={item.nodeId} className={active ? "active" : ""}><button type="button" onClick={() => setSelectedNodeId(item.nodeId)}><span className="journey-time"><Clock />{scheduleLabel(item)}</span>{item.media?.[0] ? <img className="timeline-photo" src={item.media[0].url} alt={item.media[0].title || `${item.title}实景图`} loading="lazy" referrerPolicy="no-referrer" /> : <span className="draft-domain"><Icon weight="duotone" /></span>}<span className="journey-copy"><small>{meta.label} · 第 {index + 1} 项</small><strong>{item.title}</strong><span>{item.summary || "待补充说明"}</span><em>{acceptedSourceLabel(item)}</em></span><NavigationArrow className="journey-open" /></button></li>; })}</ol>
-          <button className="map-mobile-cta" type="button" onClick={() => onMobileViewChange("map")}><MapTrifold />查看地图、路线和设施</button>
+        {proposal ? <ProposalPanel proposal={proposal} selections={selections} onSelect={(domain, nodeId) => setSelections((current) => ({ ...current, [domain]: nodeId }))} onPreviewCandidate={setDetailNodeId} onAccept={onAcceptProposal} onReject={onRejectProposal} loading={loading} /> : items.length ? <>
+          <div className="accepted-heading"><div><span className="eyebrow">已经选好</span><h3>先看概览，需要时再展开详情</h3></div><span>仍可通过对话调整</span></div>
+          <div className="journey-card-grid">{items.map((item, index) => { const meta = domainMeta(item.domain); const Icon = meta.icon; return <article key={item.nodeId} className="journey-card">{item.media?.[0] ? <img src={item.media[0].url} alt={item.media[0].title || `${item.title}实景图`} loading="lazy" referrerPolicy="no-referrer" /> : <div className="journey-card-no-media"><Icon weight="duotone" /></div>}<div className="journey-card-copy"><span><Icon weight="duotone" />{meta.label} · 第 {index + 1} 项</span><h4>{item.title}</h4><p>{item.summary || "待补充说明"}</p><small><Clock />{scheduleLabel(item)}</small><em>{acceptedSourceLabel(item)}</em></div><footer><button type="button" onClick={() => setDetailNodeId(item.nodeId)}><MapTrifold />查看照片、地图与设施</button></footer></article>; })}</div>
           <PlanQualityNotice qa={plan?.qa} />
+          <MobilityPlanningCard mobility={plan?.mobility} activeLegId={activeLegId} onSelectLeg={setActiveLegId} />
         </> : dataUnavailable ? <div className="canvas-empty blocked-research"><WarningCircle weight="duotone" /><h3>暂时找不到实时地点资料</h3><p>你的旅行要求已经记住了。等资料恢复后再继续查找，之前说过的内容不用重来。</p><button className="button retry" onClick={onRetryResearch} disabled={loading}><ArrowsClockwise />重新查找旅行方案</button></div> : <div className="canvas-empty"><Sparkle weight="duotone" /><h3>还差一点旅行信息</h3><p>继续在对话中补充。助手只会追问真正影响方案的问题。</p></div>}
       </section>
-      <ResizeHandle className="map-resizer" label="调整行程与地图宽度" onPointerDown={onResizeItinerary} onNudge={onNudgeItinerary} />
-      <section className="map-pane" aria-label="地图、路线和设施">
-        <header className="map-pane-heading"><div><span className="eyebrow">地图与路线</span><h2>{selectedNode?.title || trip.destination || "地点待确认"}</h2><p>{selectedNode ? `${domainMeta(selectedNode.domain).label}的安排 · ${selectedNode.location?.district || selectedNode.location?.label || "位置资料待补"}` : "确认地点后会联动路线和设施"}</p></div>{selectedNode?.operability?.navigationUrl ? <a href={selectedNode.operability.navigationUrl} target="_blank" rel="noreferrer"><NavigationArrow />打开高德</a> : null}</header>
-        <TripMapPreview tripId={trip.tripId} plan={plan} />
-        {!plan?.mapPreviewAvailable ? <MapUnavailablePanel selectedNode={selectedNode} /> : null}
-        {selectedNode ? <section className="place-facility-card"><header><div><MapPin weight="fill" /></div><span><strong>{selectedNode.title}的设施参考</strong><small>{selectedFacilities.length ? "地图有记录 · 非实时 · 建议现场确认" : "尚无设施资料 · 不代表现场没有"}</small></span></header><FacilityReferences facilities={selectedFacilities} />{selectedNode.operability?.indoor ? <p className="facility-note">已取得室内或楼层相关资料；具体入口、楼层和开放情况以现场为准。</p> : null}<div className="candidate-links">{selectedNode.operability?.navigationUrl && <a href={selectedNode.operability.navigationUrl} target="_blank" rel="noreferrer"><NavigationArrow />查看位置</a>}{selectedNode.operability?.bookingUrl && <a href={selectedNode.operability.bookingUrl} target="_blank" rel="noreferrer"><NavigationArrow />在{selectedNode.operability.bookingProviderLabel || "供应方"}核验预订信息</a>}</div></section> : null}
-        <MobilityPlanningCard mobility={plan?.mobility} activeLegId={activeLegId} onSelectLeg={setActiveLegId} />
-      </section>
     </>}
+    <PlaceDetailSheet node={detailNode} plan={plan} tripId={trip?.tripId} onClose={() => setDetailNodeId(null)} />
     {conversation?.messages?.some((message) => message.role === "status" && message.kind?.includes("model")) && <div className="canvas-warning workspace-warning"><WarningCircle weight="fill" /><div><strong>旅行助手暂时无法回应</strong><p>你的需求会保留，服务恢复后可以从这里继续。</p></div></div>}
   </section>;
 }
@@ -718,7 +770,7 @@ function TravelEditor({ session, onLogout }) {
   };
   const quickReplies = quickRepliesForTrip(trip);
   return <main className="editor-shell">
-    <header className="editor-topbar"><button className="history-button" type="button" onClick={() => setHistoryOpen(true)} aria-label="打开旅行对话记录"><ChatsCircle weight="duotone" /><span>对话记录</span></button><div className="brand"><MapPin weight="fill" /> Travel Agent</div><div className="topbar-copy"><span>{trip?.destination || "旅行助手"}</span><small>{trip ? `${trip.dates || (trip.durationDays ? `${trip.durationDays} 天` : "时间待补")} · ${trip.travelerCount} 人` : "从一句话到可确认方案"}</small></div><nav className="mobile-workspace-tabs" aria-label="旅行工作区"><button type="button" className={mobileView === "conversation" ? "active" : ""} onClick={() => setMobileView("conversation")}><ChatsCircle />对话</button><button type="button" className={mobileView === "itinerary" ? "active" : ""} disabled={!trip} onClick={() => setMobileView("itinerary")}><List />行程</button><button type="button" className={mobileView === "map" ? "active" : ""} disabled={!trip} onClick={() => setMobileView("map")}><MapTrifold />地图</button></nav><div className="account-actions"><span>{session.displayName || SESSION_PROVIDER_LABELS[session.provider] || "旅行者"}</span><button className="icon-button" onClick={onLogout} aria-label="退出登录"><SignOut /></button></div></header>
+    <header className="editor-topbar"><button className="history-button" type="button" onClick={() => setHistoryOpen(true)} aria-label="打开旅行对话记录"><ChatsCircle weight="duotone" /><span>对话记录</span></button><div className="brand"><MapPin weight="fill" /> Travel Agent</div><div className="topbar-copy"><span>{trip?.destination || "旅行助手"}</span><small>{trip ? `${trip.dates || (trip.durationDays ? `${trip.durationDays} 天` : "时间待补")} · ${trip.travelerCount} 人` : "从一句话到可确认方案"}</small></div><nav className="mobile-workspace-tabs" aria-label="旅行工作区"><button type="button" className={mobileView === "conversation" ? "active" : ""} onClick={() => setMobileView("conversation")}><ChatsCircle />对话</button><button type="button" className={mobileView === "itinerary" ? "active" : ""} disabled={!trip} onClick={() => setMobileView("itinerary")}><List />行程</button></nav><div className="account-actions"><span>{session.displayName || SESSION_PROVIDER_LABELS[session.provider] || "旅行者"}</span><button className="icon-button" onClick={onLogout} aria-label="退出登录"><SignOut /></button></div></header>
     {historyOpen ? <div className="history-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setHistoryOpen(false); }}><div className="history-drawer" role="dialog" aria-modal="true" aria-label="旅行对话记录"><button className="history-close icon-button" type="button" onClick={() => setHistoryOpen(false)} aria-label="关闭旅行对话记录"><X /></button><ConversationPicker conversations={conversations} activeId={conversation?.conversationId} unavailableTripIds={unavailableTripIds} onPick={selectConversation} onNew={createConversation} /></div></div> : null}
     <div className="editor-layout" style={{ "--sessions-width": `${paneLayout.sessions}px`, "--conversation-width": `${paneLayout.conversation}px` }}>
       <ConversationPicker conversations={conversations} activeId={conversation?.conversationId} unavailableTripIds={unavailableTripIds} onPick={selectConversation} onNew={createConversation} />
@@ -731,7 +783,7 @@ function TravelEditor({ session, onLogout }) {
         <Composer value={draft} onChange={setDraft} onSubmit={submitMessage} loading={status.loading} />
       </section>
       <ResizeHandle className="workspace-resizer" label="调整对话与方案宽度" onPointerDown={(event) => resizePane("conversation", event, 340, Math.min(720, window.innerWidth - paneLayout.sessions - 520))} onNudge={(delta) => nudgePane("conversation", delta, 340, Math.min(720, window.innerWidth - paneLayout.sessions - 520))} />
-      <PlanCanvas conversation={conversation} trip={trip} plan={plan} tripRecovery={tripRecovery} dataUnavailable={providerStatus?.data?.amapOfficialMcp === "blocked" && !["available_read_only", "trial_read_only"].includes(providerStatus?.data?.fliggyFlyAi) && providerStatus?.data?.tuniuOfficialMcp !== "available_read_only"} onRefresh={() => loadTrip(conversation?.tripId).catch((error) => setStatus({ error: messageError(error) }))} onRetryResearch={() => submitMessage("继续规划，请重新查找吃、住、行、玩方案。") } onRecoverTrip={() => submitMessage("请根据这段对话中已经说明的旅行要求，重新建立旅行草案并继续规划吃、住、行、玩。") } onAcceptProposal={acceptProposal} onRejectProposal={rejectProposal} onPrefill={setDraft} activeMobileView={mobileView} onMobileViewChange={setMobileView} loading={status.loading} itineraryWidth={paneLayout.itinerary} onResizeItinerary={(event) => resizePane("itinerary", event, 330, Math.max(330, event.currentTarget.parentElement.getBoundingClientRect().width - 390))} onNudgeItinerary={(delta) => nudgePane("itinerary", delta, 330, Math.max(330, document.getElementById("trip-plan-canvas")?.getBoundingClientRect().width - 390 || 760))} />
+      <PlanCanvas conversation={conversation} trip={trip} plan={plan} tripRecovery={tripRecovery} dataUnavailable={providerStatus?.data?.amapOfficialMcp === "blocked" && !["available_read_only", "trial_read_only"].includes(providerStatus?.data?.fliggyFlyAi) && providerStatus?.data?.tuniuOfficialMcp !== "available_read_only"} onRefresh={() => loadTrip(conversation?.tripId).catch((error) => setStatus({ error: messageError(error) }))} onRetryResearch={() => submitMessage("继续规划，请重新查找吃、住、行、玩方案。") } onRecoverTrip={() => submitMessage("请根据这段对话中已经说明的旅行要求，重新建立旅行草案并继续规划吃、住、行、玩。") } onAcceptProposal={acceptProposal} onRejectProposal={rejectProposal} onPrefill={setDraft} activeMobileView={mobileView} onMobileViewChange={setMobileView} loading={status.loading} />
     </div>
   </main>;
 }
