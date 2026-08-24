@@ -8,11 +8,13 @@ platforms: Web/PWA, iOS, Android, WeChat Mini Program, Alipay Mini Program
 
 Travel Agent V1 uses a conversation-first direction: the user starts by describing the trip, while the Parent Agent understands intent, asks one useful follow-up at a time, researches the linked food/stay/transport/play chains, and returns a reviewable trip draft. Desktop and large foldables keep the conversation and the evolving decision canvas in parallel. Mobile preserves the same hierarchy vertically: conversation first, draft and transport execution second.
 
+The redesign is preserve-mode. Information architecture, Chat / Trip / Map navigation, brand mark, confirmation boundaries and map-led decisions stay stable. Design dials: variance 5, motion 3, density 5. The user is usually planning in ordinary indoor light or checking the trip outdoors on a phone, so the product keeps one high-contrast light theme and avoids decorative theme switching.
+
 # Colors
 
 - Ink `#17191c` for primary text and decisive controls.
 - Canvas `#f7f8f9`, surface `#ffffff`, line `#e5e8eb` for clear layered space.
-- Coral `#ff5a4f` is the only primary action and trip-location accent.
+- Coral `#ff5a4f` remains the trip-location and brand accent. Primary buttons use the darker accessible coral `#c9443b` so white labels meet WCAG AA.
 - Transit blue `#2268c7` / soft blue `#eaf2ff` anchors route steps.
 - Success green `#2c8053` / soft green `#e8f6ec` denotes an explicit pass, never merely a decorative tint.
 - Amber `#925b21` / soft amber `#fff7ef` denotes Provider, freshness or operability limits.
@@ -21,15 +23,15 @@ No gradients, glass effects, neon AI purple, decorative map textures, or color-o
 
 # Typography
 
-- Product UI: `Inter`, `Noto Sans SC`, `PingFang SC`, system sans-serif; compact 12–15px supporting text, 14–18px decisions.
-- Display headings: `DM Serif Display`, `Noto Serif SC`, serif; low-weight editorial hierarchy for destination and trip framing.
+- One system sans stack carries headings, controls, body and data: `-apple-system`, `BlinkMacSystemFont`, `Segoe UI`, `PingFang SC`, `Noto Sans CJK SC`, sans-serif. The app does not download a display font at runtime.
+- Decision headings use 20–32px at 650–750 weight. Body text uses 13–15px. Essential evidence, route and facility text never renders below 11px.
 - Chinese copy uses short factual clauses, then one explicit status or next step. Route steps may truncate only supporting detail, never the route title or facility status.
 
 # Elevation
 
-- Base surfaces have a one-pixel line before adding shadow.
-- Cards use 12–16px radius; modal route sheet uses 16px and `0 24px 70px rgb(23 25 28 / 22%)` only while floating.
-- Mobile route sheet overlaps the map by a small physical amount; its handle and sticky action bar communicate that it is a working surface, not a static card.
+- Most hierarchy comes from spacing, one-pixel dividers and surface changes. A component does not combine a visible border with a broad decorative shadow.
+- Inputs use 10px radius, grouped cards and sheets use 12–16px, and compact status/action controls may use a full pill.
+- Only floating drawers and sheets use elevation. Mobile route sheets keep a sticky action bar and a compact map so the first selectable candidate remains visible.
 
 # Components
 

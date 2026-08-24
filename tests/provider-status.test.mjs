@@ -9,6 +9,7 @@ test("a stale passed-smoke flag cannot make a missing credential appear availabl
     TRAVEL_AGENT_AMAP_SMOKE_STATUS: "passed_live_smoke",
   });
   assert.equal(status.model.deepseek, "blocked");
+  assert.equal(status.model.deepseekVision, "blocked");
   assert.equal(status.model.kimiVision, "blocked");
   assert.equal(status.data.amapOfficialMcp, "blocked");
 });
@@ -22,6 +23,19 @@ test("provider status exposes active model choices without exposing endpoint cre
     MOONSHOT_API_KEY: "must-not-appear",
   });
   assert.deepEqual(status.routing.multimodal, { provider: "moonshotai-cn", model: "kimi-k3" });
+  assert.equal(JSON.stringify(status).includes("must-not-appear"), false);
+});
+
+test("provider status reports DeepSeek visual readiness independently from text-model smoke", () => {
+  const status = providerStatusSummary({
+    DEEPSEEK_API_KEY: "must-not-appear",
+    TRAVEL_AGENT_DEEPSEEK_SMOKE_STATUS: "passed_live_smoke",
+    TRAVEL_AGENT_DEEPSEEK_VISION_SMOKE_STATUS: "credential_configured_pending_smoke",
+    TRAVEL_AGENT_VISION_PROVIDER: "deepseek",
+    TRAVEL_AGENT_VISION_MODEL: "deepseek-v4-flash-vision-exp",
+  });
+  assert.equal(status.model.deepseek, "passed_live_smoke");
+  assert.equal(status.model.deepseekVision, "credential_configured_pending_smoke");
   assert.equal(JSON.stringify(status).includes("must-not-appear"), false);
 });
 
@@ -62,9 +76,12 @@ test("configured login adapters remain pending until a real account smoke passes
     WECHAT_OPEN_APP_SECRET: "wechat-secret",
     WECHAT_MINIAPP_APP_ID: "wechat-mini",
     WECHAT_MINIAPP_APP_SECRET: "wechat-mini-secret",
-    ALIPAY_APP_ID: "alipay-app",
-    ALIPAY_PRIVATE_KEY_PATH: "/run/secrets/alipay-private.pem",
-    ALIPAY_PUBLIC_KEY_PATH: "/run/secrets/alipay-public.pem",
+    ALIPAY_WEB_APP_ID: "alipay-web-app",
+    ALIPAY_WEB_PRIVATE_KEY_PATH: "/run/secrets/alipay-web-private.pem",
+    ALIPAY_WEB_PUBLIC_KEY_PATH: "/run/secrets/alipay-web-public.pem",
+    ALIPAY_MINIAPP_APP_ID: "alipay-mini-app",
+    ALIPAY_MINIAPP_PRIVATE_KEY_PATH: "/run/secrets/alipay-mini-private.pem",
+    ALIPAY_MINIAPP_PUBLIC_KEY_PATH: "/run/secrets/alipay-mini-public.pem",
     APPLE_CLIENT_ID: "com.example.travel.web",
     APPLE_TEAM_ID: "TEAM123",
     APPLE_KEY_ID: "KEY123",
@@ -77,6 +94,42 @@ test("configured login adapters remain pending until a real account smoke passes
     apple: "credential_configured_pending_smoke",
   });
   assert.equal(JSON.stringify(status).includes("wechat-secret"), false);
+});
+
+test("login channel status promotes Web and Mini Program routes only after their own live smokes", () => {
+  const status = providerStatusSummary({
+    TRAVEL_AGENT_PUBLIC_ORIGIN: "https://travel.example.com",
+    TRAVEL_AGENT_SESSION_SECRET: "s".repeat(32),
+    TRAVEL_AGENT_AUTH_STATE_SECRET: "a".repeat(32),
+    GOOGLE_CLIENT_ID: "google-client",
+    GOOGLE_CLIENT_SECRET: "google-secret",
+    TRAVEL_AGENT_GOOGLE_AUTH_SMOKE_STATUS: "passed_live_smoke",
+    WECHAT_OPEN_APP_ID: "wechat-web",
+    WECHAT_OPEN_APP_SECRET: "wechat-web-secret",
+    WECHAT_MINIAPP_APP_ID: "wechat-mini",
+    WECHAT_MINIAPP_APP_SECRET: "wechat-mini-secret",
+    TRAVEL_AGENT_WECHAT_WEB_AUTH_SMOKE_STATUS: "passed_live_smoke",
+    TRAVEL_AGENT_WECHAT_MINIAPP_AUTH_SMOKE_STATUS: "passed_live_smoke",
+    ALIPAY_WEB_APP_ID: "alipay-web-app",
+    ALIPAY_WEB_PRIVATE_KEY_PATH: "/run/secrets/alipay-web-private.pem",
+    ALIPAY_WEB_PUBLIC_KEY_PATH: "/run/secrets/alipay-web-public.pem",
+    ALIPAY_MINIAPP_APP_ID: "alipay-mini-app",
+    ALIPAY_MINIAPP_PRIVATE_KEY_PATH: "/run/secrets/alipay-mini-private.pem",
+    ALIPAY_MINIAPP_PUBLIC_KEY_PATH: "/run/secrets/alipay-mini-public.pem",
+    TRAVEL_AGENT_ALIPAY_WEB_AUTH_SMOKE_STATUS: "passed_live_smoke",
+    TRAVEL_AGENT_ALIPAY_MINIAPP_AUTH_SMOKE_STATUS: "passed_live_smoke",
+    APPLE_CLIENT_ID: "com.example.travel.web",
+    APPLE_TEAM_ID: "TEAM123",
+    APPLE_KEY_ID: "KEY123",
+    APPLE_PRIVATE_KEY_PATH: "/run/secrets/apple.p8",
+    TRAVEL_AGENT_APPLE_AUTH_SMOKE_STATUS: "passed_live_smoke",
+  });
+  assert.equal(status.channels.google, "passed_live_smoke");
+  assert.equal(status.channels.wechat, "web_and_miniapp_passed_live_smoke");
+  assert.equal(status.channels.alipay, "web_and_miniapp_passed_live_smoke");
+  assert.equal(status.channels.apple, "passed_live_smoke");
+  assert.equal(JSON.stringify(status).includes("google-secret"), false);
+  assert.equal(JSON.stringify(status).includes("wechat-web-secret"), false);
 });
 
 test("inventory status distinguishes audited FlyAI trial access from production authorization", () => {

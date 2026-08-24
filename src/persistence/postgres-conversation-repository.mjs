@@ -51,15 +51,26 @@ export class PostgresConversationRepository {
     const persisted = { ...conversation, storageVersion: nextVersion };
     const result = await this.pool.query(
       `UPDATE travel_conversations
-       SET trip_id = $3, storage_version = $4, record_json = $5::jsonb, updated_at = now()
+       SET user_id = $3, trip_id = $4, storage_version = $5, record_json = $6::jsonb, updated_at = now()
        WHERE conversation_id = $1 AND storage_version = $2`,
-      [persisted.conversationId, expectedStorageVersion, persisted.tripId, nextVersion, JSON.stringify(persisted)],
+      [persisted.conversationId, expectedStorageVersion, persisted.userId, persisted.tripId, nextVersion, JSON.stringify(persisted)],
     );
     if (!result.rowCount) {
       const exists = await this.pool.query("SELECT 1 FROM travel_conversations WHERE conversation_id = $1", [persisted.conversationId]);
       throw repositoryError(exists.rowCount ? "conversation_storage_conflict" : "conversation_not_found", { conversationId: persisted.conversationId });
     }
     return persisted;
+  }
+
+  async transferUserOwnership(fromUserId, toUserId) {
+    if (fromUserId === toUserId) return { transferredConversations: 0 };
+    const records = await this.listByUser(fromUserId);
+    let transferredConversations = 0;
+    for (const record of records) {
+      await this.save({ ...record, userId: toUserId, accessMode: "account", guestExpiresAt: null }, { expectedStorageVersion: record.storageVersion });
+      transferredConversations += 1;
+    }
+    return { transferredConversations };
   }
 
   async close() {

@@ -1,6 +1,6 @@
 # 第三方候选与审计台账
 
-更新时间：2026-08-15。此文记录调研、固定版本和采纳门槛；每一行的状态以该行结论为准，不能把候选或开发 smoke 推断成生产授权。
+更新时间：2026-08-19。此文记录调研、固定版本和采纳门槛；每一行的状态以该行结论为准，不能把候选或开发 smoke 推断成生产授权。
 
 ## 结论矩阵
 
@@ -16,6 +16,8 @@
 | 微信 | 用户提供文章链接 + 自研受限读取器 | 依平台条款 | 生产读取受链接与条款约束。 |
 | 微信借鉴 | `jj-cheng25/weixin-articles-mcp@060fb3dd7e41d1c0950a19bc1367d66a6881f915` | MIT，但声明个人/研究用途 | 不作为商业生产依赖。 |
 | 地图/天气 | 高德官方 MCP | 官方服务，需账号/条款 | 中国 POI、路线、天气与导航主路径。 |
+| Web 地图渲染 | `leaflet@1.9.4` | BSD-2-Clause；零运行依赖 | 以 `--ignore-scripts --save-exact` 安装并通过 `npm audit`；只负责客户端地图交互，不提供地点或路线事实。 |
+| 本地开发底图 | OpenStreetMap 标准瓦片 | ODbL 数据与官方 Tile Usage Policy；无 SLA | 仅 `import.meta.env.DEV` 且未配置其他底图时启用，保留可见 attribution；生产不默认使用公共瓦片服务。 |
 | 飞猪库存 | `alibaba-flyai/flyai-skill@54277b27b68e53741954c08541faedba1d45cc7b`、`@fly-ai/flyai-cli@1.0.16` | MIT；官方项目和 npm 包 | 固定包已以 `--ignore-scripts` 安装；酒店、航班、火车、POI 通过受限 child process 完成 guest 只读 smoke。生产仍需 FlyAI Key。 |
 | 途牛库存 | `tuniucorp/tuniu-cli@a47243dae54e010a993908fcfe4b3edcf716fb7c`；本项目不安装 CLI | MIT；官方项目 | CLI postinstall 会写多个用户 Home，故只审计不安装。使用自研固定官方端点 MCP 客户端，Key 与真实 smoke 前禁用。 |
 | 铁路社区候选 | `Joooook/12306-mcp@ff6439da6f63d7d72181abea4568abd69878c600` | MIT，但 README 声明仅学习；直接访问 12306 并处理 Cookie | 不合入生产。许可证不代表铁路数据与账号调用授权；改用飞猪/途牛查询和官方/授权渠道跳转。 |
@@ -31,7 +33,7 @@
 | `AMAP-ML/MobilityBench@c05a…` | 只借鉴 | 路线调用、结果有效性和回放沙箱有价值；许可明确前不复制。 |
 | GroupTravelBench | 只借鉴 | 多人偏好获取、冲突协调与公平可作为验收维度。 |
 | `borski/travel-hacking-toolkit@593dd…` | 只借鉴 | Tool/Reference Skill、来源优先级与失败回退模式可参考。 |
-| `liketrek/TREK` | 排除 | AGPL。 |
+| `liketrek/TREK@e60427f813dc35f688d5d9169b79ac8c43974719` | 排除代码依赖；允许产品研究 | AGPL-3.0，与项目第三方边界不兼容。只借鉴地图工作台、候选/日程状态和离线/协作产品思想，不复制代码、Schema、数据或资产。详见 [TREK 调研](./2026-08-20-trek-workbench-product-research.md)。 |
 | `trvl` | 排除 | 非商业许可。 |
 | `yzfly/douyin-mcp-server` | 排除 | 已归档，且含下载/再分发风险。 |
 
@@ -56,6 +58,8 @@
   "adoption": "blocked|borrow-only|eligible"
 }
 ```
+
+Web 地图渲染的补充审计：`leaflet@1.9.4` 的 npm 包无运行依赖；包元数据只包含 `prepare: husky install`，安装时已由 `--ignore-scripts` 禁用。它没有 Provider 凭据、出站域或写面。底图 URL 通过 `VITE_TRAVEL_MAP_TILE_URL` 显式配置；前端不能据此增加地点、路线或设施事实。
 
 只有 `isolatedSmoke: passed_read_only_isolated` 和 `adoption: eligible` 才可以把 Provider 从 Registry 的 `blocked` 改为可用。
 

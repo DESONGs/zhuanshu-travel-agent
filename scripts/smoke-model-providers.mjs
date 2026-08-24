@@ -1,7 +1,5 @@
 import { contentText, createModels } from "@earendil-works/pi-ai";
-import { deepseekProvider } from "@earendil-works/pi-ai/providers/deepseek";
-import { moonshotaiCnProvider } from "@earendil-works/pi-ai/providers/moonshotai-cn";
-import { moonshotaiProvider } from "@earendil-works/pi-ai/providers/moonshotai";
+import { TRAVEL_MODEL_PROVIDERS } from "../src/agent/travel-model-providers.mjs";
 import { loadTravelRuntimeEnv } from "../src/http/runtime-env.mjs";
 
 function result(status, details = {}) {
@@ -17,12 +15,13 @@ function safeErrorMessage(value) {
 
 const env = await loadTravelRuntimeEnv();
 const models = createModels({ authContext: { env: async (name) => env[name], fileExists: async () => false } });
-models.setProvider(deepseekProvider());
-models.setProvider(moonshotaiCnProvider());
-models.setProvider(moonshotaiProvider());
+for (const providerId of new Set(["deepseek", env.TRAVEL_AGENT_VISION_PROVIDER])) {
+  const provider = TRAVEL_MODEL_PROVIDERS[providerId];
+  if (provider) models.setProvider(provider.create());
+}
 const outcomes = {};
 const diagnostics = {};
-const kimiProvider = env.TRAVEL_AGENT_VISION_PROVIDER;
+const visionProvider = env.TRAVEL_AGENT_VISION_PROVIDER;
 
 try {
   const model = models.getModel("deepseek", env.TRAVEL_AGENT_MODEL);
@@ -34,24 +33,25 @@ try {
 }
 
 try {
-  if (!["moonshotai-cn", "moonshotai"].includes(kimiProvider)) throw new Error("unsupported_kimi_provider");
-  const model = models.getModel(kimiProvider, env.TRAVEL_AGENT_VISION_MODEL);
+  if (!TRAVEL_MODEL_PROVIDERS[visionProvider]) throw new Error("unsupported_vision_provider");
+  const model = models.getModel(visionProvider, env.TRAVEL_AGENT_VISION_MODEL);
+  if (!model?.input?.includes("image")) throw new Error("configured_model_does_not_support_images");
   const transparentPixel = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
   const response = await models.completeSimple(model, {
     systemPrompt: "Reply with exactly VISION_READY. Do not describe the image.",
     messages: [{ role: "user", content: [{ type: "text", text: "ping" }, { type: "image", mimeType: "image/png", data: transparentPixel }] }],
   }, {
-    reasoning: "low",
+    reasoning: visionProvider === "deepseek" ? "high" : "low",
     maxTokens: 32,
     timeoutMs: 30_000,
     maxRetries: 0,
     ...(["kimi-k2.5", "kimi-k2.6"].includes(model.id) ? { onPayload: (payload) => ({ ...payload, thinking: { type: "disabled" } }) } : {}),
   });
-  diagnostics.kimiVision = { stopReason: response.stopReason ?? null, errorMessage: safeErrorMessage(response.errorMessage), contentTypes: (response.content ?? []).map((item) => item.type), textLength: contentText(response.content).trim().length };
-  outcomes.kimiVision = /\bVISION_READY\b/i.test(contentText(response.content)) ? "passed_live_smoke" : "unexpected_response";
+  diagnostics.visionAgent = { provider: visionProvider, model: model.id, stopReason: response.stopReason ?? null, errorMessage: safeErrorMessage(response.errorMessage), contentTypes: (response.content ?? []).map((item) => item.type), textLength: contentText(response.content).trim().length };
+  outcomes.visionAgent = /\bVISION_READY\b/i.test(contentText(response.content)) ? "passed_live_smoke" : "unexpected_response";
 } catch (error) {
-  outcomes.kimiVision = error?.message?.includes("401") ? "authentication_failed" : "failed_live_smoke";
+  outcomes.visionAgent = error?.message?.includes("401") ? "authentication_failed" : "failed_live_smoke";
 }
 
-result(outcomes.deepseek === "passed_live_smoke" && outcomes.kimiVision === "passed_live_smoke" ? "passed" : "needs_attention", { outcomes, diagnostics, routes: { reasoning: env.TRAVEL_AGENT_MODEL_PROVIDER, multimodal: kimiProvider }, sensitiveDataSent: false, visualInput: "transparent_1x1_png_only" });
-process.exitCode = outcomes.deepseek === "passed_live_smoke" && outcomes.kimiVision === "passed_live_smoke" ? 0 : 1;
+result(outcomes.deepseek === "passed_live_smoke" && outcomes.visionAgent === "passed_live_smoke" ? "passed" : "needs_attention", { outcomes, diagnostics, routes: { reasoning: env.TRAVEL_AGENT_MODEL_PROVIDER, multimodal: visionProvider }, sensitiveDataSent: false, visualInput: "transparent_1x1_png_only" });
+process.exitCode = outcomes.deepseek === "passed_live_smoke" && outcomes.visionAgent === "passed_live_smoke" ? 0 : 1;

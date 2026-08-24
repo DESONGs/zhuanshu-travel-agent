@@ -5,6 +5,10 @@ import type {
   TransitSegment,
   TripBrief,
   TripCommitResult,
+  PlaceVisitFeedbackSummary,
+  TripFeedbackCategory,
+  TripFeedbackVerdict,
+  TripFeedbackVisibility,
   TripPatchProposal,
   TripProposalResult,
   TripQa,
@@ -66,12 +70,12 @@ export interface TripPlanView {
 export type TripPlanNode = Pick<DecisionNode,
   | "nodeId" | "title" | "summary" | "selected" | "status" | "cost" | "time" | "location" | "lock"
   | "sourceStatus" | "foreignGuestEligible" | "spoilerLevel" | "media" | "sourceRefs" | "claimRefs" | "operability"
->;
+> & { visitFeedback?: PlaceVisitFeedbackSummary };
 
 export type TripProposalCandidate = Pick<DecisionNode,
   | "nodeId" | "domain" | "title" | "summary" | "selected" | "cost" | "location" | "sourceStatus"
   | "foreignGuestEligible" | "spoilerLevel" | "media" | "sourceRefs" | "claimRefs" | "operability"
->;
+> & { visitFeedback?: PlaceVisitFeedbackSummary };
 
 export interface TripProposalView {
   schemaVersion: "trip-proposal-view-v1";
@@ -173,7 +177,19 @@ export interface TravelServicePort {
   prepareBookingHandoff(input: { tripId: string; nodeId: string; offerId: string; explicitUserConfirmation: true }): Promise<BookingHandoff>;
   recordBookingConfirmation(input: { tripId: string; nodeId: string; offerId?: string; confirmationRef: string; baseRevision: number; explicitUserConfirmation: true }): Promise<TravelMutationResult>;
   reportTripDisruption(input: { tripId: string; proposal: TripPatchProposal }, actor?: string): Promise<TravelMutationResult>;
-  submitTripFeedback(input: { tripId: string; baseRevision: number; category: "personal_experience" | "preference_change" | "fact_correction" | "unverified_public_info"; nodeId?: string; text: string }, actor?: string): Promise<TravelMutationResult>;
+  submitTripFeedback(input: {
+    tripId: string;
+    baseRevision: number;
+    category: TripFeedbackCategory;
+    nodeId?: string;
+    text: string;
+    visibility?: TripFeedbackVisibility;
+    verdict?: TripFeedbackVerdict;
+    tags?: string[];
+    spendCny?: number;
+    waitMinutes?: number;
+    visitDate?: string;
+  }, actor?: string): Promise<TravelMutationResult>;
 }
 
 const REQUIRED_METHODS: ReadonlyArray<keyof TravelServicePort> = [

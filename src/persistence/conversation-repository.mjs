@@ -6,6 +6,7 @@ import { DEFAULT_USER_MODEL_ID, userModelOption } from "../agent/user-model-opti
 
 const SAFE_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
 const MESSAGE_ROLES = new Set(["user", "assistant", "status"]);
+const GUEST_DATA_TTL_MS = 1000 * 60 * 60 * 24 * 7;
 
 function storageKey(id) {
   return encodeURIComponent(id);
@@ -53,6 +54,7 @@ export function validateConversation(record, expectedConversationId = record?.co
 
 export function createConversationRecord({ conversationId = `conversation_${randomUUID().slice(0, 8)}`, userId, tripId = null, modelId = DEFAULT_USER_MODEL_ID, clock } = {}) {
   const timestamp = new Date(clock?.() ?? Date.now()).toISOString();
+  const guest = String(userId ?? "").startsWith("usr_guest_");
   return validateConversation({
     schemaVersion: "travel-conversation-v1",
     conversationId,
@@ -61,6 +63,8 @@ export function createConversationRecord({ conversationId = `conversation_${rand
     modelId,
     storageVersion: 0,
     messages: [],
+    accessMode: guest ? "guest" : "account",
+    guestExpiresAt: guest ? new Date(new Date(timestamp).getTime() + GUEST_DATA_TTL_MS).toISOString() : null,
     createdAt: timestamp,
     updatedAt: timestamp,
   });
@@ -172,6 +176,19 @@ export class FileConversationRepository {
       }
       return persisted;
     });
+  }
+
+  async transferUserOwnership(fromUserId, toUserId) {
+    requireSafeId(fromUserId, "conversation_user_id");
+    requireSafeId(toUserId, "conversation_user_id");
+    if (fromUserId === toUserId) return { transferredConversations: 0 };
+    const records = await this.listByUser(fromUserId);
+    let transferredConversations = 0;
+    for (const record of records) {
+      await this.save({ ...record, userId: toUserId, accessMode: "account", guestExpiresAt: null }, { expectedStorageVersion: record.storageVersion });
+      transferredConversations += 1;
+    }
+    return { transferredConversations };
   }
 }
 

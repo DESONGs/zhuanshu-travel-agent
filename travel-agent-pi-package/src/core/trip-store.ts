@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, open, readFile, readdir, rename, unlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import type { TripState } from "../contracts/index.js";
+import type { TripFeedbackRecord, TripState } from "../contracts/index.js";
 import { hydrateStoredTripState } from "./trip-state-hydration.js";
 
 const SAFE_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
@@ -49,6 +49,7 @@ export interface TripRepository {
   get(tripId: string): Promise<TripState | null>;
   save(state: TripState, options: { expectedStorageVersion: number }): Promise<TripState>;
   list?(): Promise<TripState[]>;
+  listSharedPlaceFeedback?(sourceRefs: string[]): Promise<Array<{ tripId: string; contributorKey?: string; feedback: TripFeedbackRecord }>>;
   close?(): Promise<void>;
 }
 
@@ -138,6 +139,16 @@ export class TripStore implements TripRepository {
       .filter((tripId): tripId is string => tripId !== null))];
     const states = await Promise.all(tripIds.map((tripId) => this.get(tripId)));
     return states.filter((state): state is TripState => state !== null).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  }
+
+  async listSharedPlaceFeedback(sourceRefs: string[]): Promise<Array<{ tripId: string; contributorKey?: string; feedback: TripFeedbackRecord }>> {
+    const requested = new Set(sourceRefs.filter(Boolean));
+    if (!requested.size) return [];
+    const states = await this.list();
+    return states.flatMap((state) => state.feedbackLedger
+      .filter((feedback) => feedback.visibility === "anonymous_travelers"
+        && feedback.place?.sourceRefs.some((sourceRef) => requested.has(sourceRef)))
+      .map((feedback) => ({ tripId: state.tripId, contributorKey: state.collaboration?.ownerUserId ?? state.tripId, feedback })));
   }
 
   async save(state: TripState, { expectedStorageVersion }: { expectedStorageVersion: number }): Promise<TripState> {

@@ -1,6 +1,7 @@
 import { randomBytes, createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 14;
+export const GUEST_SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7;
 
 function hash(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -32,15 +33,19 @@ export function authenticatedUserId({ provider, subject }) {
   return `usr_${hash(`${normalizedProvider}:${normalizedSubject}`).slice(0, 24)}`;
 }
 
+export function guestUserId() {
+  return `usr_guest_${randomBytes(16).toString("hex")}`;
+}
+
 export class InMemorySessionStore {
   constructor({ clock = () => new Date() } = {}) {
     this.clock = clock;
     this.sessions = new Map();
   }
 
-  issue({ userId, provider, displayName = null }) {
+  issue({ userId, provider, displayName = null, ttlMs = SESSION_TTL_MS }) {
     const opaqueToken = randomBytes(32).toString("base64url");
-    const expiresAt = new Date(this.clock().getTime() + SESSION_TTL_MS);
+    const expiresAt = new Date(this.clock().getTime() + ttlMs);
     this.sessions.set(hash(opaqueToken), { userId, provider, displayName: normalizedDisplayName(displayName), expiresAt: expiresAt.toISOString() });
     return { opaqueToken, expiresAt: expiresAt.toISOString() };
   }
@@ -77,9 +82,9 @@ export class SignedSessionStore {
     }
   }
 
-  issue({ userId, provider, displayName = null }) {
+  issue({ userId, provider, displayName = null, ttlMs = this.ttlMs }) {
     this.cleanup();
-    const expiresAt = new Date(this.clock().getTime() + this.ttlMs);
+    const expiresAt = new Date(this.clock().getTime() + ttlMs);
     const body = Buffer.from(JSON.stringify({
       version: 1,
       userId,
@@ -113,4 +118,4 @@ export class SignedSessionStore {
   }
 }
 
-export const AUTH_PROVIDERS = Object.freeze(["google", "wechat", "alipay", "apple", "email_otp"]);
+export const AUTH_PROVIDERS = Object.freeze(["google", "wechat", "alipay", "apple", "email_otp", "guest"]);

@@ -18,9 +18,14 @@ import {
   type NeedsContext,
   type TripBrief,
   type TripCommitResult,
+  type TripFeedbackCategory,
+  type TripFeedbackVerdict,
+  type TripFeedbackVisibility,
   type TripPatchProposal,
   type TripProposalResult,
   type TripQa,
+  type ReadinessSignalId,
+  type ReadinessSignalStatus,
   type TripState,
   type Traveler,
   type TravelContextPack,
@@ -46,6 +51,12 @@ export interface UpdateTripScopeInput extends Partial<TripBrief> {
   travelerProfiles?: Array<Partial<Traveler>>;
   language?: string;
   foreignGuestRequired?: boolean;
+}
+
+export interface UpdateTripReadinessInput {
+  signalId?: ReadinessSignalId;
+  status?: ReadinessSignalStatus;
+  signals?: Partial<Record<ReadinessSignalId, ReadinessSignalStatus>>;
 }
 
 export interface OfferSnapshotInput {
@@ -74,9 +85,15 @@ export interface BookingConfirmationInput {
 
 export interface TripFeedbackInput {
   baseRevision: number;
-  category: "personal_experience" | "preference_change" | "fact_correction" | "unverified_public_info";
+  category: TripFeedbackCategory;
   nodeId?: string;
   text: string;
+  visibility?: TripFeedbackVisibility;
+  verdict?: TripFeedbackVerdict;
+  tags?: string[];
+  spendCny?: number;
+  waitMinutes?: number;
+  visitDate?: string;
 }
 
 export function createTripControlState(input: CreateTripControlStateInput = {}): TripState {
@@ -93,6 +110,10 @@ export function applyMobilityObservation(state: TripState, observation: Mobility
 
 export function updateTripControlScope(state: TripState, input: UpdateTripScopeInput = {}, options: RuntimeOptions = {}): TripState {
   return assertTripState(runtime.updateTripControlScope(state, input, options));
+}
+
+export function updateTripReadiness(state: TripState, input: UpdateTripReadinessInput, options: RuntimeOptions = {}): TripState {
+  return assertTripState(runtime.updateTripReadiness(state, input, options));
 }
 
 export function addDecisionNode(state: TripState, input: DecisionNodeInput, options: RuntimeOptions = {}): TripState {

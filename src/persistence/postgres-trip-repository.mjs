@@ -78,6 +78,26 @@ export class PostgresTripRepository {
     return result.rows.map((row) => validateState(row.state_json, row.state_json.tripId));
   }
 
+  async listSharedPlaceFeedback(sourceRefs) {
+    const requested = [...new Set((Array.isArray(sourceRefs) ? sourceRefs : []).filter(Boolean))];
+    if (!requested.length) return [];
+    const result = await this.pool.query(
+      `SELECT state_json->>'tripId' AS trip_id,
+              COALESCE(state_json#>>'{collaboration,ownerUserId}', state_json->>'tripId') AS contributor_key,
+              feedback
+       FROM trip_states
+       CROSS JOIN LATERAL jsonb_array_elements(COALESCE(state_json->'feedbackLedger', '[]'::jsonb)) AS feedback
+       WHERE feedback->>'visibility' = 'anonymous_travelers'
+         AND EXISTS (
+           SELECT 1
+           FROM jsonb_array_elements_text(COALESCE(feedback->'place'->'sourceRefs', '[]'::jsonb)) AS source_ref(value)
+           WHERE source_ref.value = ANY($1::text[])
+         )`,
+      [requested],
+    );
+    return result.rows.map((row) => ({ tripId: row.trip_id, contributorKey: row.contributor_key, feedback: row.feedback }));
+  }
+
   async save(state, { expectedStorageVersion } = {}) {
     const persisted = structuredClone(state);
     const nextVersion = Number(expectedStorageVersion) + 1;

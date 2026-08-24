@@ -279,6 +279,17 @@ export function createTripControlState({ tripId = `trip_${randomUUID().slice(0, 
     dirtySet: [],
     budgetLedger: { currency: normalizedBrief.currency ?? "CNY", totalBudget: normalizedBrief.totalBudget ?? null, committed: 0, estimated: 0 },
     environment: { weather: null, mobility: null, updatedAt: null },
+    readiness: {
+      schemaVersion: "trip-readiness-state-v1",
+      version: 0,
+      signals: {
+        travel_documents: "unknown",
+        mobile_access: "unknown",
+        cashless_access: "unknown",
+        china_account_continuity: "unknown",
+      },
+      updatedAt: null,
+    },
     fulfillmentLedger: [],
     evidence: { contentItems: [], claims: [], entities: [] },
     pendingProposals: [],
@@ -289,6 +300,46 @@ export function createTripControlState({ tripId = `trip_${randomUUID().slice(0, 
     createdAt,
     updatedAt: createdAt,
   };
+}
+
+const READINESS_SIGNAL_IDS = Object.freeze([
+  "travel_documents", "mobile_access", "cashless_access", "china_account_continuity",
+]);
+const READINESS_SIGNAL_STATUSES = new Set(["unknown", "ready", "needs_help", "not_applicable"]);
+
+export function updateTripReadiness(state: DynamicRecord, input: DynamicRecord = {}, { clock }: DynamicRecord = {}): DynamicRecord {
+  const updates = input.signals ?? (input.signalId ? { [input.signalId]: input.status } : {});
+  if (!updates || typeof updates !== "object" || Array.isArray(updates)) throw new Error("invalid_readiness_update");
+  const next = clone(state);
+  const currentSignals = next.readiness?.signals ?? {};
+  const signals = { ...currentSignals };
+  let changed = false;
+  for (const [signalId, status] of Object.entries(updates)) {
+    if (!READINESS_SIGNAL_IDS.includes(signalId)) throw new Error("invalid_readiness_signal");
+    if (typeof status !== "string" || !READINESS_SIGNAL_STATUSES.has(status)) throw new Error("invalid_readiness_status");
+    if (signals[signalId] !== status) {
+      signals[signalId] = status;
+      changed = true;
+    }
+  }
+  if (!changed) return next;
+  const timestamp = now(clock);
+  next.readiness = {
+    schemaVersion: "trip-readiness-state-v1",
+    version: Number(next.readiness?.version ?? 0) + 1,
+    signals,
+    updatedAt: timestamp,
+  };
+  next.updatedAt = timestamp;
+  next.changeJournal.push({
+    changeId: `readiness_${next.readiness.version}_${randomUUID().slice(0, 8)}`,
+    baseRevision: state.revision,
+    revision: state.revision,
+    event: "trip_readiness_updated",
+    signalIds: Object.keys(updates),
+    committedAt: timestamp,
+  });
+  return next;
 }
 
 function normalizeWeatherObservation(input: DynamicRecord): DynamicRecord {
@@ -1115,12 +1166,51 @@ export function recordTripFeedback(state: DynamicRecord, input: DynamicRecord, {
   if (!categories.includes(input.category)) {
     return { schemaVersion: "trip-commit-result-v1", status: "rejected", validation: { ok: false, reason: "invalid_feedback_category" }, state };
   }
-  if (input.nodeId && !state.nodes.some((node: DynamicRecord) => node.nodeId === input.nodeId)) {
+  const targetNode = input.nodeId ? state.nodes.find((node: DynamicRecord) => node.nodeId === input.nodeId) : null;
+  if (input.nodeId && !targetNode) {
     return { schemaVersion: "trip-commit-result-v1", status: "rejected", validation: { ok: false, reason: "feedback_node_not_found" }, state };
   }
   const text = String(input.text ?? "").trim();
   if (!text || text.length > 2000) {
     return { schemaVersion: "trip-commit-result-v1", status: "rejected", validation: { ok: false, reason: "invalid_feedback_text" }, state };
+  }
+
+  const visibility = input.visibility ?? "trip_only";
+  if (!["trip_only", "anonymous_travelers"].includes(visibility)) {
+    return { schemaVersion: "trip-commit-result-v1", status: "rejected", validation: { ok: false, reason: "invalid_feedback_visibility" }, state };
+  }
+  const verdict = input.verdict ?? null;
+  if (verdict && !["recommend", "mixed", "not_recommend"].includes(verdict)) {
+    return { schemaVersion: "trip-commit-result-v1", status: "rejected", validation: { ok: false, reason: "invalid_feedback_verdict" }, state };
+  }
+  if (visibility === "anonymous_travelers" && (!targetNode || !Array.isArray(targetNode.sourceRefs) || targetNode.sourceRefs.length === 0)) {
+    return { schemaVersion: "trip-commit-result-v1", status: "rejected", validation: { ok: false, reason: "shared_feedback_requires_attributed_place" }, state };
+  }
+  if (visibility === "anonymous_travelers" && targetNode?.selected !== true) {
+    return { schemaVersion: "trip-commit-result-v1", status: "rejected", validation: { ok: false, reason: "shared_feedback_requires_selected_place" }, state };
+  }
+  if (visibility === "anonymous_travelers" && input.category === "personal_experience" && !verdict) {
+    return { schemaVersion: "trip-commit-result-v1", status: "rejected", validation: { ok: false, reason: "shared_experience_requires_verdict" }, state };
+  }
+  const allowedTags = new Set([
+    "local_character", "worth_detour", "easy_to_reach", "low_queue", "helpful_service", "family_friendly",
+    "quiet_rest", "accurate_listing", "useful_facilities", "foreigner_friendly", "good_value", "comfortable_pace",
+  ]);
+  const tags = [...new Set(Array.isArray(input.tags) ? input.tags.map((tag: unknown) => String(tag).trim()).filter(Boolean) : [])];
+  if (tags.length > 8 || tags.some((tag) => !allowedTags.has(tag))) {
+    return { schemaVersion: "trip-commit-result-v1", status: "rejected", validation: { ok: false, reason: "invalid_feedback_tags" }, state };
+  }
+  const spendCny = input.spendCny == null || input.spendCny === "" ? null : Number(input.spendCny);
+  if (spendCny != null && (!Number.isFinite(spendCny) || spendCny < 0 || spendCny > 1_000_000)) {
+    return { schemaVersion: "trip-commit-result-v1", status: "rejected", validation: { ok: false, reason: "invalid_feedback_spend" }, state };
+  }
+  const waitMinutes = input.waitMinutes == null || input.waitMinutes === "" ? null : Number(input.waitMinutes);
+  if (waitMinutes != null && (!Number.isInteger(waitMinutes) || waitMinutes < 0 || waitMinutes > 1_440)) {
+    return { schemaVersion: "trip-commit-result-v1", status: "rejected", validation: { ok: false, reason: "invalid_feedback_wait" }, state };
+  }
+  const visitDate = input.visitDate == null || input.visitDate === "" ? null : String(input.visitDate);
+  if (visitDate && (!/^20\d{2}-\d{2}-\d{2}$/.test(visitDate) || Number.isNaN(Date.parse(`${visitDate}T00:00:00Z`)))) {
+    return { schemaVersion: "trip-commit-result-v1", status: "rejected", validation: { ok: false, reason: "invalid_feedback_visit_date" }, state };
   }
 
   const timestamp = now(clock);
@@ -1132,8 +1222,23 @@ export function recordTripFeedback(state: DynamicRecord, input: DynamicRecord, {
     category: input.category,
     nodeId: input.nodeId ?? null,
     text,
-    memoryStatus: input.category === "unverified_public_info" || input.category === "fact_correction" ? "needs_review" : "trip_only",
+    memoryStatus: input.category === "unverified_public_info" || input.category === "fact_correction"
+      ? "needs_review"
+      : visibility === "anonymous_travelers" ? "shared_subjective_experience" : "trip_only",
     recordedAt: timestamp,
+    visibility,
+    ...(targetNode ? { place: {
+      nodeId: targetNode.nodeId,
+      domain: targetNode.domain,
+      title: targetNode.title,
+      sourceRefs: [...new Set(targetNode.sourceRefs ?? [])],
+      ...(targetNode.location != null ? { location: targetNode.location } : {}),
+    } } : {}),
+    ...(verdict ? { verdict } : {}),
+    ...(tags.length ? { tags } : {}),
+    ...(spendCny != null ? { spendCny } : {}),
+    ...(waitMinutes != null ? { waitMinutes } : {}),
+    ...(visitDate ? { visitDate } : {}),
   });
   next.changeJournal.push({
     changeId: `change_${next.revision}_${randomUUID().slice(0, 8)}`,

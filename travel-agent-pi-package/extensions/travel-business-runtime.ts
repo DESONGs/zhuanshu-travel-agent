@@ -132,8 +132,20 @@ export default function (pi: ExtensionAPI) {
     parameters: Type.Object({ tripId: Type.String(), proposal: TripPatchProposalSchema }), run: (params) => service.reportTripDisruption(params),
   });
   register(pi, {
-    name: "submit_trip_feedback", label: "Submit Trip Feedback", description: "Record classified feedback without promoting it directly to public memory.",
-    parameters: Type.Object({ tripId: Type.String(), baseRevision: Type.Integer(), category: Type.Union([Type.Literal("personal_experience"), Type.Literal("preference_change"), Type.Literal("fact_correction"), Type.Literal("unverified_public_info")]), nodeId: Type.Optional(Type.String()), text: Type.String() }),
+    name: "submit_trip_feedback", label: "Submit Trip Feedback", description: "Record trip-linked visit feedback; shared structured experience remains non-authoritative user evidence.",
+    parameters: Type.Object({
+      tripId: Type.String(),
+      baseRevision: Type.Integer(),
+      category: Type.Union([Type.Literal("personal_experience"), Type.Literal("preference_change"), Type.Literal("fact_correction"), Type.Literal("unverified_public_info")]),
+      nodeId: Type.Optional(Type.String()),
+      text: Type.String({ minLength: 1, maxLength: 2000 }),
+      visibility: Type.Optional(Type.Union([Type.Literal("trip_only"), Type.Literal("anonymous_travelers")])),
+      verdict: Type.Optional(Type.Union([Type.Literal("recommend"), Type.Literal("mixed"), Type.Literal("not_recommend")])),
+      tags: Type.Optional(Type.Array(Type.Union([Type.Literal("local_character"), Type.Literal("worth_detour"), Type.Literal("easy_to_reach"), Type.Literal("low_queue"), Type.Literal("helpful_service"), Type.Literal("family_friendly"), Type.Literal("quiet_rest"), Type.Literal("accurate_listing"), Type.Literal("useful_facilities"), Type.Literal("foreigner_friendly"), Type.Literal("good_value"), Type.Literal("comfortable_pace")]), { maxItems: 8 })),
+      spendCny: Type.Optional(Type.Number({ minimum: 0, maximum: 1_000_000 })),
+      waitMinutes: Type.Optional(Type.Integer({ minimum: 0, maximum: 1_440 })),
+      visitDate: Type.Optional(Type.String({ pattern: "^20\\d{2}-\\d{2}-\\d{2}$" })),
+    }),
     run: (params) => service.submitTripFeedback(params),
   });
 }

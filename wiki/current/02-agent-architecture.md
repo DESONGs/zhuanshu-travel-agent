@@ -14,7 +14,7 @@
 
 ```mermaid
 flowchart LR
-  UI[登录后 Chatbox / 小程序 / MCP Client] --> PA[Travel Parent Agent]
+  UI[Guest 或账号 Chatbox / 小程序 / MCP Client] --> PA[Travel Parent Agent]
   PA --> CP[Control State 与 Planner]
   CP --> TQ[行住玩吃任务队列]
   TQ --> SS[共享 Semantic Skills]
@@ -82,3 +82,16 @@ Capability Registry 只校验父 Agent 已选择的显式能力 ID，Planner 只
 Skill 返回 `TripPatchProposal`；父 Agent 以相同 `baseRevision` 检查：目标 trip、read set、write set、write contract、锁定项、Offer 新鲜度、操作白名单和跨域约束。通过后才原子提交，增加 revision，计算 dirty set，并只将受影响域加入 replan 队列。旧 revision、超出 write set、修改锁定项与过期 Offer 均被拒绝。
 
 `destination-memory-curator` 是一个 fresh、只读的候选公共记忆审稿角色，不能直接写入长期记忆或旅行状态。
+
+## 前端迭代不可破坏边界
+
+地图工作台、候选池、路线骨架、Day Timeline、Trip Kit 和跨端壳都只是现有业务状态的视图与交互，不改变以下所有权：
+
+- Parent Agent 继续负责意图、一次关键追问、跨域取舍、局部重排和最终提交；
+- 附图轮仍是同一个 Parent Agent，只是切到声明 `text + image` 的模型路线；它可以看图后调用现有旅行工具，但原图不持久化，图片文字不获得指令权，视觉观察不获得提交权；
+- Skill 继续只返回 Evidence、`needs_context` 或 `TripPatchProposal`；
+- Provider 继续只提供受限真实资料，不因视觉需要生成地点、路线、设施、库存或价格；
+- `TripState`、Decision Graph、Evidence Graph、Fulfillment Plane 和 revision 继续是唯一旅行真相；
+- 候选池读取 pending proposal，路线骨架读取已选节点与 Mobility，Day Timeline 只有合同成立后才能出现；
+- 点击、拖动、换序或快捷筛选不能直接写 TripState，只能形成用户可读的 Change Preview 和 Proposal；
+- HTTP、MCP、序列化格式、用户确认和购买边界不因前端重构改变。

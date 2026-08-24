@@ -94,6 +94,15 @@ function missing(values) {
   return values.some((value) => !String(value ?? "").trim());
 }
 
+function alipayConfiguration(env, channel) {
+  const prefix = channel === "miniapp" ? "ALIPAY_MINIAPP" : "ALIPAY_WEB";
+  return {
+    appId: env[`${prefix}_APP_ID`] || env.ALIPAY_APP_ID,
+    privateKeyPath: env[`${prefix}_PRIVATE_KEY_PATH`] || env.ALIPAY_PRIVATE_KEY_PATH,
+    publicKeyPath: env[`${prefix}_PUBLIC_KEY_PATH`] || env.ALIPAY_PUBLIC_KEY_PATH,
+  };
+}
+
 function providerConfiguration(env, provider, origin) {
   const stateSecret = requiredSecret(env);
   const normalized = normalizedOrigin(origin ?? env.TRAVEL_AGENT_PUBLIC_ORIGIN);
@@ -120,14 +129,13 @@ function providerConfiguration(env, provider, origin) {
     };
   }
   if (provider === "alipay") {
+    const alipay = alipayConfiguration(env, "web");
     return {
-      available: commonReady && https && !missing([env.ALIPAY_APP_ID, env.ALIPAY_PRIVATE_KEY_PATH, env.ALIPAY_PUBLIC_KEY_PATH]),
-      reason: !commonReady ? "secure_session_required" : !https ? "https_required" : missing([env.ALIPAY_APP_ID, env.ALIPAY_PRIVATE_KEY_PATH, env.ALIPAY_PUBLIC_KEY_PATH]) ? "configuration_required" : null,
+      available: commonReady && https && !missing([alipay.appId, alipay.privateKeyPath, alipay.publicKeyPath]),
+      reason: !commonReady ? "secure_session_required" : !https ? "https_required" : missing([alipay.appId, alipay.privateKeyPath, alipay.publicKeyPath]) ? "configuration_required" : null,
       stateSecret,
       origin: normalized,
-      appId: env.ALIPAY_APP_ID,
-      privateKeyPath: env.ALIPAY_PRIVATE_KEY_PATH,
-      publicKeyPath: env.ALIPAY_PUBLIC_KEY_PATH,
+      ...alipay,
     };
   }
   if (provider === "apple") {
@@ -430,11 +438,7 @@ export function createAuthService({ env = process.env, fetchImpl = globalThis.fe
         return { provider, subject: result.unionid || result.openid, displayName: null };
       }
       if (provider === "alipay") {
-        const config = {
-          appId: env.ALIPAY_APP_ID,
-          privateKeyPath: env.ALIPAY_PRIVATE_KEY_PATH,
-          publicKeyPath: env.ALIPAY_PUBLIC_KEY_PATH,
-        };
+        const config = alipayConfiguration(env, "miniapp");
         if (missing([config.appId, config.privateKeyPath, config.publicKeyPath, env.TRAVEL_AGENT_SESSION_SECRET])) {
           throw authError("auth_provider_not_configured", 503, { provider, channel: "miniapp" });
         }

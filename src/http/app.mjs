@@ -8,7 +8,7 @@ import { createConversationRepository } from "../persistence/conversation-reposi
 import { providerStatusSummary } from "../providers/provider-status.mjs";
 import { createTravelResearchProvider } from "../providers/travel-research-provider.mjs";
 import { createTripRepository } from "../persistence/trip-repository.mjs";
-import { authenticatedUserId, developmentUserId, InMemorySessionStore, SignedSessionStore } from "./session.mjs";
+import { authenticatedUserId, developmentUserId, guestUserId, GUEST_SESSION_TTL_MS, InMemorySessionStore, SignedSessionStore } from "./session.mjs";
 import { createAuthService, oauthNonceCookieName } from "./auth-providers.mjs";
 import { httpError, sendError } from "./http-errors.mjs";
 
@@ -126,6 +126,20 @@ export function createHttpApp({
   });
 
   const currentSession = (request) => sessionStore.read(sessionTokenFromRequest(request));
+  const publicSession = (session, extra = {}) => ({
+    schemaVersion: "auth-session-v1",
+    ...session,
+    guest: session.provider === "guest",
+    ...extra,
+  });
+  const claimGuestData = async (session, userId) => {
+    if (session?.provider !== "guest" || !session.userId || session.userId === userId) return { transferredTrips: 0, transferredConversations: 0 };
+    const tripResult = await travelService.transferUserOwnership({ fromUserId: session.userId, toUserId: userId });
+    const conversationResult = typeof conversationRepository.transferUserOwnership === "function"
+      ? await conversationRepository.transferUserOwnership(session.userId, userId)
+      : { transferredConversations: 0 };
+    return { ...tripResult, ...conversationResult };
+  };
   const requireSession = (request) => {
     const session = currentSession(request);
     if (!session) throw httpError("authentication_required", 401);
@@ -137,6 +151,9 @@ export function createHttpApp({
     if (!state) throw httpError("trip_not_found", 404, { tripId });
     const members = state.collaboration?.memberUserIds;
     if (members && !members.includes(session.userId)) throw httpError("trip_access_denied", 403, { tripId });
+    if (session.provider === "guest" && state.collaboration?.guestExpiresAt && new Date(state.collaboration.guestExpiresAt).getTime() <= Date.now()) {
+      throw httpError("guest_trip_expired", 410, { tripId });
+    }
     return session;
   };
   const requireConversationOwner = async (request, conversationId) => {
@@ -175,6 +192,7 @@ export function createHttpApp({
   }));
   const completeWebAuthorization = async (request, response) => {
     const provider = String(request.params.provider ?? "");
+    const previousSession = currentSession(request);
     const state = request.body?.state ?? request.query.state;
     const nonceCookie = oauthNonceCookieName(provider);
     const cookieOptions = { path: `/api/auth/${provider}/callback`, sameSite: provider === "apple" ? "none" : "lax", secure: provider === "apple" || runtimeEnv.NODE_ENV === "production" };
@@ -184,8 +202,10 @@ export function createHttpApp({
       const code = request.body?.code ?? request.query.code ?? request.query.auth_code;
       const completed = await authService.completeWeb({ provider, code, state, nonce: cookieValue(request, nonceCookie) });
       returnTo = completed.returnTo;
+      const userId = authenticatedUserId(completed.identity);
+      const claim = await claimGuestData(previousSession, userId);
       const issued = sessionStore.issue({
-        userId: authenticatedUserId(completed.identity),
+        userId,
         provider: completed.identity.provider,
         displayName: completed.identity.displayName,
       });
@@ -204,28 +224,40 @@ export function createHttpApp({
     response.json(providerStatusSummary(runtimeEnv));
   }));
   app.post("/api/auth/session", asyncRoute(async (request, response) => {
+    const previousSession = currentSession(request);
     const provider = request.body?.provider;
     if (provider !== "email_otp") throw httpError("unsupported_auth_provider", 400, { provider });
     if (!developmentAuthEnabled) throw httpError("auth_provider_not_configured", 503, { provider, message: "Configure this provider callback before issuing a production session." });
     const identity = String(request.body?.identity ?? "").trim();
     if (!identity || identity.length > 256) throw httpError("invalid_auth_identity");
     const userId = developmentUserId({ provider, identity });
+    const claim = await claimGuestData(previousSession, userId);
     const issued = sessionStore.issue({ userId, provider, displayName: identity });
     response.cookie("travel_session", issued.opaqueToken, sessionCookieOptions(runtimeEnv, issued.expiresAt));
-    response.status(201).json({ schemaVersion: "auth-session-v1", userId, provider, displayName: identity, expiresAt: issued.expiresAt, accessToken: issued.opaqueToken, developmentOnly: true });
+    response.status(201).json(publicSession({ userId, provider, displayName: identity, expiresAt: issued.expiresAt }, { accessToken: issued.opaqueToken, developmentOnly: true, claim }));
+  }));
+  app.post("/api/auth/guest-session", asyncRoute(async (request, response) => {
+    const existing = currentSession(request);
+    if (existing) return response.status(200).json(publicSession(existing));
+    const userId = guestUserId();
+    const issued = sessionStore.issue({ userId, provider: "guest", displayName: null, ttlMs: GUEST_SESSION_TTL_MS });
+    response.cookie("travel_session", issued.opaqueToken, sessionCookieOptions(runtimeEnv, issued.expiresAt));
+    return response.status(201).json(publicSession({ userId, provider: "guest", displayName: null, expiresAt: issued.expiresAt }, { developmentOnly: false }));
   }));
   app.post("/api/auth/platform-exchange", asyncRoute(async (request, response) => {
+    const previousSession = currentSession(request);
     const provider = request.body?.provider;
     if (!["wechat", "alipay"].includes(provider)) throw httpError("unsupported_auth_provider", 400, { provider });
     const authorizationCode = String(request.body?.authorizationCode ?? "").trim();
     if (!authorizationCode || authorizationCode.length > 4096) throw httpError("invalid_authorization_code", 400);
     const identity = await authService.exchangePlatform({ provider, authorizationCode });
     const userId = authenticatedUserId(identity);
+    const claim = await claimGuestData(previousSession, userId);
     const issued = sessionStore.issue({ userId, provider: identity.provider, displayName: identity.displayName });
-    response.status(201).json({ schemaVersion: "auth-session-v1", userId, provider: identity.provider, displayName: identity.displayName, expiresAt: issued.expiresAt, accessToken: issued.opaqueToken, developmentOnly: false });
+    response.status(201).json(publicSession({ userId, provider: identity.provider, displayName: identity.displayName, expiresAt: issued.expiresAt }, { accessToken: issued.opaqueToken, developmentOnly: false, claim }));
   }));
   app.get("/api/session", asyncRoute(async (request, response) => {
-    response.json({ schemaVersion: "auth-session-v1", ...requireSession(request) });
+    response.json(publicSession(requireSession(request)));
   }));
   app.delete("/api/session", asyncRoute(async (request, response) => {
     sessionStore.revoke(sessionTokenFromRequest(request));
@@ -252,7 +284,7 @@ export function createHttpApp({
   }));
   app.post("/api/conversations/:conversationId/messages", asyncRoute(async (request, response) => {
     const session = await requireConversationOwner(request, request.params.conversationId);
-    response.json(await travelConversationAgent.reply({ conversationId: request.params.conversationId, userId: session.userId, text: request.body?.text, modelId: request.body?.modelId }));
+    response.json(await travelConversationAgent.reply({ conversationId: request.params.conversationId, userId: session.userId, text: request.body?.text, images: request.body?.images, modelId: request.body?.modelId }));
   }));
   app.post("/api/visual-evidence/inspect", asyncRoute(async (request, response) => {
     const session = requireSession(request);
@@ -269,6 +301,10 @@ export function createHttpApp({
   app.get("/api/trips/:tripId/plan", asyncRoute(async (request, response) => {
     await requireTripMember(request, request.params.tripId);
     response.json(await travelService.getTripPlanView(request.params.tripId));
+  }));
+  app.post("/api/trips/:tripId/readiness", asyncRoute(async (request, response) => {
+    await requireTripMember(request, request.params.tripId);
+    response.json(await travelService.updateTripReadiness({ tripId: request.params.tripId, signalId: request.body?.signalId, status: request.body?.status }));
   }));
   app.get("/api/trips/:tripId/map", asyncRoute(async (request, response) => {
     await requireTripMember(request, request.params.tripId);

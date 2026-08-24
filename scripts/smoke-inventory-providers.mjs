@@ -19,12 +19,14 @@ if (env.TRAVEL_AGENT_FLYAI_ENABLED !== "true") {
   try {
     const provider = createFlyaiTravelResearchProvider(env);
     const result = await provider.research({
-      brief: { origin: "广州", destination: "大理", dates: `${startDate} 至 ${endDate}`, arrivalMode: "火车" },
+      brief: { origin: "广州", destination: "大理", dates: `${startDate} 至 ${endDate}` },
       domains: ["stay", "play", "transport"],
+      question: "帮我安排合适的交通工具",
     });
     const counts = Object.fromEntries(Object.entries(result.byDomain ?? {}).map(([domain, items]) => [domain, items.length]));
-    const passed = result.status === "completed" && ["stay", "play", "transport"].every((domain) => counts[domain] > 0);
-    results.push({ provider: "fliggy_flyai", status: passed ? "passed_read_only_isolated" : result.status, counts, partial: result.partial ?? null, fabricatedResults: result.fabricatedResults === true, sensitiveOutput: false });
+    const transportTypes = [...new Set((result.byDomain?.transport ?? []).map((item) => item.operability?.transportType).filter(Boolean))];
+    const passed = result.status === "completed" && ["stay", "play", "transport"].every((domain) => counts[domain] > 0) && ["FLIGHT", "TRAIN"].every((type) => transportTypes.includes(type));
+    results.push({ provider: "fliggy_flyai", status: passed ? "passed_read_only_isolated" : result.status, counts, transportTypes, partial: result.partial ?? null, fabricatedResults: result.fabricatedResults === true, sensitiveOutput: false });
     if (!passed) failed = true;
   } catch (error) {
     results.push({ provider: "fliggy_flyai", status: error.code ?? "SOURCE_UNAVAILABLE", sensitiveOutput: false });
@@ -44,21 +46,18 @@ if (env.TRAVEL_AGENT_TUNIU_ENABLED !== "true" || !env.TUNIU_API_KEY) {
       brief: { destination: "北京", dates: `${startDate} 至 ${endDate}` },
       domains: ["stay"],
     });
-    const train = await provider.research({
-      brief: { origin: "南京", destination: "上海", dates: `${startDate} 至 ${endDate}`, arrivalMode: "火车" },
+    const transport = await provider.research({
+      brief: { origin: "南京", destination: "上海", dates: `${startDate} 至 ${endDate}` },
       domains: ["transport"],
-    });
-    const flight = await provider.research({
-      brief: { origin: "北京", destination: "上海", dates: `${startDate} 至 ${endDate}`, arrivalMode: "飞机" },
-      domains: ["transport"],
+      question: "帮我安排合适的交通工具",
     });
     const counts = {
       stay: hotel.byDomain?.stay?.length ?? 0,
-      train: train.byDomain?.transport?.length ?? 0,
-      flight: flight.byDomain?.transport?.length ?? 0,
+      train: transport.byDomain?.transport?.filter((item) => item.operability?.transportType === "TRAIN").length ?? 0,
+      flight: transport.byDomain?.transport?.filter((item) => item.operability?.transportType === "FLIGHT").length ?? 0,
     };
     const passed = allowed.includes("searchLowestPriceTrain") && Object.values(counts).every((count) => count > 0);
-    results.push({ provider: "tuniu_official_mcp", status: passed ? "passed_read_only_isolated" : "EMPTY_VERIFIED", travelDate: startDate, readOnlyTrainTools: allowed, counts, diagnostics: { hotelStatus: hotel.status, trainStatus: train.status, trainErrors: train.errors?.map(({ code }) => code) ?? [], flightStatus: flight.status, flightErrors: flight.errors?.map(({ code }) => code) ?? [] }, fabricatedResults: false, sensitiveOutput: false });
+    results.push({ provider: "tuniu_official_mcp", status: passed ? "passed_read_only_isolated" : "EMPTY_VERIFIED", travelDate: startDate, readOnlyTrainTools: allowed, counts, diagnostics: { hotelStatus: hotel.status, transportStatus: transport.status, transportErrors: transport.errors?.map(({ code }) => code) ?? [] }, fabricatedResults: false, sensitiveOutput: false });
     if (!passed) failed = true;
   } catch (error) {
     results.push({ provider: "tuniu_official_mcp", status: error.code ?? "SOURCE_UNAVAILABLE", sensitiveOutput: false });

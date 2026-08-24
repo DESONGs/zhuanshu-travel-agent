@@ -61,6 +61,38 @@ function travelDates(value) {
   };
 }
 
+function intercityModes(brief = {}, question = "") {
+  const explicit = text(question, 800);
+  const saved = text(brief.arrivalMode, 120);
+  const flightPattern = /飞机|航班|机票|flight|\bair\b/i;
+  const trainPattern = /高铁|动车|火车|列车|train|rail/i;
+  const flightDenied = /(?:不坐|不要|不考虑|避免)(?:乘坐)?(?:飞机|航班)|(?:飞机|航班|机票).{0,8}(?:不考虑|不要)/i.test(explicit);
+  const trainDenied = /(?:不坐|不要|不考虑|避免)(?:乘坐)?(?:高铁|动车|火车|列车)|(?:高铁|动车|火车|列车).{0,8}(?:不考虑|不要)/i.test(explicit);
+  const explicitModes = [
+    ...(flightPattern.test(explicit) && !flightDenied ? ["flight"] : []),
+    ...(trainPattern.test(explicit) && !trainDenied ? ["train"] : []),
+  ];
+  if (explicitModes.length) return explicitModes;
+  if (flightDenied && !trainDenied) return ["train"];
+  if (trainDenied && !flightDenied) return ["flight"];
+  const savedModes = [
+    ...(flightPattern.test(saved) ? ["flight"] : []),
+    ...(trainPattern.test(saved) ? ["train"] : []),
+  ];
+  return savedModes.length ? savedModes : ["flight", "train"];
+}
+
+function endpointLabel(value, kind) {
+  const label = text(value, 100);
+  if (!label) return null;
+  if (kind === "airport") return /机场|airport/i.test(label) ? label : `${label}机场`;
+  return /站$/.test(label) ? label : `${label}站`;
+}
+
+function transportKind(value) {
+  return /flight|air|飞机|航班/i.test(text(value, 40)) ? "FLIGHT" : "TRAIN";
+}
+
 function candidateBase({ domain, providerRef, title, summary, checkedAt, media = [], location = null, cost = 0, operability = {} }) {
   const sourceId = `${FLYAI_PROVIDER}:${providerRef}`;
   const entityId = `entity_${shortHash(sourceId)}`;
@@ -173,7 +205,7 @@ function normalizePoi(item, checkedAt) {
   });
 }
 
-function normalizeTransport(item, checkedAt) {
+function normalizeTransport(item, checkedAt, context = {}) {
   const journey = Array.isArray(item.journeys) ? item.journeys[0] : null;
   const segments = Array.isArray(journey?.segments) ? journey.segments : [];
   const first = segments[0] ?? {};
@@ -181,7 +213,13 @@ function normalizeTransport(item, checkedAt) {
   const transportNumbers = segments.map((segment) => text(segment.marketingTransportNo, 40)).filter(Boolean).join(" + ");
   const providerRef = shortHash(`${transportNumbers}:${first.depDateTime}:${last.arrDateTime}`);
   const priceHint = text(item.ticketPrice ?? item.price, 40);
-  const title = `${transportNumbers || text(first.marketingTransportName, 80) || "交通"} ${text(first.depStationName, 100)} → ${text(last.arrStationName, 100)}`;
+  const transportType = transportKind(first.transportType ?? first.marketingTransportName);
+  const placeKind = transportType === "FLIGHT" ? "airport" : "rail_station";
+  const departureLabel = endpointLabel(first.depStationName, placeKind);
+  const arrivalLabel = endpointLabel(last.arrStationName, placeKind);
+  const cost = exactPrice(priceHint);
+  const bookingUrl = safeProviderUrl(item.jumpUrl);
+  const title = `${transportNumbers || text(first.marketingTransportName, 80) || "交通"} ${departureLabel || text(context.origin, 100)} → ${arrivalLabel || text(context.destination, 100)}`;
   const facts = [text(journey?.journeyType, 40), text(first.depDateTime, 80), text(last.arrDateTime, 80), text(first.seatClassName, 60), priceHint ? `参考价 ${priceHint}` : "", text(item.totalDuration, 20) ? `全程约 ${text(item.totalDuration, 20)} 分钟` : ""].filter(Boolean);
   return candidateBase({
     domain: "transport",
@@ -189,18 +227,27 @@ function normalizeTransport(item, checkedAt) {
     title,
     summary: facts.join(" · "),
     checkedAt,
-    cost: exactPrice(priceHint),
+    cost,
     operability: {
       priceHint: priceHint || null,
-      bookingUrl: safeProviderUrl(item.jumpUrl),
+      bookingUrl,
       routeVerified: true,
       scheduleVerified: true,
       mobilityRole: "intercity_inventory",
       inventoryVerified: false,
-      transportType: text(first.transportType, 40) || null,
+      transportType,
+      serviceNumber: transportNumbers || null,
+      carrier: text(first.marketingTransportName, 80) || null,
+      departureCity: text(context.origin, 100) || null,
+      arrivalCity: text(context.destination, 100) || null,
+      departurePlace: departureLabel ? { kind: placeKind, city: text(context.origin, 100) || null, label: departureLabel, terminal: null } : null,
+      arrivalPlace: arrivalLabel ? { kind: placeKind, city: text(context.destination, 100) || null, label: arrivalLabel, terminal: null } : null,
       departureAt: text(first.depDateTime, 80) || null,
       arrivalAt: text(last.arrDateTime, 80) || null,
       durationMinutes: numberOrNull(item.totalDuration),
+      seatClass: text(first.seatClassName, 60) || null,
+      journeyType: text(journey?.journeyType, 40) || null,
+      fareOffers: cost > 0 ? [{ provider: FLYAI_PROVIDER, providerLabel: "飞猪", currency: "CNY", totalFare: cost, baseFare: null, taxes: null, checkedAt, bookingUrl }] : [],
       segments: segments.slice(0, 4).map((segment) => ({
         number: text(segment.marketingTransportNo, 40),
         carrier: text(segment.marketingTransportName, 80),
@@ -211,6 +258,15 @@ function normalizeTransport(item, checkedAt) {
       })),
     },
   });
+}
+
+function limitDomainCandidates(domain, candidates) {
+  const unique = [...new Map(candidates.map((candidate) => [candidate.candidateId, candidate])).values()];
+  if (domain !== "transport") return unique.slice(0, 6);
+  const flights = unique.filter((candidate) => candidate.operability?.transportType === "FLIGHT").slice(0, 3);
+  const trains = unique.filter((candidate) => candidate.operability?.transportType === "TRAIN").slice(0, 3);
+  const other = unique.filter((candidate) => !["FLIGHT", "TRAIN"].includes(candidate.operability?.transportType));
+  return [...flights, ...trains, ...other].slice(0, 6);
 }
 
 function mapCliFailure(error) {
@@ -260,7 +316,7 @@ export class FlyaiTravelResearchProvider {
     }
   }
 
-  async research({ brief = {}, domains = [] } = {}) {
+  async research({ brief = {}, domains = [], question = "" } = {}) {
     if (!this.enabled) return { schemaVersion: "travel-provider-result-v1", status: "provider_unavailable", provider: FLYAI_PROVIDER, fabricatedResults: false };
     const destination = text(brief.destination, 120);
     if (!destination) throw Object.assign(new Error("destination_required"), { code: "destination_required" });
@@ -276,9 +332,9 @@ export class FlyaiTravelResearchProvider {
     if (requested.includes("play")) tasks.push({ domain: "play", command: "search-poi", args: ["--city-name", destination], normalize: normalizePoi });
     const origin = text(brief.origin, 120);
     if (requested.includes("transport") && origin && dates.start) {
-      const mode = text(brief.arrivalMode, 80);
-      const command = /飞机|航班|flight|air/i.test(mode) ? "search-flight" : "search-train";
-      tasks.push({ domain: "transport", command, args: ["--origin", origin, "--destination", destination, "--dep-date", dates.start], normalize: normalizeTransport });
+      for (const mode of intercityModes(brief, question)) {
+        tasks.push({ domain: "transport", command: mode === "flight" ? "search-flight" : "search-train", args: ["--origin", origin, "--destination", destination, "--dep-date", dates.start], normalize: (item, checkedAt) => normalizeTransport(item, checkedAt, { origin, destination }) });
+      }
     }
     const byDomain = { play: [], food: [], stay: [], transport: [] };
     const checkedAt = new Date(this.clock?.() ?? Date.now()).toISOString();
@@ -291,9 +347,10 @@ export class FlyaiTravelResearchProvider {
         continue;
       }
       const { task, result: response } = result.value;
-      byDomain[task.domain] = response.items.map((item) => task.normalize(item, checkedAt)).filter((candidate) => candidate.title).slice(0, 6);
+      byDomain[task.domain].push(...response.items.map((item) => task.normalize(item, checkedAt)).filter((candidate) => candidate.title));
       if (response.systemMessage) systemMessages.push(response.systemMessage);
     }
+    for (const domain of Object.keys(byDomain)) byDomain[domain] = limitDomainCandidates(domain, byDomain[domain]);
     const count = Object.values(byDomain).reduce((sum, items) => sum + items.length, 0);
     if (!count) return { schemaVersion: "travel-provider-result-v1", status: errors.some((error) => error.code === "AUTH_REQUIRED") ? "AUTH_REQUIRED" : "EMPTY_VERIFIED", provider: FLYAI_PROVIDER, errors, fabricatedResults: false };
     return {
@@ -321,4 +378,4 @@ export function createFlyaiTravelResearchProvider(env = process.env, options = {
   return new FlyaiTravelResearchProvider({ apiKey: env.FLYAI_API_KEY, enabled, ...(workerHome ? { workerHome } : {}), ...options });
 }
 
-export { FLYAI_BIN, FLYAI_DOC, normalizeHotel, normalizePoi, normalizeTransport, travelDates };
+export { FLYAI_BIN, FLYAI_DOC, intercityModes, normalizeHotel, normalizePoi, normalizeTransport, travelDates };

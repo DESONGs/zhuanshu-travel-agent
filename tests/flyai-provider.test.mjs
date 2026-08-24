@@ -36,7 +36,7 @@ test("FlyAI provider exposes only an allowlisted child-process environment and n
       return { stdout: JSON.stringify({ status: 0, data: { itemList: fixture(args[1]) } }) };
     },
   });
-  const result = await provider.research({ brief: { origin: "广州", destination: "大理", dates: "2026-09-15 至 2026-09-19" }, domains: ["stay", "play", "transport", "food"] });
+  const result = await provider.research({ brief: { origin: "广州", destination: "大理", dates: "2026-09-15 至 2026-09-19", arrivalMode: "火车" }, domains: ["stay", "play", "transport", "food"] });
   assert.equal(result.status, "completed");
   assert.deepEqual(calls.map((call) => call.command).sort(), ["search-hotel", "search-poi", "search-train"]);
   assert.equal(calls.every((call) => call.options.env.DEEPSEEK_API_KEY === undefined && call.options.env.MOONSHOT_API_KEY === undefined), true);
@@ -58,4 +58,42 @@ test("FlyAI strips non-allowlisted media and handoff URLs", async () => {
   assert.equal(result.byDomain.stay[0].media.length, 0);
   assert.equal(result.byDomain.stay[0].operability.bookingUrl, null);
   assert.doesNotThrow(() => normalizeProviderResult(result), "a provider place without coordinates must omit the nested field instead of returning null");
+});
+
+test("FlyAI uses the current flight question instead of silently defaulting to train", async () => {
+  const workerHome = await mkdtemp(join(tmpdir(), "flyai-provider-test-"));
+  const calls = [];
+  const provider = new FlyaiTravelResearchProvider({
+    enabled: true,
+    workerHome,
+    runner: async (_file, args) => {
+      calls.push(args[1]);
+      return { stdout: JSON.stringify({ status: 0, data: { itemList: fixture(args[1]) } }) };
+    },
+  });
+
+  await provider.research({
+    brief: { origin: "广州", destination: "大理", dates: "2026-09-15" },
+    domains: ["transport"],
+    question: "请找广州到大理的机票",
+  });
+
+  assert.deepEqual(calls, ["search-flight"]);
+});
+
+test("FlyAI compares flight and train when no intercity mode was specified", async () => {
+  const workerHome = await mkdtemp(join(tmpdir(), "flyai-provider-test-"));
+  const calls = [];
+  const provider = new FlyaiTravelResearchProvider({
+    enabled: true,
+    workerHome,
+    runner: async (_file, args) => {
+      calls.push(args[1]);
+      return { stdout: JSON.stringify({ status: 0, data: { itemList: fixture(args[1]) } }) };
+    },
+  });
+
+  await provider.research({ brief: { origin: "广州", destination: "大理", dates: "2026-09-15" }, domains: ["transport"], question: "安排交通工具" });
+
+  assert.deepEqual(calls.sort(), ["search-flight", "search-train"]);
 });

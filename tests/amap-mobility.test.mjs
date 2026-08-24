@@ -79,6 +79,39 @@ test("AMap mobility rejects an otherwise short route with mapped stairs for a tr
   assert.equal(transit.steps[0].accessibilityFeatures[0].guidance.includes("避开台阶"), true);
 });
 
+test("AMap mobility connects an intercity arrival airport to the selected hotel", async () => {
+  const geocodedAddresses = [];
+  const fetchImpl = async (url) => {
+    const parsed = new URL(url);
+    if (parsed.pathname === "/v3/geocode/geo") {
+      const address = parsed.searchParams.get("address");
+      geocodedAddresses.push(address);
+      const location = address === "大理机场" ? "100.319000,25.649000" : "100.165000,25.693000";
+      return new Response(JSON.stringify({ status: "1", infocode: "10000", geocodes: [{ citycode: "0872", adcode: "532901", location }] }));
+    }
+    if (parsed.pathname === "/v5/direction/transit/integrated") return new Response(JSON.stringify({ status: "1", infocode: "10000", route: { transits: [{ distance: "30000", walking_distance: "350", cost: { duration: "3600", transit_fee: "10" }, segments: [{ bus: { buslines: [{ name: "机场巴士", departure_stop: { name: "大理机场" }, arrival_stop: { name: "大理古城" }, duration: "3300", distance: "29500" }] } }] }] } }));
+    if (parsed.pathname === "/v5/direction/driving") return new Response(JSON.stringify({ status: "1", infocode: "10000", route: { paths: [{ distance: "30000", cost: { duration: "2400", taxi: "90" }, steps: [{ instruction: "从机场前往酒店", step_distance: "30000", cost: { duration: "2400" } }] }] } }));
+    if (parsed.pathname === "/v5/direction/walking") return new Response(JSON.stringify({ status: "1", infocode: "10000", route: { paths: [{ distance: "30000", cost: { duration: "22000" }, steps: [{ instruction: "步行前往", step_distance: "30000", cost: { duration: "22000" } }] }] } }));
+    throw new Error(`unexpected path ${parsed.pathname}`);
+  };
+  const provider = new AmapTravelResearchProvider({ apiKey: "test-key", fetchImpl, requestIntervalMs: 0, rateLimitRetryMs: 0 });
+
+  const mobility = normalizeTripMobility(await provider.planMobility({
+    brief: { destination: "大理", dates: "2026-09-03 至 2026-09-07" },
+    selectedNodes: [
+      { nodeId: "flight_cz3481", domain: "transport", title: "CZ3481 广州 → 大理", selected: true, operability: { mobilityRole: "intercity_inventory", arrivalPlace: { kind: "airport", city: "大理", label: "大理机场", terminal: null } } },
+      { nodeId: "stay_old_town", domain: "stay", title: "大理古城酒店", selected: true, location: { citycode: "0872", coordinates: { longitude: 100.165, latitude: 25.693 } } },
+    ],
+  }));
+
+  assert.equal(mobility.status, "completed");
+  assert.equal(mobility.legs[0].origin.nodeId, "flight_cz3481");
+  assert.equal(mobility.legs[0].origin.label, "大理机场");
+  assert.equal(mobility.legs[0].destination.nodeId, "stay_old_town");
+  assert.match(mobility.legs[0].rationale, /抵达后的接驳/);
+  assert.deepEqual(geocodedAddresses, ["大理", "大理机场"]);
+});
+
 test("AMap mobility keeps account gates distinct from QPS and returns an honest unavailable state", async () => {
   const provider = new AmapTravelResearchProvider({
     apiKey: "test-key",

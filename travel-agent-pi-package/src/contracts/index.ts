@@ -35,6 +35,35 @@ export const TripBriefSchema = Type.Object({
 }, { $id: "TripBrief", additionalProperties: true });
 export type TripBrief = Static<typeof TripBriefSchema>;
 
+export const ReadinessSignalIdSchema = Type.Union([
+  Type.Literal("travel_documents"),
+  Type.Literal("mobile_access"),
+  Type.Literal("cashless_access"),
+  Type.Literal("china_account_continuity"),
+]);
+export type ReadinessSignalId = Static<typeof ReadinessSignalIdSchema>;
+
+export const ReadinessSignalStatusSchema = Type.Union([
+  Type.Literal("unknown"),
+  Type.Literal("ready"),
+  Type.Literal("needs_help"),
+  Type.Literal("not_applicable"),
+]);
+export type ReadinessSignalStatus = Static<typeof ReadinessSignalStatusSchema>;
+
+export const TripReadinessStateSchema = Type.Object({
+  schemaVersion: Type.Literal("trip-readiness-state-v1"),
+  version: Type.Integer({ minimum: 0 }),
+  signals: Type.Object({
+    travel_documents: ReadinessSignalStatusSchema,
+    mobile_access: ReadinessSignalStatusSchema,
+    cashless_access: ReadinessSignalStatusSchema,
+    china_account_continuity: ReadinessSignalStatusSchema,
+  }, { additionalProperties: false }),
+  updatedAt: Type.Union([IsoTimestampSchema, Type.Null()]),
+}, { $id: "TripReadinessState", additionalProperties: false });
+export type TripReadinessState = Static<typeof TripReadinessStateSchema>;
+
 const MobilityCareSchema = Type.Object({
   reduceWalking: Type.Optional(Type.Boolean()),
   avoidStairs: Type.Optional(Type.Boolean()),
@@ -147,6 +176,73 @@ export type DecisionNode = Static<typeof DecisionNodeSchema>;
 
 export const DecisionNodeInputSchema = Type.Partial(Type.Omit(DecisionNodeSchema, ["version", "updatedAt"]), { $id: "DecisionNodeInput" });
 export type DecisionNodeInput = Static<typeof DecisionNodeInputSchema>;
+
+export const TripFeedbackCategorySchema = Type.Union([
+  Type.Literal("personal_experience"),
+  Type.Literal("preference_change"),
+  Type.Literal("fact_correction"),
+  Type.Literal("unverified_public_info"),
+]);
+export type TripFeedbackCategory = Static<typeof TripFeedbackCategorySchema>;
+
+export const TripFeedbackVerdictSchema = Type.Union([
+  Type.Literal("recommend"),
+  Type.Literal("mixed"),
+  Type.Literal("not_recommend"),
+]);
+export type TripFeedbackVerdict = Static<typeof TripFeedbackVerdictSchema>;
+
+export const TripFeedbackVisibilitySchema = Type.Union([
+  Type.Literal("trip_only"),
+  Type.Literal("anonymous_travelers"),
+]);
+export type TripFeedbackVisibility = Static<typeof TripFeedbackVisibilitySchema>;
+
+export const TripFeedbackPlaceSchema = Type.Object({
+  nodeId: IdentifierSchema,
+  domain: DomainSchema,
+  title: Type.String({ minLength: 1, maxLength: 200 }),
+  sourceRefs: Type.Array(Type.String({ minLength: 1, maxLength: 300 }), { minItems: 1, maxItems: 12 }),
+  location: Type.Optional(LocationValueSchema),
+}, { $id: "TripFeedbackPlace", additionalProperties: false });
+export type TripFeedbackPlace = Static<typeof TripFeedbackPlaceSchema>;
+
+export const TripFeedbackRecordSchema = Type.Object({
+  feedbackId: IdentifierSchema,
+  category: TripFeedbackCategorySchema,
+  nodeId: Type.Union([IdentifierSchema, Type.Null()]),
+  text: Type.String({ minLength: 1, maxLength: 2_000 }),
+  memoryStatus: Type.String({ minLength: 1, maxLength: 80 }),
+  recordedAt: IsoTimestampSchema,
+  visibility: Type.Optional(TripFeedbackVisibilitySchema),
+  place: Type.Optional(TripFeedbackPlaceSchema),
+  verdict: Type.Optional(TripFeedbackVerdictSchema),
+  tags: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 80 }), { maxItems: 8 })),
+  spendCny: Type.Optional(Type.Number({ minimum: 0, maximum: 1_000_000 })),
+  waitMinutes: Type.Optional(Type.Integer({ minimum: 0, maximum: 1_440 })),
+  visitDate: Type.Optional(Type.String({ pattern: "^20\\d{2}-\\d{2}-\\d{2}$" })),
+}, { $id: "TripFeedbackRecord", additionalProperties: false });
+export type TripFeedbackRecord = Static<typeof TripFeedbackRecordSchema>;
+
+export const PlaceVisitFeedbackSummarySchema = Type.Object({
+  schemaVersion: Type.Literal("place-visit-feedback-summary-v1"),
+  experienceCount: Type.Integer({ minimum: 0 }),
+  recommendation: Type.Object({
+    recommend: Type.Integer({ minimum: 0 }),
+    mixed: Type.Integer({ minimum: 0 }),
+    notRecommend: Type.Integer({ minimum: 0 }),
+  }, { additionalProperties: false }),
+  topTags: Type.Array(Type.Object({
+    key: Type.String({ minLength: 1, maxLength: 80 }),
+    count: Type.Integer({ minimum: 1 }),
+  }, { additionalProperties: false }), { maxItems: 6 }),
+  typicalSpendCny: Type.Union([Type.Number({ minimum: 0 }), Type.Null()]),
+  typicalWaitMinutes: Type.Union([Type.Integer({ minimum: 0 }), Type.Null()]),
+  pendingFactCheckCount: Type.Integer({ minimum: 0 }),
+  lastRecordedAt: Type.Union([IsoTimestampSchema, Type.Null()]),
+  evidenceNature: Type.Literal("anonymous_structured_visit_feedback"),
+}, { $id: "PlaceVisitFeedbackSummary", additionalProperties: false });
+export type PlaceVisitFeedbackSummary = Static<typeof PlaceVisitFeedbackSummarySchema>;
 
 export const DecisionEdgeSchema = Type.Object({
   edgeId: Type.String({ minLength: 1, maxLength: 300 }),
@@ -450,14 +546,20 @@ export const TripStateSchema = Type.Object({
     mobility: Type.Union([MobilityObservationSchema, Type.Null()]),
     updatedAt: Type.Union([IsoTimestampSchema, Type.Null()]),
   }, { additionalProperties: true }),
+  readiness: TripReadinessStateSchema,
   fulfillmentLedger: Type.Array(OfferSnapshotSchema),
   evidence: EvidenceGraphSchema,
   pendingProposals: Type.Array(TripPatchProposalSchema),
   proposalHistory: Type.Array(ExtensibleObjectSchema),
-  feedbackLedger: Type.Array(ExtensibleObjectSchema),
+  feedbackLedger: Type.Array(TripFeedbackRecordSchema),
   fulfillmentEvents: Type.Array(ExtensibleObjectSchema),
   changeJournal: Type.Array(ExtensibleObjectSchema),
-  collaboration: Type.Optional(Type.Object({ ownerUserId: Type.String(), memberUserIds: Type.Array(Type.String()) }, { additionalProperties: false })),
+  collaboration: Type.Optional(Type.Object({
+    ownerUserId: Type.String(),
+    memberUserIds: Type.Array(Type.String()),
+    accessMode: Type.Optional(Type.Union([Type.Literal("guest"), Type.Literal("account")])),
+    guestExpiresAt: Type.Optional(Type.Union([IsoTimestampSchema, Type.Null()])),
+  }, { additionalProperties: false })),
   createdAt: IsoTimestampSchema,
   updatedAt: IsoTimestampSchema,
 }, { $id: "TripControlState", additionalProperties: false });

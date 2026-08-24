@@ -26,12 +26,15 @@
       "mustReturn": ["checked_at", "source", "freshness"]
     },
     "multimodal": {
-      "purpose": "Read a user-authorized image or a permitted media derivative and return attributed visual claims.",
+      "purpose": "Understand a user-authorized image and message together, then reason and call bounded travel tools in the same Parent Agent turn.",
       "providerRole": "vision",
-      "preferredProvider": "moonshotai-cn",
-      "preferredModel": "kimi-k2.6",
+      "preferredProvider": "deepseek",
+      "preferredModel": "deepseek-v4-flash-vision-exp",
+      "fallbackProvider": "moonshotai-cn",
+      "fallbackModel": "kimi-k2.6",
       "input": ["text", "image"],
-      "thinkingLevel": "low",
+      "thinkingLevel": "high",
+      "agentMode": "native_multimodal_tools",
       "mustReturn": ["claim_confidence", "evidence_pointer", "uncertainty"],
       "forbidden": ["raw_social_media_download", "identity_document_analysis", "payment_or_passport_input"]
     }

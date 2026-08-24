@@ -10,6 +10,7 @@ import {
   createTripControlState,
   recordOfferSnapshot,
   updateTripControlScope,
+  updateTripReadiness,
   validateTripCoherence,
 } from "../src/core/index.ts";
 
@@ -30,6 +31,28 @@ test("updates only explicitly understood trip facts and keeps omitted facts", ()
   assert.equal(updated.travelers.length, 3);
   assert.equal(updated.revision, 1);
   assert.equal(state.brief.origin, undefined);
+});
+
+test("updates preparation signals without invalidating a pending travel decision", () => {
+  const state = createTripControlState({ tripId: "trip_readiness", brief: { destination: "上海" }, clock });
+  state.pendingProposals.push({
+    schemaVersion: "trip-patch-proposal-v1",
+    proposalId: "proposal_readiness",
+    tripId: state.tripId,
+    baseRevision: state.revision,
+    readSet: [],
+    writeSet: ["stay_readiness"],
+    writeContract: { allowedNodeIds: ["stay_readiness"] },
+    operations: [{ kind: "add_candidate", nodeId: "stay_readiness", node: { nodeId: "stay_readiness", domain: "stay", title: "待比较住宿" } }],
+  });
+
+  const updated = updateTripReadiness(state, { signalId: "mobile_access", status: "ready" }, { clock });
+
+  assert.equal(updated.revision, state.revision);
+  assert.equal(updated.readiness.version, 1);
+  assert.equal(updated.readiness.signals.mobile_access, "ready");
+  assert.equal(updated.pendingProposals[0].proposalId, "proposal_readiness");
+  assert.equal(updated.changeJournal.at(-1).event, "trip_readiness_updated");
 });
 
 test("normalizes common Chinese date ranges before weather research", () => {

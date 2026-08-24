@@ -56,6 +56,56 @@ test("fixture: Pi conversation loop creates and reads a travel draft through bou
   assert.equal(control.travelers[2].careNeeds.schedule.latestDinnerTime, "19:00");
 });
 
+test("a native multimodal Parent Agent sees the image and can build the trip with ordinary tools in the same turn", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "travel-conversation-multimodal-"));
+  const tripStore = new TripStore({ rootDir: join(rootDir, "trips") });
+  tripStore.mode = "file";
+  const travelService = new TravelService({ store: tripStore, researchProvider: linkedProviderFixture(), clock: () => new Date("2026-08-24T08:00:00.000Z") });
+  const faux = fauxProvider({ provider: "fixture-vision", models: [{ id: "fixture-vision-parent", reasoning: true, input: ["text", "image"] }] });
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const transparentPixel = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+  faux.setResponses([
+    (context) => {
+      const message = context.messages.at(-1);
+      assert.equal(message.role, "user");
+      assert.ok(Array.isArray(message.content));
+      assert.ok(message.content.some((item) => item.type === "image" && item.data === transparentPixel));
+      assert.ok(context.tools.some((tool) => tool.name === "save_trip_understanding"));
+      assert.ok(context.tools.some((tool) => tool.name === "research_trip_options"));
+      assert.match(context.systemPrompt, /本轮包含用户主动上传的旅行图片/);
+      return fauxAssistantMessage(fauxToolCall("save_trip_understanding", { destination: "上海", travelerCount: 1, foodPreferences: ["截图里的本地餐厅"], language: "zh-CN" }), { stopReason: "toolUse" });
+    },
+    fauxAssistantMessage(fauxToolCall("research_trip_options", { domains: ["food"], question: "核验图片中可见的上海餐饮线索，并与住宿、游玩和交通联合比较" }), { stopReason: "toolUse" }),
+    fauxAssistantMessage("我已经结合图片理解了你的想法，并把经资料核验的候选放到方案区；图片里的价格和营业信息仍需以当前来源为准。"),
+  ]);
+  const agent = new TravelConversationAgent({
+    travelService,
+    conversationRepository: new FileConversationRepository({ rootDir: join(rootDir, "conversations") }),
+    modelRuntime: { models, model: faux.getModel("fixture-vision-parent") },
+    clock: () => new Date("2026-08-24T08:00:00.000Z"),
+  });
+  const conversation = await agent.createConversation({ userId: "user_visual_planner" });
+
+  const turn = await agent.reply({
+    conversationId: conversation.conversationId,
+    userId: "user_visual_planner",
+    text: "这是朋友发来的上海餐厅截图，请直接结合我的旅行核验并继续规划。",
+    images: [{ mimeType: "image/png", data: transparentPixel }],
+  });
+
+  assert.equal(turn.status, "completed");
+  assert.deepEqual(turn.activities.map(({ toolName, status }) => ({ toolName, status })), [
+    { toolName: "interpret_visual_context", status: "completed" },
+    { toolName: "save_trip_understanding", status: "saved" },
+    { toolName: "research_trip_options", status: "proposed" },
+  ]);
+  assert.deepEqual(turn.multimodal, { status: "completed", persistence: "none", provider: "fixture-vision", model: "fixture-vision-parent" });
+  assert.equal(turn.conversation.messages.find((message) => message.role === "user").kind, "multimodal_input");
+  assert.equal(JSON.stringify(turn.conversation).includes(transparentPixel), false);
+  assert.equal((await travelService.getTripPlanView(turn.tripId)).pendingProposals.length, 1);
+});
+
 test("a conversation whose trip draft is missing rebuilds instead of retrying a dead trip id", async () => {
   const rootDir = await mkdtemp(join(tmpdir(), "travel-conversation-recovery-"));
   const tripStore = new TripStore({ rootDir: join(rootDir, "trips") });

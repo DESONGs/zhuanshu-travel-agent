@@ -19,6 +19,12 @@ projects use only the platform developer runtimes. PostgreSQL is a separately
 deployed database and is not copied into this repository. Installed packages
 are dependencies, not copied source.
 
+The Web map workspace uses Leaflet 1.9.4, licensed under the BSD 2-Clause
+License. Map tiles and geographic data remain subject to the selected map
+provider's own terms and attribution requirements. OpenStreetMap public tiles
+are used only as a configurable local-development fallback; they are not the
+default production tile service.
+
 Read-only Fliggy inventory research invokes @fly-ai/flyai-cli 1.0.16, licensed
 under the MIT License, in a restricted child process. Source provenance and
 the production authorization boundary are recorded in the third-party audit

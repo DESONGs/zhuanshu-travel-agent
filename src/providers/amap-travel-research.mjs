@@ -650,6 +650,9 @@ export class AmapTravelResearchProvider {
   }
 
   async resolveMobilityStop(node, destination, destinationGeocode) {
+    const intercityArrival = node?.domain === "transport" && node?.operability?.mobilityRole === "intercity_inventory"
+      ? node.operability.arrivalPlace
+      : null;
     const existing = coordinatePair(node);
     if (existing) {
       return {
@@ -661,11 +664,11 @@ export class AmapTravelResearchProvider {
         providerPoiId: text(node?.operability?.providerPoiId, 128) || null,
       };
     }
-    const address = text(node?.location?.label, 300) || text(node?.title, 200);
+    const address = text(intercityArrival?.label, 300) || text(node?.location?.label, 300) || text(node?.title, 200);
     if (!address) return null;
     const payload = await this.requestJsonWithRetry(
       AMAP_GEOCODE_ENDPOINT,
-      { address, city: destination, output: "json" },
+      { address, city: text(intercityArrival?.city, 120) || destination, output: "json" },
       "amap_mobility_geocode",
     );
     const match = array(payload?.geocodes)[0];
@@ -673,7 +676,7 @@ export class AmapTravelResearchProvider {
     if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) return null;
     return {
       nodeId: text(node?.nodeId, 128) || null,
-      label: text(node?.title, 200) || address,
+      label: text(intercityArrival?.label, 200) || text(node?.title, 200) || address,
       coordinates: { longitude, latitude, coordinateSystem: "GCJ-02" },
       citycode: text(match?.citycode, 20) || text(destinationGeocode?.citycode, 20) || null,
       adcode: text(match?.adcode, 20) || text(destinationGeocode?.adcode, 20) || null,
@@ -756,11 +759,12 @@ export class AmapTravelResearchProvider {
         unresolvedNodeIds.push(node.nodeId);
       }
     }
+    const intercityArrival = resolved.find(({ node }) => node.domain === "transport" && node.operability?.mobilityRole === "intercity_inventory") ?? null;
     const transport = resolved.filter(({ node }) => node.domain === "transport" && node.operability?.mobilityRole !== "intercity_inventory");
     const stay = resolved.find(({ node }) => node.domain === "stay") ?? null;
     const activities = resolved.filter(({ node }) => ["play", "food"].includes(node.domain));
     const remaining = resolved.filter(({ node }) => !["stay", "play", "food", "transport"].includes(node.domain));
-    const ordered = [...transport.slice(0, 1), ...(stay ? [stay] : []), ...activities, ...remaining].slice(0, 6);
+    const ordered = [...(intercityArrival ? [intercityArrival] : []), ...transport.slice(0, 1), ...(stay ? [stay] : []), ...activities, ...remaining].slice(0, 6);
     if (ordered.length >= 3 && stay && ordered.at(-1)?.node.nodeId !== stay.node.nodeId) ordered.push(stay);
     if (ordered.length < 2) {
       return { schemaVersion: "trip-mobility-v1", status: "needs_context", destination, reason: "selected_places_need_resolvable_coordinates", source: "amap_routes_v5", coverage: { routedNodeIds: [], unresolvedNodeIds, unscheduled: true }, sourceDocumentation: AMAP_ROUTE_DOC, fabricatedResults: false };
@@ -774,12 +778,13 @@ export class AmapTravelResearchProvider {
       const result = await this.routeMobilityLeg({ origin, destination: nextDestination, brief, constraints });
       errors.push(...result.errors);
       if (!result.alternatives.length) continue;
+      const isArrivalTransfer = ordered[index].node.domain === "transport" && ordered[index].node.operability?.mobilityRole === "intercity_inventory";
       legs.push({
         legId: `mobility_${shortHash(`${origin.nodeId}:${nextDestination.nodeId}:${index}`)}`,
         origin,
         destination: nextDestination,
         recommendedMode: result.recommendation.mode,
-        rationale: `${result.recommendation.rationale}${constraints.stepFreeRequired || constraints.avoidStairs ? " 无障碍连续性仍需结合车站电梯与出入口资料核验。" : ""}`,
+        rationale: `${isArrivalTransfer ? "这是抵达后的接驳。" : ""}${result.recommendation.rationale}${constraints.stepFreeRequired || constraints.avoidStairs ? " 无障碍连续性仍需结合车站电梯与出入口资料核验。" : ""}`,
         alternatives: result.alternatives,
       });
     }

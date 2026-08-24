@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createTuniuOfficialMcpClient } from "./tuniu-official-mcp.mjs";
-import { travelDates } from "./flyai-travel-research.mjs";
+import { intercityModes, travelDates } from "./flyai-travel-research.mjs";
 
 const PROVIDER = "tuniu_official_mcp";
 const DOCUMENTATION = "https://open.tuniu.com/mcp/docs/";
@@ -32,6 +32,38 @@ function safeImage(value) {
 function lowestPrice(price = {}) {
   const values = Object.values(price).map(numeric).filter((value) => value != null && value > 0);
   return values.length ? Math.min(...values) : null;
+}
+
+function endpointLabel(value, kind) {
+  const label = text(value, 100);
+  if (!label) return null;
+  if (kind === "airport") return /机场|airport/i.test(label) ? label : `${label}机场`;
+  return /站$/.test(label) ? label : `${label}站`;
+}
+
+function durationMinutes(value) {
+  const raw = text(value, 80);
+  if (!raw) return null;
+  if (/^\d+$/.test(raw)) return Number(raw);
+  const hours = Number(raw.match(/(\d+(?:\.\d+)?)\s*(?:h|小时|时)/i)?.[1] ?? 0);
+  const minutes = Number(raw.match(/(\d+)\s*(?:m|分钟|分)/i)?.[1] ?? 0);
+  const total = Math.round(hours * 60 + minutes);
+  return total > 0 ? total : null;
+}
+
+const TRAIN_FARES = Object.freeze([
+  ["swz", "商务座"], ["tdz", "特等座"], ["ydz", "一等座"], ["edz", "二等座"],
+  ["gjrw", "高级软卧"], ["rw", "软卧"], ["dw", "动卧"], ["yw", "硬卧"],
+  ["rz", "软座"], ["yz", "硬座"], ["wz", "无座"],
+]);
+
+function trainFareOptions(price = {}, seatAvailable = {}) {
+  return TRAIN_FARES.flatMap(([prefix, seatClass]) => {
+    const fare = numeric(price[`${prefix}Price`]);
+    if (fare == null || fare <= 0) return [];
+    const availableSeats = numeric(seatAvailable[`${prefix}Num`]);
+    return [{ seatClass, fare, availableSeats }];
+  }).sort((left, right) => left.fare - right.fare);
 }
 
 function candidate({ domain, providerRef, title, summary, checkedAt, cost = 0, media = [], location = null, operability = {} }) {
@@ -74,27 +106,46 @@ function normalizeHotel(item, checkedAt) {
     cost,
     media: photo ? [{ url: photo, title: text(item.hotelName, 120), source: PROVIDER }] : [],
     location: address || district || city ? { ...(address ? { address, label: address } : {}), ...(district ? { district } : {}), ...(city ? { city } : {}) } : null,
-    operability: { rating: numeric(item.commentScore), priceHint: cost ? `¥${cost} 起` : null, roomName: text(item.roomName, 120) || null, meal: text(item.meal, 80) || null, refundPolicy: text(item.refund, 140) || null, inventoryVerified: true, offerFreshness: "search_time" },
+    operability: { rating: numeric(item.commentScore), priceHint: cost ? `¥${cost} 起` : null, roomName: text(item.roomName, 120) || null, roomArea: text(item.roomArea, 80) || null, roomWindow: text(item.roomWindow, 80) || null, meal: text(item.meal, 80) || null, refundPolicy: text(item.refund, 140) || null, inventoryVerified: true, offerFreshness: "search_time" },
   });
 }
 
-function normalizeTrain(item, checkedAt) {
+function normalizeTrain(item, checkedAt, context = {}) {
   const providerRef = hash(`${item.trainNum}:${item.departStationName}:${item.destStationName}:${item.departureTime}`);
-  const cost = lowestPrice(item.price) ?? 0;
-  const available = Object.values(item.seatAvailable ?? {}).map(numeric).filter((value) => value != null).reduce((sum, value) => sum + value, 0);
-  const title = `${text(item.trainNum, 40) || "火车"} ${text(item.departStationName, 100)} → ${text(item.destStationName, 100)}`;
-  const details = [text(item.trainType, 50), text(item.departureTime, 80), text(item.arrivalTime, 80), text(item.duration, 60), cost ? `最低席别 ¥${cost}` : "", Number.isFinite(available) ? `可见余票 ${available}` : ""].filter(Boolean);
-  return candidate({ domain: "transport", providerRef, title, summary: details.join(" · "), checkedAt, cost, operability: { transportType: "TRAIN", mobilityRole: "intercity_inventory", priceHint: cost ? `¥${cost} 起` : null, departureAt: text(item.departureTime, 80) || null, arrivalAt: text(item.arrivalTime, 80) || null, availableSeats: Number.isFinite(available) ? available : null, routeVerified: true, scheduleVerified: true, inventoryVerified: true, offerFreshness: "search_time" } });
+  const fareOptions = trainFareOptions(item.price, item.seatAvailable);
+  const cost = fareOptions[0]?.fare ?? lowestPrice(item.price) ?? 0;
+  const seatCounts = Object.values(item.seatAvailable ?? {}).map(numeric).filter((value) => value != null);
+  const available = seatCounts.length ? seatCounts.reduce((sum, value) => sum + value, 0) : null;
+  const departureLabel = endpointLabel(item.departStationName, "rail_station");
+  const arrivalLabel = endpointLabel(item.destStationName, "rail_station");
+  const serviceNumber = text(item.trainNum, 40) || null;
+  const title = `${serviceNumber || "火车"} ${departureLabel || text(context.origin, 100)} → ${arrivalLabel || text(context.destination, 100)}`;
+  const details = [text(item.trainType, 50), text(item.departureTime, 80), text(item.arrivalTime, 80), text(item.duration, 60), cost ? `最低席别 ¥${cost}` : "", available != null ? `可见余票 ${available}` : ""].filter(Boolean);
+  return candidate({ domain: "transport", providerRef, title, summary: details.join(" · "), checkedAt, cost, operability: { transportType: "TRAIN", serviceNumber, mobilityRole: "intercity_inventory", priceHint: cost ? `¥${cost} 起` : null, departureCity: text(context.origin, 100) || null, arrivalCity: text(context.destination, 100) || null, departurePlace: departureLabel ? { kind: "rail_station", city: text(context.origin, 100) || null, label: departureLabel, terminal: null } : null, arrivalPlace: arrivalLabel ? { kind: "rail_station", city: text(context.destination, 100) || null, label: arrivalLabel, terminal: null } : null, departureAt: text(item.departureTime, 80) || null, arrivalAt: text(item.arrivalTime, 80) || null, durationMinutes: durationMinutes(item.duration), fareOptions, availableSeats: available, routeVerified: true, scheduleVerified: true, inventoryVerified: true, offerFreshness: "search_time" } });
 }
 
-function normalizeFlight(item, checkedAt) {
+function normalizeFlight(item, checkedAt, context = {}) {
   const providerRef = hash(`${item.flightNumber}:${item.departureAirport}:${item.arrivalAirport}:${item.departureTime}`);
   const base = numeric(item.basePrice) ?? 0;
   const tax = numeric(item.totalTax) ?? 0;
   const cost = base + tax;
-  const title = `${text(item.flightNumber, 40) || "航班"} ${text(item.departureAirport, 100)} → ${text(item.arrivalAirport, 100)}`;
+  const departureLabel = endpointLabel(item.departureAirport, "airport");
+  const arrivalLabel = endpointLabel(item.arrivalAirport, "airport");
+  const departureTerminal = text(item.departureTerminal, 40) || null;
+  const arrivalTerminal = text(item.arrivalTerminal, 40) || null;
+  const serviceNumber = text(item.flightNumber, 40) || null;
+  const title = `${serviceNumber || "航班"} ${departureLabel || text(context.origin, 100)} → ${arrivalLabel || text(context.destination, 100)}`;
   const details = [text(item.airlineCompany, 80), text(item.type, 40), text(item.departureTime, 80), text(item.arrivalTime, 80), text(item.cabinClass, 60), cost ? `含税参考 ¥${cost}` : "", item.remainingSeats ? `余位 ${text(item.remainingSeats, 20)}` : ""].filter(Boolean);
-  return candidate({ domain: "transport", providerRef, title, summary: details.join(" · "), checkedAt, cost, operability: { transportType: "FLIGHT", mobilityRole: "intercity_inventory", priceHint: cost ? `¥${cost} 含税` : null, departureAt: text(item.departureTime, 80) || null, arrivalAt: text(item.arrivalTime, 80) || null, availableSeats: numeric(item.remainingSeats), routeVerified: true, scheduleVerified: true, inventoryVerified: true, offerFreshness: "search_time" } });
+  return candidate({ domain: "transport", providerRef, title, summary: details.join(" · "), checkedAt, cost, operability: { transportType: "FLIGHT", serviceNumber, carrier: text(item.airlineCompany, 80) || null, mobilityRole: "intercity_inventory", priceHint: cost ? `¥${cost} 含税` : null, departureCity: text(context.origin, 100) || null, arrivalCity: text(context.destination, 100) || null, departurePlace: departureLabel ? { kind: "airport", city: text(context.origin, 100) || null, label: departureLabel, terminal: departureTerminal } : null, arrivalPlace: arrivalLabel ? { kind: "airport", city: text(context.destination, 100) || null, label: arrivalLabel, terminal: arrivalTerminal } : null, departureTerminal, arrivalTerminal, departureAt: text(item.departureTime, 80) || null, arrivalAt: text(item.arrivalTime, 80) || null, durationMinutes: durationMinutes(item.totalDuration), vehicleModel: text(item.craftType, 80) || null, seatClass: text(item.cabinClass, 60) || null, fareOffers: cost > 0 ? [{ provider: PROVIDER, providerLabel: "途牛", currency: "CNY", totalFare: cost, baseFare: base || null, taxes: tax || null, checkedAt, bookingUrl: null }] : [], availableSeats: numeric(item.remainingSeats), routeVerified: true, scheduleVerified: true, inventoryVerified: true, offerFreshness: "search_time" } });
+}
+
+function limitDomainCandidates(domain, candidates) {
+  const unique = [...new Map(candidates.map((item) => [item.candidateId, item])).values()];
+  if (domain !== "transport") return unique.slice(0, 6);
+  const flights = unique.filter((item) => item.operability?.transportType === "FLIGHT").slice(0, 3);
+  const trains = unique.filter((item) => item.operability?.transportType === "TRAIN").slice(0, 3);
+  const other = unique.filter((item) => !["FLIGHT", "TRAIN"].includes(item.operability?.transportType));
+  return [...flights, ...trains, ...other].slice(0, 6);
 }
 
 export class TuniuTravelResearchProvider {
@@ -107,7 +158,7 @@ export class TuniuTravelResearchProvider {
     return this.client?.status === "configured" ? "configured" : "provider_unavailable";
   }
 
-  async research({ brief = {}, domains = [] } = {}) {
+  async research({ brief = {}, domains = [], question = "" } = {}) {
     if (this.status !== "configured") return { schemaVersion: "travel-provider-result-v1", status: "provider_unavailable", provider: PROVIDER, fabricatedResults: false };
     const destination = text(brief.destination, 120);
     if (!destination) throw Object.assign(new Error("destination_required"), { code: "destination_required" });
@@ -121,15 +172,17 @@ export class TuniuTravelResearchProvider {
       tasks.push({ domain: "stay", service: "hotel", tool: "tuniuHotelSearch", args, extract: (result) => result?.hotels ?? [], normalize: normalizeHotel });
     }
     if (requested.includes("transport") && origin && dates.start) {
-      const flight = /飞机|航班|flight|air/i.test(text(brief.arrivalMode, 80));
-      tasks.push({
-        domain: "transport",
-        service: flight ? "flight" : "train",
-        tool: flight ? "searchLowestPriceFlight" : "searchLowestPriceTrain",
-        args: { departureCityName: origin, arrivalCityName: destination, departureDate: dates.start },
-        extract: (result) => result?.data ?? [],
-        normalize: flight ? normalizeFlight : normalizeTrain,
-      });
+      for (const mode of intercityModes(brief, question)) {
+        const flight = mode === "flight";
+        tasks.push({
+          domain: "transport",
+          service: flight ? "flight" : "train",
+          tool: flight ? "searchLowestPriceFlight" : "searchLowestPriceTrain",
+          args: { departureCityName: origin, arrivalCityName: destination, departureDate: dates.start },
+          extract: (result) => result?.data ?? [],
+          normalize: (item, checkedAt) => (flight ? normalizeFlight : normalizeTrain)(item, checkedAt, { origin, destination }),
+        });
+      }
     }
     const checkedAt = new Date(this.clock?.() ?? Date.now()).toISOString();
     const byDomain = { play: [], food: [], stay: [], transport: [] };
@@ -138,8 +191,9 @@ export class TuniuTravelResearchProvider {
     for (const result of settled) {
       if (result.status === "rejected") { errors.push({ code: result.reason?.code ?? "SOURCE_UNAVAILABLE" }); continue; }
       const { task, result: response } = result.value;
-      byDomain[task.domain] = task.extract(response).map((item) => task.normalize(item, checkedAt)).filter((item) => item.title).slice(0, 6);
+      byDomain[task.domain].push(...task.extract(response).map((item) => task.normalize(item, checkedAt)).filter((item) => item.title));
     }
+    for (const domain of Object.keys(byDomain)) byDomain[domain] = limitDomainCandidates(domain, byDomain[domain]);
     const count = Object.values(byDomain).reduce((sum, items) => sum + items.length, 0);
     if (!count) return { schemaVersion: "travel-provider-result-v1", status: errors.some((item) => item.code === "AUTH_REQUIRED") ? "AUTH_REQUIRED" : "EMPTY_VERIFIED", provider: PROVIDER, errors, fabricatedResults: false };
     return { schemaVersion: "travel-provider-result-v1", status: "completed", provider: PROVIDER, providerLabel: "途牛官方 MCP", destination, checkedAt, byDomain, partial: requested.some((domain) => byDomain[domain].length === 0) || errors.length > 0, errors, caveats: ["途牛结果属于商业库存与平台排序，价格、余位和退改政策需在最终跳转前再次核验。", "当前只读接入不会创建、查询或取消订单。"], fabricatedResults: false, sourceDocumentation: DOCUMENTATION };

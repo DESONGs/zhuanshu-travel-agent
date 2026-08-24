@@ -77,5 +77,18 @@ export function hydrateStoredTripState(value: unknown): TripState {
     mobility: environment.mobility ?? null,
     updatedAt: environment.updatedAt ?? null,
   };
+  const readiness = optionalObject(next.readiness);
+  const readinessSignals = optionalObject(readiness.signals);
+  next.readiness = {
+    schemaVersion: "trip-readiness-state-v1",
+    version: Number.isInteger(readiness.version) && Number(readiness.version) >= 0 ? readiness.version : 0,
+    signals: {
+      travel_documents: readinessSignals.travel_documents ?? "unknown",
+      mobile_access: readinessSignals.mobile_access ?? "unknown",
+      cashless_access: readinessSignals.cashless_access ?? "unknown",
+      china_account_continuity: readinessSignals.china_account_continuity ?? "unknown",
+    },
+    updatedAt: readiness.updatedAt ?? null,
+  };
   return assertTripState(next);
 }

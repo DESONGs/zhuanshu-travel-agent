@@ -19,7 +19,7 @@ Pi 主进程不接触 Cookie。Worker 没有通用 Shell、浏览器 eval、任�
 
 Cookie、Token、证件、支付字段、手机号、浏览器配置不进入 Prompt、日志、metrics 或 artifact。Web 仅以 `HttpOnly` session cookie 维持登录；原生与小程序只经受控 authorization-code exchange 获得会话。支付和身份动作永远发生在用户与授权渠道之间，Agent 仅提供可理解的 handoff。
 
-模型密钥只允许存放在服务端环境或权限为 `0600` 的被忽略 `env_travel.local`；运行时只读取白名单键，公开状态接口不返回任何密钥。Kimi 的视觉输入仅限用户主动上传的少量标准图片，不使用社交 Worker 的原媒体，也不持久化上传文件。
+模型密钥只允许存放在服务端环境或权限为 `0600` 的被忽略 `env_travel.local`；运行时只读取白名单键，公开状态接口不返回任何密钥。多模态 Parent Agent 只接受用户主动上传的少量标准图片，不使用社交 Worker 的原媒体，也不持久化上传文件。图片内文字按 Prompt Injection 处理；人脸、证件、支付、联系方式、账号凭据与私密二维码不得识别或复述。
 
 ## 许可与归属
 

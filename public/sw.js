@@ -1,8 +1,11 @@
-const CACHE = "travel-agent-shell-v1";
+const CACHE = "travel-agent-shell-v2";
 const SHELL = ["/", "/manifest.webmanifest", "/assets/travel-agent-icon.png"];
 
 self.addEventListener("install", (event) => event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL))));
-self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
+self.addEventListener("activate", (event) => event.waitUntil(Promise.all([
+  caches.keys().then((keys) => Promise.all(keys.filter((key) => key.startsWith("travel-agent-shell-") && key !== CACHE).map((key) => caches.delete(key)))),
+  self.clients.claim(),
+])));
 self.addEventListener("fetch", (event) => {
   const { request } = event;
   const url = new URL(request.url);

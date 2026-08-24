@@ -18,7 +18,7 @@ function fourDomainProposal(tripId, baseRevision = 0) {
     { nodeId: "transport_train", domain: "transport", title: "上午抵达", cost: 600, sourceStatus: "verified", operability: { routeVerified: true } },
     { nodeId: "stay_hotel", domain: "stay", title: "市中心酒店", cost: 1200, foreignGuestEligible: true, sourceStatus: "verified", travelerIds: ["traveler_1"], impactsNodeIds: ["food_dinner"] },
     { nodeId: "play_garden", domain: "play", title: "植物园", cost: 100, sourceStatus: "verified" },
-    { nodeId: "food_dinner", domain: "food", title: "晚餐", cost: 200, sourceStatus: "unverified" },
+    { nodeId: "food_dinner", domain: "food", title: "晚餐", cost: 200, sourceStatus: "unverified", sourceRefs: ["amap_web_service:food_shared_1"] },
   ];
   return {
     schemaVersion: "trip-patch-proposal-v1",
@@ -162,6 +162,48 @@ test("research proposal is visibly provisional when place evidence succeeds but 
   assert.equal(result.proposal.caveats.some((item) => item.includes("天气尚未核验完成")), true);
 });
 
+test("a pending proposal is not reused for a missing domain or a narrower follow-up search", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "travel-research-domain-refresh-"));
+  const checkedAt = "2026-08-13T12:00:00.000Z";
+  const calls = [];
+  const makeCandidate = (domain, suffix) => ({
+    candidateId: `${domain}_${suffix}`,
+    domain,
+    title: `${domain} ${suffix}`,
+    summary: "已核验候选",
+    sourceId: `source_${domain}_${suffix}`,
+    claimId: `claim_${domain}_${suffix}`,
+    entityId: `entity_${domain}_${suffix}`,
+    checkedAt,
+    source: { provider: "provider_fixture", sourceType: "official_provider", providerPoiId: `${domain}_${suffix}`, checkedAt, documentationUrl: "https://example.com/provider", independenceGroup: `source_${domain}_${suffix}`, commercialBias: "unknown" },
+    entity: { entityId: `entity_${domain}_${suffix}`, kind: "place", canonicalName: `${domain} ${suffix}`, providerRefs: [`source_${domain}_${suffix}`] },
+    claim: { claimId: `claim_${domain}_${suffix}`, entityId: `entity_${domain}_${suffix}`, statement: "候选存在", sourceRefs: [`source_${domain}_${suffix}`] },
+  });
+  const researchProvider = {
+    status: "configured",
+    async research({ domains }) {
+      calls.push(domains);
+      const byDomain = { play: [], food: [], stay: [], transport: [] };
+      for (const domain of domains) byDomain[domain] = [makeCandidate(domain, String(calls.length))];
+      return { status: "completed", provider: "provider_fixture", providerLabel: "Fixture", checkedAt, byDomain, partial: false, weather: { status: "SOURCE_UNAVAILABLE" }, caveats: [], fabricatedResults: false };
+    },
+  };
+  const service = new TravelService({ store: new TripStore({ rootDir }), clock, researchProvider });
+  await service.createTrip({ tripId: "trip_domain_refresh", brief: { destination: "大理", dates: "2026-09-15" } });
+
+  const first = await service.researchTripOptions({ tripId: "trip_domain_refresh", domains: ["stay", "transport"], question: "找住宿和交通" });
+  const second = await service.researchTripOptions({ tripId: "trip_domain_refresh", domains: ["food"], question: "找本地菜" });
+  const third = await service.researchTripOptions({ tripId: "trip_domain_refresh", domains: ["transport"], question: "改为找机票" });
+
+  assert.equal(first.status, "proposed");
+  assert.equal(second.status, "proposed");
+  assert.equal(third.status, "proposed");
+  assert.equal(second.reusedPendingProposal, undefined);
+  assert.equal(third.reusedPendingProposal, undefined);
+  assert.deepEqual(calls, [["stay", "transport"], ["food"], ["transport"]]);
+  assert.equal(second.proposal.byDomain.food.length, 1);
+});
+
 test("intercity inventory keeps its verified schedule semantics and is not downgraded into an unverified city route", async () => {
   const rootDir = await mkdtemp(join(tmpdir(), "travel-transport-semantics-"));
   const checkedAt = "2026-08-13T12:00:00.000Z";
@@ -178,6 +220,14 @@ test("intercity inventory keeps its verified schedule semantics and is not downg
     source: { provider: "fliggy_flyai", sourceType: "official_ota_inventory", providerPoiId: "g1", checkedAt, documentationUrl: "https://flyai.open.fliggy.com/", independenceGroup: "flyai:g1", commercialBias: "commercial_inventory" },
     entity: { entityId: "entity_g1", kind: "transport_offer", canonicalName: "G1", providerRefs: ["flyai:g1"] },
     claim: { claimId: "claim_g1", entityId: "entity_g1", statement: "班次存在", sourceRefs: ["flyai:g1"] },
+    additionalEvidence: [{
+      sourceId: "tuniu:g1",
+      claimId: "claim_tuniu_g1",
+      entityId: "entity_tuniu_g1",
+      source: { provider: "tuniu_official_mcp", sourceType: "official_ota_inventory", providerPoiId: "g1", checkedAt, documentationUrl: "https://open.tuniu.com/mcp/docs/", independenceGroup: "tuniu:g1", commercialBias: "commercial_inventory" },
+      entity: { entityId: "entity_tuniu_g1", kind: "transport_offer", canonicalName: "G1", providerRefs: ["tuniu:g1"] },
+      claim: { claimId: "claim_tuniu_g1", entityId: "entity_tuniu_g1", statement: "途牛返回同一班次", sourceRefs: ["tuniu:g1"] },
+    }],
   };
   const service = new TravelService({
     store: new TripStore({ rootDir }),
@@ -185,10 +235,53 @@ test("intercity inventory keeps its verified schedule semantics and is not downg
     researchProvider: { status: "configured", research: async () => ({ status: "completed", provider: "fliggy_flyai", providerLabel: "飞猪 AI 开放平台", checkedAt, byDomain: { play: [], food: [], stay: [], transport: [transport] }, partial: true, weather: { status: "SOURCE_UNAVAILABLE" }, caveats: [], fabricatedResults: false }) },
   });
   await service.createTrip({ tripId: "trip_transport_semantics", brief: { destination: "上海", origin: "广州" } });
-  await service.researchTripOptions({ tripId: "trip_transport_semantics", domains: ["transport"] });
+  const research = await service.researchTripOptions({ tripId: "trip_transport_semantics", domains: ["transport"] });
   const plan = await service.getTripPlanView("trip_transport_semantics");
   assert.equal(plan.pendingProposals[0].byDomain.transport[0].operability.routeVerified, true);
   assert.equal(plan.pendingProposals[0].byDomain.transport[0].operability.mobilityRole, "intercity_inventory");
+  assert.deepEqual(plan.pendingProposals[0].byDomain.transport[0].sourceRefs.sort(), ["flyai:g1", "tuniu:g1"]);
+  assert.equal(research.status, "proposed");
+  const stored = JSON.parse(await readFile(join(rootDir, "trip_transport_semantics.json"), "utf8"));
+  assert.equal(stored.pendingProposals[0].evidenceBundle.contentItems.length, 2);
+  assert.equal(stored.pendingProposals[0].evidenceBundle.claims.length, 2);
+});
+
+test("a three-card intercity proposal keeps both flight and rail when the traveler did not choose a mode", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "travel-transport-balance-"));
+  const checkedAt = "2026-08-13T12:00:00.000Z";
+  const makeTransport = (type, number, cost) => {
+    const sourceId = `provider:${number}`;
+    const entityId = `entity_${number}`;
+    const claimId = `claim_${number}`;
+    return {
+      candidateId: `transport_${number}`,
+      domain: "transport",
+      title: `${number} 广州 → 大理`,
+      summary: "真实班次候选",
+      cost,
+      sourceId,
+      claimId,
+      entityId,
+      checkedAt,
+      operability: { transportType: type, serviceNumber: number, mobilityRole: "intercity_inventory", routeVerified: true, scheduleVerified: true },
+      source: { provider: "provider_fixture", sourceType: "official_ota_inventory", providerPoiId: number, checkedAt, documentationUrl: "https://example.com/provider", independenceGroup: sourceId, commercialBias: "commercial_inventory" },
+      entity: { entityId, kind: "transport_offer", canonicalName: number, providerRefs: [sourceId] },
+      claim: { claimId, entityId, statement: "班次存在", sourceRefs: [sourceId] },
+    };
+  };
+  const candidates = [makeTransport("FLIGHT", "CZ1", 800), makeTransport("FLIGHT", "MU2", 900), makeTransport("FLIGHT", "MU3", 1000), makeTransport("TRAIN", "D1", 420), makeTransport("TRAIN", "D2", 680)];
+  const service = new TravelService({
+    store: new TripStore({ rootDir }),
+    clock,
+    researchProvider: { status: "configured", research: async () => ({ status: "completed", provider: "provider_fixture", providerLabel: "Fixture", checkedAt, byDomain: { play: [], food: [], stay: [], transport: candidates }, partial: true, weather: { status: "SOURCE_UNAVAILABLE" }, caveats: [], fabricatedResults: false }) },
+  });
+  await service.createTrip({ tripId: "trip_transport_balance", brief: { destination: "大理", origin: "广州", dates: "2026-09-20 至 2026-09-24" } });
+
+  const research = await service.researchTripOptions({ tripId: "trip_transport_balance", domains: ["transport"], question: "帮我安排合适的交通工具" });
+
+  assert.equal(research.status, "proposed");
+  assert.equal(research.proposal.byDomain.transport.length, 3);
+  assert.deepEqual([...new Set(research.proposal.byDomain.transport.map((item) => item.operability.transportType))].sort(), ["FLIGHT", "TRAIN"]);
 });
 
 test("a persisted disruption requeues only the impacted stay and food neighborhood", async () => {
@@ -249,6 +342,50 @@ test("records feedback as reviewable evidence without promoting it to public mem
   const state = await service.store.get("trip_feedback");
   assert.equal(state.feedbackLedger[0].memoryStatus, "needs_review");
   assert.equal(state.evidence.claims.length, 0);
+});
+
+test("shares only structured trip-linked visit evidence with a later traveler", async () => {
+  const { service } = await serviceFixture();
+  await service.createTrip({ tripId: "trip_feedback_author" });
+  await service.proposeTripChange({ tripId: "trip_feedback_author", proposal: fourDomainProposal("trip_feedback_author") });
+  await service.acceptTripChange({ tripId: "trip_feedback_author", proposalId: "proposal_initial_plan" });
+  await service.proposeTripChange({ tripId: "trip_feedback_author", proposal: selectionProposal("trip_feedback_author", 1) });
+  await service.acceptTripChange({ tripId: "trip_feedback_author", proposalId: "proposal_select_plan" });
+
+  const experience = await service.submitTripFeedback({
+    tripId: "trip_feedback_author",
+    baseRevision: 2,
+    category: "personal_experience",
+    nodeId: "food_dinner",
+    text: "本地菜很有特色，周末午餐等了二十五分钟。",
+    visibility: "anonymous_travelers",
+    verdict: "recommend",
+    tags: ["local_character", "low_queue"],
+    spendCny: 86,
+    waitMinutes: 25,
+  });
+  assert.equal(experience.status, "committed");
+  const correction = await service.submitTripFeedback({
+    tripId: "trip_feedback_author",
+    baseRevision: 3,
+    category: "fact_correction",
+    nodeId: "food_dinner",
+    text: "原入口正在施工，建议重新核验。",
+    visibility: "anonymous_travelers",
+  });
+  assert.equal(correction.status, "committed");
+
+  await service.createTrip({ tripId: "trip_feedback_reader" });
+  await service.proposeTripChange({ tripId: "trip_feedback_reader", proposal: fourDomainProposal("trip_feedback_reader") });
+  const readerPlan = await service.getTripPlanView("trip_feedback_reader");
+  const summary = readerPlan.pendingProposals[0].byDomain.food[0].visitFeedback;
+  assert.equal(summary.experienceCount, 1);
+  assert.deepEqual(summary.recommendation, { recommend: 1, mixed: 0, notRecommend: 0 });
+  assert.deepEqual(summary.topTags, [{ key: "local_character", count: 1 }, { key: "low_queue", count: 1 }]);
+  assert.equal(summary.typicalSpendCny, 86);
+  assert.equal(summary.typicalWaitMinutes, 25);
+  assert.equal(summary.pendingFactCheckCount, 1);
+  assert.doesNotMatch(JSON.stringify(summary), /本地菜很有特色|原入口正在施工/);
 });
 
 test("prepares a user-confirmed external handoff and locks only after confirmation is recorded", async () => {

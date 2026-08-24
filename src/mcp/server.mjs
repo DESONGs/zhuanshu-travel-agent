@@ -149,13 +149,19 @@ register("report_trip_disruption", {
 }, (input) => service.reportTripDisruption(input));
 
 register("submit_trip_feedback", {
-  description: "Record classified trip feedback without promoting it directly to public destination memory.",
+  description: "Record a trip-linked visit experience or fact correction. Anonymous structured feedback may inform later travelers but never becomes an authoritative place fact.",
   inputSchema: {
     tripId: id,
     baseRevision: z.number().int().nonnegative(),
     category: z.enum(["personal_experience", "preference_change", "fact_correction", "unverified_public_info"]),
     nodeId: id.optional(),
     text: z.string().min(1).max(2000),
+    visibility: z.enum(["trip_only", "anonymous_travelers"]).optional(),
+    verdict: z.enum(["recommend", "mixed", "not_recommend"]).optional(),
+    tags: z.array(z.enum(["local_character", "worth_detour", "easy_to_reach", "low_queue", "helpful_service", "family_friendly", "quiet_rest", "accurate_listing", "useful_facilities", "foreigner_friendly", "good_value", "comfortable_pace"])).max(8).optional(),
+    spendCny: z.number().min(0).max(1_000_000).optional(),
+    waitMinutes: z.number().int().min(0).max(1_440).optional(),
+    visitDate: z.string().regex(/^20\d{2}-\d{2}-\d{2}$/).optional(),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
 }, (input) => service.submitTripFeedback(input));

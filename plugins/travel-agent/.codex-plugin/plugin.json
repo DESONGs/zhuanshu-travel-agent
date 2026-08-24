@@ -14,9 +14,10 @@
     "longDescription": "Travel Agent coordinates social discovery, official travel providers, evidence verification and shared trip decisions without allowing Skills to mutate trip state directly.",
     "developerName": "Travel Agent contributors",
     "category": "Productivity",
-    "capabilities": ["Travel research", "Evidence verification", "Trip decision support"],
+    "capabilities": ["Travel research", "Multimodal trip planning", "Evidence verification", "Trip decision support"],
     "defaultPrompt": [
       "Research this trip using social discovery and verified travel sources.",
+      "Use this travel image and my message together, then verify the visible clues while planning.",
       "Compare these travel options and explain the important tradeoffs."
     ]
   }

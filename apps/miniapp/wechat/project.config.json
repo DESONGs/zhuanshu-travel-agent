@@ -1,7 +1,7 @@
 {
   "miniprogramRoot": "./",
   "projectname": "travel-agent-v1",
-  "description": "Travel Agent V1 微信小程序。提交前由授权主体填写真实 AppID 与 request domain。",
+  "description": "Travel Agent V2 微信小程序。提交前由授权主体填写真实 AppID 与 request domain。",
   "appid": "",
   "setting": {
     "es6": true,

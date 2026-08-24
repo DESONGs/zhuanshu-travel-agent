@@ -82,6 +82,31 @@ test("Google authorization uses signed state and verifies the returned identity 
   );
 });
 
+test("WeChat Website QR login uses signed state and exchanges the callback code server-side", async () => {
+  let requestedUrl;
+  const service = createAuthService({
+    env: googleEnv({ WECHAT_OPEN_APP_ID: "wx-web-app", WECHAT_OPEN_APP_SECRET: "wx-web-secret" }),
+    clock: fixedClock,
+    fetchImpl: async (url) => {
+      requestedUrl = new URL(url);
+      return new Response(JSON.stringify({ openid: "wechat-web-open-id", unionid: "wechat-union-id" }), { status: 200 });
+    },
+  });
+  const authorization = service.beginWeb({ provider: "wechat", origin: "https://travel.example.com", returnTo: "/trip/continue" });
+  const authorizationUrl = new URL(authorization.authorizationUrl);
+  assert.equal(authorizationUrl.origin, "https://open.weixin.qq.com");
+  assert.equal(authorizationUrl.pathname, "/connect/qrconnect");
+  assert.equal(authorizationUrl.searchParams.get("scope"), "snsapi_login");
+  assert.equal(authorizationUrl.searchParams.get("redirect_uri"), "https://travel.example.com/api/auth/wechat/callback");
+  const completed = await service.completeWeb({ provider: "wechat", code: "wechat-single-use-code", state: authorization.state, nonce: authorization.nonce });
+  assert.equal(completed.identity.provider, "wechat");
+  assert.equal(completed.identity.subject, "wechat-union-id");
+  assert.equal(completed.returnTo, "/trip/continue");
+  assert.equal(requestedUrl.origin, "https://api.weixin.qq.com");
+  assert.equal(requestedUrl.pathname, "/sns/oauth2/access_token");
+  assert.equal(requestedUrl.searchParams.get("code"), "wechat-single-use-code");
+});
+
 test("WeChat Mini Program authorization code is exchanged server-side", async () => {
   const env = googleEnv({ WECHAT_MINIAPP_APP_ID: "wx-mini-app", WECHAT_MINIAPP_APP_SECRET: "wx-mini-secret" });
   let requestedUrl;
@@ -97,6 +122,51 @@ test("WeChat Mini Program authorization code is exchanged server-side", async ()
   assert.equal(identity.subject, "wechat-union-id");
   assert.equal(requestedUrl.origin, "https://api.weixin.qq.com");
   assert.equal(requestedUrl.searchParams.get("js_code"), "wx-one-time-code");
+});
+
+test("Alipay Web and Mini Program codes use RSA2 request signing and verified provider responses", async () => {
+  const merchant = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const alipay = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const merchantPrivate = merchant.privateKey.export({ type: "pkcs8", format: "pem" });
+  const alipayPublic = alipay.publicKey.export({ type: "spki", format: "pem" });
+  const responseObject = { code: "10000", msg: "Success", user_id: "alipay-user-123" };
+  const responseText = JSON.stringify(responseObject);
+  const responseSignature = sign("RSA-SHA256", Buffer.from(responseText), alipay.privateKey).toString("base64");
+  const calls = [];
+  const service = createAuthService({
+    env: googleEnv({
+      ALIPAY_WEB_APP_ID: "alipay-web-app-id",
+      ALIPAY_WEB_PRIVATE_KEY_PATH: "/secure/merchant-private.pem",
+      ALIPAY_WEB_PUBLIC_KEY_PATH: "/secure/alipay-public.pem",
+      ALIPAY_MINIAPP_APP_ID: "alipay-mini-app-id",
+      ALIPAY_MINIAPP_PRIVATE_KEY_PATH: "/secure/merchant-private.pem",
+      ALIPAY_MINIAPP_PUBLIC_KEY_PATH: "/secure/alipay-public.pem",
+    }),
+    clock: fixedClock,
+    readFileImpl: async (path) => path.includes("merchant-private") ? merchantPrivate : alipayPublic,
+    fetchImpl: async (url, options = {}) => {
+      calls.push({ url: String(url), parameters: new URLSearchParams(options.body) });
+      return new Response(JSON.stringify({ alipay_system_oauth_token_response: responseObject, sign: responseSignature }), { status: 200 });
+    },
+  });
+  const authorization = service.beginWeb({ provider: "alipay", origin: "https://travel.example.com", returnTo: "/saved-trip" });
+  const authorizationUrl = new URL(authorization.authorizationUrl);
+  assert.equal(authorizationUrl.origin, "https://openauth.alipay.com");
+  assert.equal(authorizationUrl.searchParams.get("app_id"), "alipay-web-app-id");
+  assert.equal(authorizationUrl.searchParams.get("scope"), "auth_user");
+  assert.equal(authorizationUrl.searchParams.get("redirect_uri"), "https://travel.example.com/api/auth/alipay/callback");
+  const web = await service.completeWeb({ provider: "alipay", code: "alipay-web-code", state: authorization.state, nonce: authorization.nonce });
+  assert.equal(web.identity.subject, "alipay-user-123");
+  assert.equal(web.returnTo, "/saved-trip");
+  const mini = await service.exchangePlatform({ provider: "alipay", authorizationCode: "alipay-mini-code" });
+  assert.equal(mini.subject, "alipay-user-123");
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].url, "https://openapi.alipay.com/gateway.do");
+  assert.equal(calls[0].parameters.get("app_id"), "alipay-web-app-id");
+  assert.equal(calls[1].parameters.get("app_id"), "alipay-mini-app-id");
+  assert.equal(calls[0].parameters.get("method"), "alipay.system.oauth.token");
+  assert.equal(calls[0].parameters.get("sign_type"), "RSA2");
+  assert.ok(calls[0].parameters.get("sign"));
 });
 
 test("signed production sessions survive store recreation and reject tampering or logout reuse", () => {

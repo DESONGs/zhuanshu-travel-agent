@@ -22,22 +22,93 @@ function weatherGapCaveat(weather) {
   return "旅行日期对应的天气资料暂时不可用；地点候选可以先比较，但在天气核验完成前不能视为完整日程。";
 }
 
+function candidateIdentity(candidate) {
+  if (candidate?.domain === "transport" && candidate.operability?.serviceNumber) {
+    const type = String(candidate.operability.transportType ?? "transport").toUpperCase();
+    const number = String(candidate.operability.serviceNumber).replace(/\s+/g, "").toUpperCase();
+    const rawDeparture = String(candidate.operability.departureAt ?? "").replace("T", " ").replace(/\s+/g, " ").trim();
+    const departure = rawDeparture.match(/^(20\d{2}-\d{2}-\d{2} \d{2}:\d{2})/)?.[1] ?? rawDeparture;
+    return `transport:${type}:${number}:${departure}`;
+  }
+  return `${candidate?.domain}:${String(candidate?.title ?? "").trim().toLowerCase()}`;
+}
+
+function mergeDefined(primary = {}, secondary = {}) {
+  if (!primary || typeof primary !== "object") primary = {};
+  if (!secondary || typeof secondary !== "object") secondary = {};
+  const output = { ...secondary, ...primary };
+  for (const [key, value] of Object.entries(primary)) {
+    if ((value == null || value === "") && secondary[key] != null && secondary[key] !== "") output[key] = secondary[key];
+  }
+  return output;
+}
+
+function evidenceRecord(candidate) {
+  return {
+    sourceId: candidate.sourceId,
+    claimId: candidate.claimId,
+    entityId: candidate.entityId,
+    source: candidate.source,
+    entity: candidate.entity,
+    claim: candidate.claim,
+  };
+}
+
+function mergeTransportCandidate(primary, secondary) {
+  const primaryOperability = primary.operability ?? {};
+  const secondaryOperability = secondary.operability ?? {};
+  const fareOffers = [...(primaryOperability.fareOffers ?? []), ...(secondaryOperability.fareOffers ?? [])]
+    .filter((offer, index, offers) => offer && offers.findIndex((item) => item.provider === offer.provider && item.totalFare === offer.totalFare) === index);
+  const positiveFares = fareOffers.map((offer) => Number(offer.totalFare)).filter((fare) => Number.isFinite(fare) && fare > 0);
+  const costs = [Number(primary.cost), Number(secondary.cost), ...positiveFares].filter((fare) => Number.isFinite(fare) && fare > 0);
+  const cost = costs.length ? Math.min(...costs) : 0;
+  const operability = mergeDefined(primaryOperability, secondaryOperability);
+  operability.departurePlace = mergeDefined(primaryOperability.departurePlace, secondaryOperability.departurePlace);
+  operability.arrivalPlace = mergeDefined(primaryOperability.arrivalPlace, secondaryOperability.arrivalPlace);
+  operability.fareOffers = fareOffers;
+  operability.providerSources = [...new Set([
+    ...(primaryOperability.providerSources ?? [primaryOperability.provider]),
+    ...(secondaryOperability.providerSources ?? [secondaryOperability.provider]),
+  ].filter(Boolean))];
+  if (cost > 0) operability.priceHint = `¥${cost} 起${fareOffers.length > 1 ? ` · ${fareOffers.length} 个来源` : ""}`;
+  const evidence = [
+    ...(primary.additionalEvidence ?? []),
+    evidenceRecord(secondary),
+    ...(secondary.additionalEvidence ?? []),
+  ].filter((item, index, items) => item?.sourceId && items.findIndex((other) => other.sourceId === item.sourceId) === index);
+  return {
+    ...primary,
+    cost,
+    operability,
+    entity: primary.entity ? { ...primary.entity, providerRefs: [...new Set([...(primary.entity.providerRefs ?? []), ...(secondary.entity?.providerRefs ?? [])])] } : primary.entity,
+    additionalEvidence: evidence,
+  };
+}
+
 function deduplicate(candidates) {
-  const seen = new Set();
   const output = [];
+  const indexes = new Map();
   for (const candidate of candidates) {
-    const key = `${candidate.domain}:${String(candidate.title ?? "").trim().toLowerCase()}`;
-    if (!candidate.title || seen.has(key)) continue;
-    seen.add(key);
-    output.push(candidate);
+    if (!candidate.title) continue;
+    const key = candidateIdentity(candidate);
+    if (!indexes.has(key)) {
+      indexes.set(key, output.length);
+      output.push(candidate);
+      continue;
+    }
+    const index = indexes.get(key);
+    if (candidate.domain === "transport") output[index] = mergeTransportCandidate(output[index], candidate);
   }
   return output.slice(0, 6);
 }
 
+const AMAP_ACCOUNT_GATE_CAVEAT = "高德地图账号当前被服务平台阻止访问；因此餐厅、地点照片、出入口和市内路线无法完整核验，其他已接通来源的住宿、景点和城际库存仍可比较。";
+
 export class CompositeTravelResearchProvider {
-  constructor({ providers = [], weatherProviders = [], clock } = {}) {
+  constructor({ providers = [], weatherProviders = [], staticErrors = [], clock } = {}) {
     this.providers = providers.filter(Boolean);
     this.weatherProviders = weatherProviders.filter(Boolean);
+    this.staticErrors = staticErrors.filter((item) => item && typeof item === "object");
     this.clock = clock;
   }
 
@@ -113,11 +184,12 @@ export class CompositeTravelResearchProvider {
       this.resolveWeather(input),
     ]);
     const completed = settled.filter((result) => result.status === "fulfilled" && result.value?.status === "completed").map((result) => result.value);
-    const errors = settled.flatMap((result) => {
+    const errors = [...this.staticErrors, ...settled.flatMap((result) => {
       if (result.status === "rejected") return [{ code: result.reason?.code ?? "SOURCE_UNAVAILABLE" }];
       if (result.value?.status !== "completed") return [{ code: result.value?.status ?? "SOURCE_UNAVAILABLE", provider: result.value?.provider ?? null }];
       return [];
-    });
+    })];
+    const amapAccountGate = errors.some((error) => error.code === "ACCOUNT_LIMITED" && error.provider === "amap_web_service");
     if (!completed.length) {
       if (weather?.status === "completed") {
         return normalizeProviderResult({
@@ -131,7 +203,7 @@ export class CompositeTravelResearchProvider {
           partial: true,
           errors,
           weather,
-          caveats: [weather.caveat].filter(Boolean),
+          caveats: [amapAccountGate ? AMAP_ACCOUNT_GATE_CAVEAT : null, weather.caveat].filter(Boolean),
           fabricatedResults: false,
           sourceDocumentation: weather.sourceDocumentation,
         });
@@ -153,7 +225,6 @@ export class CompositeTravelResearchProvider {
     const byDomain = Object.fromEntries(DOMAINS.map((domain) => [domain, deduplicate(completed.flatMap((result) => result.byDomain?.[domain] ?? []))]));
     const requested = Array.isArray(input?.domains) && input.domains.length ? input.domains : DOMAINS;
     const weatherCaveat = weatherGapCaveat(weather);
-    const amapAccountGate = errors.some((error) => error.code === "ACCOUNT_LIMITED" && error.provider === "amap_web_service");
     return normalizeProviderResult({
       schemaVersion: "travel-provider-result-v1",
       status: Object.values(byDomain).some((items) => items.length) ? "completed" : "EMPTY_VERIFIED",
@@ -170,7 +241,7 @@ export class CompositeTravelResearchProvider {
       weather,
       caveats: [...new Set([
         ...completed.flatMap((result) => result.caveats ?? []),
-        ...(amapAccountGate ? ["高德地图账号当前被平台阻止访问；本轮可以比较其它已接通来源的候选，但地图、地点照片和高德 POI 核验不完整。"] : []),
+        ...(amapAccountGate ? [AMAP_ACCOUNT_GATE_CAVEAT] : []),
         weatherCaveat,
       ].filter(Boolean))],
       fabricatedResults: false,
@@ -183,6 +254,10 @@ export function createTravelResearchProvider(env = process.env, options = {}) {
   const amap = createAmapTravelResearchProvider(env, options.amap);
   const openMeteo = createOpenMeteoWeatherProvider(env, options.openMeteo);
   const weatherProviders = env.TRAVEL_AGENT_AMAP_SMOKE_STATUS === "passed_live_smoke" ? [amap, openMeteo] : [openMeteo, amap];
+  const amapSmokeStatus = String(env.TRAVEL_AGENT_AMAP_SMOKE_STATUS ?? "");
+  const staticErrors = amapSmokeStatus.includes("account_gate_10044")
+    ? [{ code: "ACCOUNT_LIMITED", provider: "amap_web_service", infoCode: "10044" }]
+    : [];
   return new CompositeTravelResearchProvider({
     providers: [
       amap,
@@ -190,6 +265,7 @@ export function createTravelResearchProvider(env = process.env, options = {}) {
       createTuniuTravelResearchProvider(env, options.tuniu),
     ],
     weatherProviders,
+    staticErrors,
     clock: options.clock,
   });
 }

@@ -11,13 +11,13 @@ import { FileConversationRepository } from "../src/persistence/conversation-repo
 import { InMemorySessionStore } from "../src/http/session.mjs";
 import { TripStore } from "../travel-agent-pi-package/src/core/index.ts";
 
-async function httpFixture() {
+async function httpFixture({ conversationAgent } = {}) {
   const rootDir = await mkdtemp(join(tmpdir(), "travel-http-"));
   const store = new TripStore({ rootDir });
   store.mode = "file";
-  const service = new TravelService({ store, clock: () => new Date("2026-08-13T12:00:00.000Z") });
+  const service = new TravelService({ store, clock: () => new Date("2026-08-24T12:00:00.000Z") });
   const conversationRepository = new FileConversationRepository({ rootDir: join(rootDir, "conversations") });
-  const app = createHttpApp({ travelService: service, conversationRepository, sessionStore: new InMemorySessionStore({ clock: () => new Date("2026-08-13T12:00:00.000Z") }), developmentAuthEnabled: true });
+  const app = createHttpApp({ travelService: service, conversationRepository, conversationAgent, sessionStore: new InMemorySessionStore({ clock: () => new Date("2026-08-24T12:00:00.000Z") }), developmentAuthEnabled: true });
   const server = http.createServer(app);
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -49,6 +49,7 @@ function transitProposal(tripId) {
         title: "从酒店前往外滩",
         selected: true,
         sourceStatus: "user_input",
+        sourceRefs: ["amap_web_service:transport_http"],
         operability: {
           transitSegment: {
             segmentId: "segment_http",
@@ -103,6 +104,13 @@ test("HTTP API authenticates development sessions, enforces trip membership, and
     assert.equal(mobility.response.status, 200);
     assert.equal(mobility.value.status, "provider_unavailable");
     assert.equal(mobility.value.fabricatedResults, false);
+    const currentPlan = await request("/api/trips/trip_http/plan", { token: ownerToken });
+    const feedback = await request("/api/trips/trip_http/feedback", { method: "POST", token: ownerToken, body: { baseRevision: currentPlan.value.revision, category: "personal_experience", nodeId: "transport_http", text: "换乘指引清楚，带行李也比较从容。", visibility: "anonymous_travelers", verdict: "recommend", tags: ["comfortable_pace"] } });
+    assert.equal(feedback.response.status, 201);
+    assert.equal(feedback.value.status, "committed");
+    const planWithFeedback = await request("/api/trips/trip_http/plan", { token: ownerToken });
+    assert.equal(planWithFeedback.value.byDomain.transport[0].visitFeedback.experienceCount, 1);
+    assert.equal(planWithFeedback.value.byDomain.transport[0].visitFeedback.topTags[0].key, "comfortable_pace");
 
     const secondSession = await request("/api/auth/session", { method: "POST", body: { provider: "email_otp", identity: "other@example.com" } });
     const strangerTrips = await request("/api/trips", { token: secondSession.value.accessToken });
@@ -257,6 +265,78 @@ test("visual evidence endpoint rejects unsupported media before any model reques
     });
     assert.equal(response.response.status, 400);
     assert.equal(response.value.code, "invalid_visual_evidence");
+  } finally {
+    await close();
+  }
+});
+
+test("conversation message HTTP contract forwards image and text into one Agent turn", async () => {
+  let received = null;
+  const conversation = { schemaVersion: "travel-conversation-view-v1", conversationId: "conversation_visual_http", tripId: null, modelId: "deepseek-v4-flash", messages: [], updatedAt: "2026-08-24T08:00:00.000Z" };
+  const conversationAgent = {
+    getConversation: async () => conversation,
+    reply: async (input) => {
+      received = input;
+      return { schemaVersion: "travel-conversation-turn-v1", status: "completed", conversation, activities: [{ toolName: "interpret_visual_context", status: "completed" }], multimodal: { status: "completed", persistence: "none" } };
+    },
+  };
+  const { request, close } = await httpFixture({ conversationAgent });
+  try {
+    const session = await request("/api/auth/session", { method: "POST", body: { provider: "email_otp", identity: "visual-turn@example.com" } });
+    const image = { mimeType: "image/png", data: "iVBORw0KGgo=" };
+    const response = await request("/api/conversations/conversation_visual_http/messages", {
+      method: "POST",
+      token: session.value.accessToken,
+      body: { text: "请结合这张菜单继续规划", modelId: "deepseek-v4-flash", images: [image] },
+    });
+    assert.equal(response.response.status, 200);
+    assert.equal(response.value.multimodal.persistence, "none");
+    assert.equal(received.text, "请结合这张菜单继续规划");
+    assert.deepEqual(received.images, [image]);
+  } finally {
+    await close();
+  }
+});
+
+test("guest travelers can plan before login and claim trips and conversations after authentication", async () => {
+  const { request, close } = await httpFixture();
+  try {
+    const guest = await request("/api/auth/guest-session", { method: "POST" });
+    assert.equal(guest.response.status, 201);
+    assert.equal(guest.value.guest, true);
+    assert.equal(guest.value.accessToken, undefined);
+    const guestCookie = guest.response.headers.get("set-cookie").split(";")[0];
+
+    const conversation = await request("/api/conversations", { method: "POST", headers: { cookie: guestCookie }, body: {} });
+    assert.equal(conversation.response.status, 201);
+    const trip = await request("/api/trips", {
+      method: "POST",
+      headers: { cookie: guestCookie },
+      body: { tripId: "trip_guest_claim", brief: { destination: "上海", dates: "2026-09-20 至 2026-09-23" }, travelers: [{ travelerId: "traveler_1", language: "en", hardConstraints: [{ type: "foreign_guest_required" }] }] },
+    });
+    assert.equal(trip.response.status, 201);
+    assert.equal(trip.value.readiness.status, "needs_attention");
+
+    const readiness = await request("/api/trips/trip_guest_claim/readiness", { method: "POST", headers: { cookie: guestCookie }, body: { signalId: "mobile_access", status: "ready" } });
+    assert.equal(readiness.response.status, 200);
+    assert.equal(readiness.value.readiness.items.find((item) => item.itemId === "mobile_access").status, "ready");
+
+    const authenticated = await request("/api/auth/session", { method: "POST", headers: { cookie: guestCookie }, body: { provider: "email_otp", identity: "claimed@example.com" } });
+    assert.equal(authenticated.response.status, 201);
+    assert.equal(authenticated.value.guest, false);
+    assert.equal(authenticated.value.claim.transferredTrips, 1);
+    assert.equal(authenticated.value.claim.transferredConversations, 1);
+
+    const claimedTrips = await request("/api/trips", { token: authenticated.value.accessToken });
+    assert.deepEqual(claimedTrips.value.trips.map((item) => item.tripId), ["trip_guest_claim"]);
+    const claimedConversations = await request("/api/conversations", { token: authenticated.value.accessToken });
+    assert.equal(claimedConversations.value.conversations[0].conversationId, conversation.value.conversationId);
+    const claimedPlan = await request("/api/trips/trip_guest_claim/plan", { token: authenticated.value.accessToken });
+    assert.equal(claimedPlan.value.readiness.items.find((item) => item.itemId === "china_account_continuity").status, "needs_verification");
+
+    const oldGuestAccess = await request("/api/trips/trip_guest_claim/plan", { headers: { cookie: guestCookie } });
+    assert.equal(oldGuestAccess.response.status, 403);
+    assert.equal(oldGuestAccess.value.code, "trip_access_denied");
   } finally {
     await close();
   }
