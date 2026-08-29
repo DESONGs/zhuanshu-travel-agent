@@ -27,7 +27,7 @@ test("Pi loads the complete product tool surface from source without dist or raw
   const names = tools.map((tool) => tool.name);
   for (const operation of [
     "create_trip", "update_trip_scope", "get_trip_control_view", "get_trip_plan_view", "get_open_decisions",
-    "research_trip_options", "propose_trip_change", "accept_trip_change", "reject_trip_change",
+    "research_trip_options", "propose_trip_change", "plan_itinerary_trial", "accept_trip_change", "reject_trip_change",
     "prepare_booking_handoff", "record_booking_confirmation", "report_trip_disruption", "submit_trip_feedback",
   ]) assert.equal(names.includes(operation), true, `missing Pi product tool: ${operation}`);
 
@@ -38,8 +38,10 @@ test("Pi loads the complete product tool surface from source without dist or raw
   assert.equal(names.includes("travel_runtime_observe"), false);
   assert.equal(names.includes("travel_social_worker_validate_read_request"), false);
   const schemaSizes = tools.map((tool) => JSON.stringify(tool.parameters).length);
-  // Price provenance adds a bounded object to proposal nodes; keep one canonical
-  // proposal contract instead of introducing a smaller, drifting Pi-only copy.
-  assert.ok(Math.max(...schemaSizes) < 12_000, "a Pi tool should not embed the full TripState schema");
-  assert.ok(schemaSizes.reduce((total, size) => total + size, 0) < 40_000, "the product tool surface should stay bounded");
+  // Price provenance and the canonical itinerary plan are embedded once in the
+  // proposal contract. Do not create a smaller, drifting Pi-only contract just
+  // to preserve the old byte ceiling.
+  assert.ok(Math.max(...schemaSizes) < 15_000, "a Pi tool should not embed the full TripState schema");
+  assert.ok(schemaSizes.reduce((total, size) => total + size, 0) < 48_000, "the product tool surface should stay bounded");
+  assert.ok(JSON.stringify(tools.find((tool) => tool.name === "plan_itinerary_trial")?.parameters).length < 4_000, "the dedicated planning tool must remain focused");
 });

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   acceptStagedTripPatch,
   applyMobilityObservation,
@@ -8,6 +8,7 @@ import {
   createTripControlState,
   estimateTripBudget,
   finalizeItinerarySchedule,
+  itineraryPlanToDraft,
   itineraryPreviewId,
   recordBookingConfirmation,
   recordTripFeedback,
@@ -17,6 +18,8 @@ import {
   updateTripControlScope,
   updateTripReadiness as applyTripReadinessUpdate,
   validateTripCoherence,
+  assertSchema,
+  ItineraryPlanSchema,
 } from "../../travel-agent-pi-package/src/core/index.ts";
 import { createTripRepository } from "../persistence/trip-repository.mjs";
 import { validateTravelMcpRequest } from "../../travel-agent-pi-package/src/mcp/index.ts";
@@ -151,7 +154,7 @@ function todayView(state, { clock } = {}) {
   const selected = itineraryStops.length ? itineraryStops.map((stop) => {
     const node = nodesById.get(stop.nodeId);
     const timestamp = stop.startAt ? new Date(stop.startAt).getTime() : Number.NaN;
-    const roleLabel = { intercity_arrival: "抵达", stay_check_in: "入住", stay_departure: "从住宿出发", stay_return: "返回住宿", meal: "用餐", activity: "游玩", local_transport: "市内移动" }[stop.role] ?? "安排";
+    const roleLabel = { intercity_arrival: "抵达", bag_drop: "寄存行李", stay_check_in: "入住", stay_departure: "从住宿出发", stay_return: "返回住宿", meal: "用餐", activity: "游玩", local_transport: "市内移动" }[stop.role] ?? "安排";
     return {
       taskId: `task_${stop.stopId}`, stopId: stop.stopId, nodeId: stop.nodeId, domain: stop.domain,
       title: stop.role === "intercity_arrival" ? stop.title : node?.title ?? stop.title,
@@ -317,6 +320,10 @@ function proposalView(proposal, sharedFeedback = []) {
     analysis: proposal.analysis ?? null,
     domainStatuses: proposal.domainStatuses ?? null,
     stagedAt: proposal.stagedAt ?? null,
+    itineraryPlan: proposal.itineraryPlan ?? null,
+    itineraryPreviewId: proposal.itineraryPreviewId ?? null,
+    planningRunId: proposal.planningRunId ?? null,
+    planningAttempt: proposal.planningAttempt ?? null,
     byDomain,
   };
 }
@@ -809,13 +816,101 @@ function mobilityWithItinerary(observation, draft) {
   });
 }
 
+function stableHash(value) {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function itineraryPlanningNodes(state) {
+  const pending = state.pendingProposals.flatMap((proposal) => (proposal.operations ?? [])
+    .filter((operation) => operation.kind === "add_candidate" && operation.node)
+    .map((operation) => ({ ...operation.node, nodeId: operation.nodeId, selected: false })));
+  return [...new Map([...state.nodes, ...pending].map((node) => [node.nodeId, node])).values()];
+}
+
+function planningStateFingerprint(state) {
+  return stableHash({
+    tripId: state.tripId,
+    revision: state.revision,
+    brief: {
+      destination: state.brief?.destination ?? null,
+      dates: state.brief?.dates ?? null,
+      durationDays: state.brief?.durationDays ?? null,
+      origin: state.brief?.origin ?? null,
+      arrivalAirport: state.brief?.arrivalAirport ?? null,
+      arrivalTerminal: state.brief?.arrivalTerminal ?? null,
+      arrivalTime: state.brief?.arrivalTime ?? null,
+      totalBudget: state.brief?.totalBudget ?? null,
+      pace: state.brief?.pace ?? null,
+    },
+    travelers: state.travelers.map((traveler) => ({ travelerId: traveler.travelerId, version: traveler.version ?? null, hardConstraints: traveler.hardConstraints ?? [], careNeeds: traveler.careNeeds ?? {} })),
+    nodes: itineraryPlanningNodes(state).map((node) => ({ nodeId: node.nodeId, version: node.version ?? 0, selected: node.selected === true, domain: node.domain, lock: node.lock ?? null, time: node.time ?? null, sourceRefs: node.sourceRefs ?? [] })),
+    proposals: state.pendingProposals.map((proposal) => ({ proposalId: proposal.proposalId, baseRevision: proposal.baseRevision, operationNodeIds: (proposal.operations ?? []).map((operation) => operation.nodeId) })),
+  });
+}
+
+function planNodeIds(plan) {
+  return [...new Set(plan.days.flatMap((day) => day.stops.map((stop) => stop.nodeId)))];
+}
+
+function planSelections(state, plan) {
+  const byNodeId = new Map(itineraryPlanningNodes(state).map((node) => [node.nodeId, node]));
+  const selections = {};
+  for (const nodeId of planNodeIds(plan)) {
+    const node = byNodeId.get(nodeId);
+    if (!node || node.selected === true || node.operability?.mobilityRole === "user_confirmed_arrival") continue;
+    if (selections[node.domain] && selections[node.domain] !== nodeId) throw serviceError("itinerary_plan_multiple_candidates_per_domain", { domain: node.domain });
+    selections[node.domain] = nodeId;
+  }
+  return selections;
+}
+
+function routeModesFromPlan(plan, itinerary) {
+  const byOccurrence = new Map();
+  for (const day of plan.days) {
+    for (const stop of day.stops) {
+      const itineraryStop = itinerary?.stops?.find((item) => item.nodeId === stop.nodeId && item.dayIndex === day.dayIndex && item.role === stop.role);
+      if (itineraryStop && stop.preferredModes.length) byOccurrence.set(itineraryStop.stopId, stop.preferredModes);
+    }
+  }
+  return byOccurrence;
+}
+
+function mobilityWithRouteModes(mobility, routeModes = {}, preferredByDestination = new Map()) {
+  const next = structuredClone(mobility);
+  next.legs = (next.legs ?? []).map((leg) => {
+    const requested = routeModes?.[leg.legId];
+    const preferences = requested ? [requested] : preferredByDestination.get(leg.destination?.stopId) ?? [];
+    const selected = preferences.find((mode) => leg.alternatives?.some((alternative) => alternative.mode === mode));
+    return selected ? { ...leg, recommendedMode: selected } : leg;
+  });
+  return next;
+}
+
+function candidateEvidenceRefs(nodes) {
+  return new Set(nodes.flatMap((node) => [
+    ...(Array.isArray(node.sourceRefs) ? node.sourceRefs : []),
+    ...(Array.isArray(node.operability?.evidenceRefs) ? node.operability.evidenceRefs : []),
+  ]).filter(Boolean));
+}
+
+function planningProposalCarrier(state, plan, selections) {
+  const pendingNodeIds = Object.values(selections);
+  if (!pendingNodeIds.length) return null;
+  return state.pendingProposals.find((proposal) => pendingNodeIds.every((nodeId) => (proposal.operations ?? []).some((operation) => operation.nodeId === nodeId))) ?? null;
+}
+
+function planningProposalId(runId) {
+  return `itinerary_${stableHash(runId).slice(0, 24)}`;
+}
+
 export class TravelService {
-  constructor({ store = createTripRepository(), clock, researchProvider = null, analysisFanout = null, analysisRunCoordinator = null, analysisDegradedReason = null } = {}) {
+  constructor({ store = createTripRepository(), clock, researchProvider = null, analysisFanout = null, analysisRunCoordinator = null, planningRunCoordinator = null, analysisDegradedReason = null } = {}) {
     this.store = store;
     this.clock = clock;
     this.researchProvider = researchProvider;
     this.analysisFanout = analysisFanout;
     this.analysisRunCoordinator = analysisRunCoordinator;
+    this.planningRunCoordinator = planningRunCoordinator;
     this.analysisDegradedReason = analysisDegradedReason;
     this.mobilityPreviewCache = new Map();
   }
@@ -849,6 +944,7 @@ export class TravelService {
     validateRequest("update_trip_scope", input);
     const state = requireTrip(await this.store.get(input.tripId), input.tripId);
     this.analysisRunCoordinator?.supersedeTrip(state.tripId, "trip_scope_changed");
+    this.planningRunCoordinator?.supersedeTrip(state.tripId, "trip_scope_changed");
     const next = updateTripControlScope(state, input, { clock: this.clock });
     const saved = await this.store.save(next, { expectedStorageVersion: state.storageVersion });
     return controlView(saved, this.providerStatus());
@@ -857,6 +953,7 @@ export class TravelService {
   async confirmUserArrival(input = {}) {
     if (input.explicitUserConfirmation !== true) throw serviceError("user_confirmation_required");
     const state = requireTrip(await this.store.get(input.tripId), input.tripId);
+    this.planningRunCoordinator?.supersedeTrip(state.tripId, "arrival_anchor_changed");
     const airport = canonicalArrivalAirport(input.airport, state.brief?.destination).slice(0, 120);
     const terminal = String(input.terminal ?? "").trim().slice(0, 40);
     const time = String(input.time ?? "").trim().slice(0, 40);
@@ -957,7 +1054,26 @@ export class TravelService {
     const sharedFeedback = typeof this.store.listSharedPlaceFeedback === "function"
       ? await this.store.listSharedPlaceFeedback(sourceRefs)
       : [];
-    return planView(state, { mapPreviewAvailable: this.researchProvider?.canRenderMap === true, sharedFeedback, clock: this.clock });
+    const view = planView(state, { mapPreviewAvailable: this.researchProvider?.canRenderMap === true, sharedFeedback, clock: this.clock });
+    const planningProposal = state.pendingProposals.find((proposal) => proposal.itineraryPreviewId && proposal.itineraryPlan) ?? null;
+    const cached = planningProposal ? this.mobilityPreviewCache.get(planningProposal.itineraryPreviewId) : null;
+    if (cached?.tripId === state.tripId && cached.revision === state.revision) {
+      view.itineraryTrial = {
+        ...cached.preview,
+        schemaVersion: "itinerary-planning-trial-v1",
+        status: "trial_ready",
+        runId: planningProposal.planningRunId,
+        attempt: planningProposal.planningAttempt,
+        proposalId: planningProposal.proposalId,
+        baseRevision: state.revision,
+        selections: cached.selectionValues ?? {},
+        accept: { proposalId: planningProposal.proposalId, selections: cached.selectionValues ?? {}, partial: Object.keys(cached.selectionValues ?? {}).length > 0, previewId: cached.preview.previewId, baseRevision: state.revision },
+        committed: false,
+      };
+    } else if (planningProposal) {
+      view.itineraryTrial = { schemaVersion: "itinerary-planning-trial-v1", status: "needs_recheck", runId: planningProposal.planningRunId, attempt: planningProposal.planningAttempt, proposalId: planningProposal.proposalId, baseRevision: state.revision, committed: false };
+    }
+    return view;
   }
 
   async updateTripReadiness({ tripId, signalId, status } = {}) {
@@ -1027,25 +1143,71 @@ export class TravelService {
     if (input.baseRevision != null && input.baseRevision !== state.revision) {
       return { schemaVersion: "trip-mobility-preview-v1", status: "needs_refresh", tripId: state.tripId, revision: state.revision, reason: "trip_revision_changed", fabricatedResults: false };
     }
-    const selections = input.selections && typeof input.selections === "object" && !Array.isArray(input.selections) ? input.selections : {};
-    const proposalNodes = state.pendingProposals.flatMap((proposal) => (proposal.operations ?? []).filter((operation) => operation.kind === "add_candidate").map((operation) => ({ ...operation.node, nodeId: operation.nodeId, selected: false })));
-    const knownNodes = [...state.nodes, ...proposalNodes];
-    const chosen = [];
-    const confirmedArrival = state.nodes.find((node) => node.selected && node.domain === "transport" && node.operability?.mobilityRole === "user_confirmed_arrival");
-    if (confirmedArrival) chosen.push(confirmedArrival);
-    for (const domain of FOUR_DOMAINS) {
-      if (domain === "transport" && confirmedArrival) continue;
-      const selectedNodeId = selections[domain];
-      if (selectedNodeId) {
-        const node = knownNodes.find((candidate) => candidate.nodeId === selectedNodeId && candidate.domain === domain);
-        if (!node) throw serviceError("preview_candidate_not_found", { domain, nodeId: selectedNodeId });
-        chosen.push({ ...structuredClone(node), selected: true });
-        continue;
+    if (input.previewId && input.routeModes && typeof input.routeModes === "object") {
+      const cached = this.mobilityPreviewCache.get(input.previewId);
+      if (!cached || cached.tripId !== state.tripId || cached.revision !== state.revision) {
+        return { schemaVersion: "trip-mobility-preview-v1", status: "needs_refresh", tripId: state.tripId, revision: state.revision, reason: "itinerary_preview_stale", fabricatedResults: false };
       }
-      chosen.push(...state.nodes.filter((node) => node.selected && node.domain === domain));
+      const routed = mobilityWithRouteModes(cached.preview.mobility, input.routeModes);
+      const mobility = mobilityWithItinerary(routed, cached.sourceDraft);
+      const totals = mobilityTotals(mobility);
+      const baselineMobility = state.environment?.mobility;
+      const baselineAvailable = baselineMobility?.status === "completed" && baselineMobility?.feasibility?.canConfirm === true;
+      const baseline = baselineAvailable ? mobilityTotals(baselineMobility) : null;
+      const next = {
+        ...cached.preview,
+        status: mobility.status,
+        previewId: itineraryPreviewId({ tripId: state.tripId, revision: state.revision, selections: { ...(cached.selectionValues ?? {}), routeModes: input.routeModes }, itinerary: mobility.itinerary, checkedAt: mobility.checkedAt }),
+        mobility,
+        itinerary: mobility.itinerary,
+        feasibility: mobility.feasibility,
+        routeModes: structuredClone(input.routeModes),
+        impact: {
+          ...cached.preview.impact,
+          route: totals,
+          baseline: baselineAvailable ? { kind: "confirmed_plan", route: baseline } : { kind: "none", route: null },
+          deltaFromConfirmed: baseline ? {
+            totalMinutes: totals.totalMinutes - baseline.totalMinutes,
+            walkingMeters: totals.walkingMeters - baseline.walkingMeters,
+            transfers: totals.transfers - baseline.transfers,
+            estimatedFareCny: totals.estimatedFareCny - baseline.estimatedFareCny,
+          } : null,
+        },
+      };
+      this.mobilityPreviewCache.set(next.previewId, { ...cached, preview: next, routeModes: structuredClone(input.routeModes) });
+      return next;
+    }
+    const itineraryPlan = input.itineraryPlan ? assertSchema(ItineraryPlanSchema, input.itineraryPlan, "invalid_itinerary_plan") : null;
+    const knownNodes = itineraryPlanningNodes(state);
+    const selections = itineraryPlan
+      ? planSelections(state, itineraryPlan)
+      : input.selections && typeof input.selections === "object" && !Array.isArray(input.selections) ? input.selections : {};
+    const chosen = [];
+    if (itineraryPlan) {
+      for (const nodeId of planNodeIds(itineraryPlan)) {
+        const node = knownNodes.find((candidate) => candidate.nodeId === nodeId);
+        if (!node) throw serviceError("itinerary_plan_node_not_found", { nodeId });
+        chosen.push({ ...structuredClone(node), selected: true });
+      }
+    } else {
+      const confirmedArrival = state.nodes.find((node) => node.selected && node.domain === "transport" && node.operability?.mobilityRole === "user_confirmed_arrival");
+      if (confirmedArrival) chosen.push(confirmedArrival);
+      for (const domain of FOUR_DOMAINS) {
+        if (domain === "transport" && confirmedArrival) continue;
+        const selectedNodeId = selections[domain];
+        if (selectedNodeId) {
+          const node = knownNodes.find((candidate) => candidate.nodeId === selectedNodeId && candidate.domain === domain);
+          if (!node) throw serviceError("preview_candidate_not_found", { domain, nodeId: selectedNodeId });
+          chosen.push({ ...structuredClone(node), selected: true });
+          continue;
+        }
+        chosen.push(...state.nodes.filter((node) => node.selected && node.domain === domain));
+      }
     }
     const selectedNodes = [...new Map(chosen.map((node) => [node.nodeId, { ...node, selected: true }])).values()];
-    const itineraryDraft = buildItineraryDraft(state.brief, selectedNodes);
+    const itineraryDraft = itineraryPlan
+      ? itineraryPlanToDraft(itineraryPlan, state.brief, selectedNodes)
+      : buildItineraryDraft(state.brief, selectedNodes);
     let observation;
     if (selectedNodes.length < 2) {
       observation = { schemaVersion: "trip-mobility-v1", status: "needs_context", destination: state.brief?.destination ?? null, source: "amap_routes_v5", reason: "select_arrival_and_at_least_one_place", fabricatedResults: false };
@@ -1058,7 +1220,8 @@ export class TravelService {
         observation = { schemaVersion: "trip-mobility-v1", status: "provider_unavailable", destination: state.brief?.destination ?? null, source: "amap_routes_v5", reason: error?.code ?? "SOURCE_UNAVAILABLE", fabricatedResults: false };
       }
     }
-    const mobility = mobilityWithItinerary(observation, itineraryDraft);
+    const preferredModes = itineraryPlan && itineraryDraft.itinerary ? routeModesFromPlan(itineraryPlan, itineraryDraft.itinerary) : new Map();
+    const mobility = mobilityWithItinerary(mobilityWithRouteModes(observation, {}, preferredModes), itineraryDraft);
     const itineraryOrder = new Map((mobility.itinerary?.stops ?? []).map((stop, index) => [stop.nodeId, index]));
     const nodesBySchedule = [...selectedNodes].sort((left, right) => {
       const order = (itineraryOrder.get(left.nodeId) ?? Number.MAX_SAFE_INTEGER) - (itineraryOrder.get(right.nodeId) ?? Number.MAX_SAFE_INTEGER);
@@ -1081,6 +1244,14 @@ export class TravelService {
       revision: state.revision,
       committed: false,
       previewId: itineraryPreviewId({ tripId: state.tripId, revision: state.revision, selections, itinerary: mobility.itinerary, checkedAt: mobility.checkedAt }),
+      planningSource: itineraryPlan ? "model_plan" : "conservative_fallback",
+      planSummary: itineraryPlan ? {
+        objective: itineraryPlan.objective,
+        priorities: itineraryPlan.priorities,
+        assumptions: itineraryPlan.assumptions,
+        needsContext: itineraryPlan.needsContext,
+        stopRationales: itineraryPlan.days.flatMap((day) => day.stops.map((stop) => ({ nodeId: stop.nodeId, dayIndex: day.dayIndex, role: stop.role, rationale: stop.rationale }))),
+      } : null,
       selectedNodes: nodesBySchedule.map((node) => previewNodeView(node, mobility)),
       mobility,
       itinerary: mobility.itinerary,
@@ -1113,12 +1284,217 @@ export class TravelService {
         } : null,
         stayAnchorFits: mobility.travelerFit?.stayAnchorFits ?? [],
       },
-      caveats: ["这是试选路线，不会修改已确认行程。", ...(mobility.caveats ?? [])],
+      caveats: [
+        "这是试选路线，不会修改已确认行程。",
+        ...(!itineraryPlan && selectedNodes.length > 2 ? ["当前按保守顺序快速连线，用于比较候选；只有运行 AI 规划并通过路线核验后，才能称为优化站序。"] : []),
+        ...(mobility.caveats ?? []),
+      ],
       fabricatedResults: false,
     };
-    this.mobilityPreviewCache.set(previewResult.previewId, { tripId: state.tripId, revision: state.revision, selections: JSON.stringify(Object.entries(selections).sort(([left], [right]) => left.localeCompare(right))), preview: previewResult });
+    this.mobilityPreviewCache.set(previewResult.previewId, {
+      tripId: state.tripId,
+      revision: state.revision,
+      selections: JSON.stringify(Object.entries(selections).sort(([left], [right]) => left.localeCompare(right))),
+      selectionValues: structuredClone(selections),
+      sourceDraft: itineraryDraft,
+      itineraryPlan: itineraryPlan ? structuredClone(itineraryPlan) : null,
+      preview: previewResult,
+      routeModes: {},
+    });
     while (this.mobilityPreviewCache.size > 20) this.mobilityPreviewCache.delete(this.mobilityPreviewCache.keys().next().value);
     return previewResult;
+  }
+
+  async planItineraryTrial(input = {}) {
+    if (!this.planningRunCoordinator) throw serviceError("itinerary_planning_runtime_unavailable");
+    const plan = assertSchema(ItineraryPlanSchema, input.plan, "invalid_itinerary_plan");
+    const state = requireTrip(await this.store.get(plan.tripId), plan.tripId);
+    const operationId = `${plan.runId}:${plan.attempt}`;
+    const planFingerprint = stableHash(plan);
+    if (plan.tripId !== input.tripId || plan.baseRevision !== state.revision) {
+      return { schemaVersion: "itinerary-planning-trial-v1", status: "stale_discarded", operationId, runId: plan.runId, tripId: state.tripId, baseRevision: plan.baseRevision, currentRevision: state.revision, attempt: plan.attempt, committed: false };
+    }
+    const criteriaFingerprint = planningStateFingerprint(state);
+    const existingRun = this.planningRunCoordinator.get(plan.runId);
+    const existingAttempt = existingRun?.lanes?.get?.(`itinerary_plan:${plan.attempt}`);
+    if (existingAttempt?.completedAt) {
+      if (existingAttempt.result?.planFingerprint !== planFingerprint) throw serviceError("itinerary_planning_attempt_identity_conflict", { runId: plan.runId, attempt: plan.attempt });
+      return existingAttempt.result.payload;
+    }
+    const run = this.planningRunCoordinator.begin({
+      runId: plan.runId,
+      tripId: state.tripId,
+      baseRevision: state.revision,
+      criteriaFingerprint,
+      requiredLanes: ["itinerary_plan"],
+      deadlineAt: new Date(Date.now() + 90_000).toISOString(),
+    });
+    if (!this.planningRunCoordinator.isCurrent({ runId: plan.runId, tripId: state.tripId, baseRevision: state.revision, criteriaFingerprint })) {
+      return { schemaVersion: "itinerary-planning-trial-v1", status: "stale_discarded", operationId, runId: plan.runId, tripId: state.tripId, baseRevision: state.revision, attempt: plan.attempt, committed: false };
+    }
+    const startedAt = new Date(this.clock?.() ?? Date.now()).toISOString();
+    this.planningRunCoordinator.recordLaneStarted(plan.runId, { lane: "itinerary_plan", attempt: plan.attempt, queuedAt: startedAt, startedAt });
+    let payload;
+    let terminal = false;
+    try {
+      const nodes = itineraryPlanningNodes(state);
+      const byNodeId = new Map(nodes.map((node) => [node.nodeId, node]));
+      const plannedNodeIds = planNodeIds(plan);
+      const unknownNodeIds = plannedNodeIds.filter((nodeId) => !byNodeId.has(nodeId));
+      const allowedEvidence = candidateEvidenceRefs(plannedNodeIds.map((nodeId) => byNodeId.get(nodeId)).filter(Boolean));
+      const invalidEvidenceRefs = plan.evidenceRefs.filter((ref) => !allowedEvidence.has(ref));
+      const invalidLockedNodeIds = plan.lockedNodeIds.filter((nodeId) => {
+        const node = state.nodes.find((item) => item.nodeId === nodeId);
+        return !node || (node.selected !== true && !node.lock);
+      });
+      const anchorConflicts = plan.fixedAnchors.flatMap((anchor) => {
+        const node = byNodeId.get(anchor.nodeId);
+        if (!node) return [{ anchor, actual: null }];
+        const actual = anchor.kind === "arrival"
+          ? node.operability?.arrivalAt ?? node.operability?.arrivalRouteAnchor?.time ?? node.operability?.planningWindow?.endAt ?? null
+          : node.operability?.planningWindow?.startAt ?? node.time ?? null;
+        return actual && new Date(actual).getTime() === new Date(anchor.startAt).getTime() ? [] : [{ anchor, actual }];
+      });
+      if (unknownNodeIds.length || invalidEvidenceRefs.length || invalidLockedNodeIds.length || anchorConflicts.length) {
+        const issues = [
+          ...(unknownNodeIds.length ? [{ code: "plan_node_not_found", severity: "blocking", message: "计划引用了当前候选中不存在的地点。", stopIds: unknownNodeIds.slice(0, 8), dayIndex: null, allowedRepairDirections: ["replace_candidate"] }] : []),
+          ...(invalidEvidenceRefs.length ? [{ code: "plan_evidence_not_allowed", severity: "blocking", message: "计划引用了不属于当前候选的资料。", stopIds: [], dayIndex: null, allowedRepairDirections: ["request_context"] }] : []),
+          ...(invalidLockedNodeIds.length ? [{ code: "plan_lock_not_authoritative", severity: "blocking", message: "计划把尚未确认的地点当成了锁定安排。", stopIds: invalidLockedNodeIds.slice(0, 8), dayIndex: null, allowedRepairDirections: ["reorder_flexible_stop"] }] : []),
+          ...(anchorConflicts.length ? [{ code: "fixed_anchor_fact_mismatch", severity: "blocking", message: "计划改变了已确认的抵达或预约时间。", stopIds: anchorConflicts.map(({ anchor }) => anchor.nodeId).slice(0, 8), dayIndex: null, observed: { requestedStartAt: anchorConflicts[0]?.anchor.startAt ?? null, earliestStartAt: anchorConflicts[0]?.actual ?? null }, allowedRepairDirections: ["reorder_flexible_stop", "move_to_next_day"] }] : []),
+        ];
+        payload = { schemaVersion: "itinerary-planning-trial-v1", status: plan.attempt === 1 ? "needs_repair" : "blocked", operationId, runId: plan.runId, tripId: state.tripId, baseRevision: state.revision, attempt: plan.attempt, issues, committed: false, checkedAt: null };
+        terminal = plan.attempt === 2;
+      } else {
+        const combinedSignal = input.signal ? AbortSignal.any([run.abortController.signal, input.signal]) : run.abortController.signal;
+        let preview = await this.previewTripMobility({ tripId: state.tripId, baseRevision: state.revision, itineraryPlan: plan, signal: combinedSignal });
+        const baselinePreview = input.baselinePreviewId ? this.mobilityPreviewCache.get(input.baselinePreviewId) : null;
+        if (baselinePreview?.tripId === state.tripId && baselinePreview.revision === state.revision && baselinePreview.preview?.mobility) {
+          const baselineRoute = mobilityTotals(baselinePreview.preview.mobility);
+          const route = mobilityTotals(preview.mobility);
+          preview = {
+            ...preview,
+            impact: {
+              ...preview.impact,
+              baseline: { kind: "current_trial", route: baselineRoute },
+              deltaFromConfirmed: {
+                totalMinutes: route.totalMinutes - baselineRoute.totalMinutes,
+                walkingMeters: route.walkingMeters - baselineRoute.walkingMeters,
+                transfers: route.transfers - baselineRoute.transfers,
+                estimatedFareCny: route.estimatedFareCny - baselineRoute.estimatedFareCny,
+              },
+            },
+          };
+          const cachedPlanned = this.mobilityPreviewCache.get(preview.previewId);
+          if (cachedPlanned) this.mobilityPreviewCache.set(preview.previewId, { ...cachedPlanned, preview });
+        }
+        const latest = requireTrip(await this.store.get(state.tripId), state.tripId);
+        if (!this.planningRunCoordinator.isCurrent({ runId: plan.runId, tripId: state.tripId, baseRevision: state.revision, criteriaFingerprint })
+          || latest.revision !== state.revision
+          || planningStateFingerprint(latest) !== criteriaFingerprint) {
+          this.planningRunCoordinator.markStale(plan.runId, "stale_discarded");
+          payload = { schemaVersion: "itinerary-planning-trial-v1", status: "stale_discarded", operationId, runId: plan.runId, tripId: state.tripId, baseRevision: state.revision, currentRevision: latest.revision, attempt: plan.attempt, committed: false };
+          payload.providerCallCount = 1;
+          terminal = true;
+        } else if (preview.feasibility?.canConfirm !== true) {
+          const issues = preview.feasibility?.issues ?? [];
+          const repairable = issues.some((issue) => (issue.allowedRepairDirections ?? []).length > 0);
+          payload = {
+            schemaVersion: "itinerary-planning-trial-v1",
+            status: plan.attempt === 1 && repairable ? "needs_repair" : preview.feasibility?.status === "needs_context" ? "needs_context" : "blocked",
+            operationId,
+            runId: plan.runId,
+            tripId: state.tripId,
+            baseRevision: state.revision,
+            attempt: plan.attempt,
+            itinerary: preview.itinerary,
+            mobility: preview.mobility,
+            feasibility: preview.feasibility,
+            issues,
+            committed: false,
+            checkedAt: preview.mobility?.checkedAt ?? null,
+            providerCallCount: 1,
+          };
+          terminal = plan.attempt === 2 || !repairable;
+        } else {
+          const selections = planSelections(latest, plan);
+          const carrier = planningProposalCarrier(latest, plan, selections);
+          let proposalId;
+          let pendingState;
+          if (carrier) {
+            proposalId = carrier.proposalId;
+            pendingState = structuredClone(latest);
+            pendingState.pendingProposals = pendingState.pendingProposals.map((proposal) => proposal.proposalId === carrier.proposalId ? {
+              ...proposal,
+              readSet: [...new Map([
+                ...(proposal.readSet ?? []),
+                ...plannedNodeIds.flatMap((nodeId) => {
+                  const node = latest.nodes.find((item) => item.nodeId === nodeId);
+                  return node ? [{ nodeId, version: node.version }] : [];
+                }),
+              ].map((entry) => [entry.nodeId, entry])).values()],
+              itineraryPlan: structuredClone(plan),
+              itineraryPreviewId: preview.previewId,
+              planningRunId: plan.runId,
+              planningAttempt: plan.attempt,
+            } : proposal);
+          } else {
+            proposalId = planningProposalId(plan.runId);
+            const writeSet = plannedNodeIds.filter((nodeId) => latest.nodes.some((node) => node.nodeId === nodeId));
+            const proposal = {
+              schemaVersion: "trip-patch-proposal-v1",
+              proposalId,
+              tripId: latest.tripId,
+              baseRevision: latest.revision,
+              title: "AI 优化行程试排",
+              summary: plan.objective,
+              writeSet,
+              writeContract: { allowedNodeIds: writeSet },
+              readSet: writeSet.map((nodeId) => ({ nodeId, version: latest.nodes.find((node) => node.nodeId === nodeId).version })),
+              operations: [],
+              itineraryPlan: structuredClone(plan),
+              itineraryPreviewId: preview.previewId,
+              planningRunId: plan.runId,
+              planningAttempt: plan.attempt,
+            };
+            const staged = stageTripPatch(latest, proposal, { clock: this.clock });
+            if (staged.status !== "proposed") throw serviceError(staged.validation?.reason ?? "itinerary_trial_proposal_rejected");
+            pendingState = staged.state;
+          }
+          const saved = await this.store.save(pendingState, { expectedStorageVersion: latest.storageVersion });
+          const cached = this.mobilityPreviewCache.get(preview.previewId);
+          if (cached) this.mobilityPreviewCache.set(preview.previewId, { ...cached, proposalId, planningRunId: plan.runId });
+          payload = {
+            ...preview,
+            schemaVersion: "itinerary-planning-trial-v1",
+            status: "trial_ready",
+            operationId,
+            runId: plan.runId,
+            tripId: saved.tripId,
+            baseRevision: saved.revision,
+            attempt: plan.attempt,
+            proposalId,
+            selections,
+            accept: { proposalId, selections, partial: Object.keys(selections).length > 0, previewId: preview.previewId, baseRevision: saved.revision },
+            committed: false,
+            checkedAt: preview.mobility?.checkedAt ?? null,
+            providerCallCount: 1,
+          };
+          terminal = true;
+        }
+      }
+    } catch (error) {
+      const stale = run.abortController.signal.aborted || error?.code === "itinerary_preview_stale";
+      payload = { schemaVersion: "itinerary-planning-trial-v1", status: stale ? "stale_discarded" : plan.attempt === 1 ? "needs_repair" : "blocked", operationId, runId: plan.runId, tripId: state.tripId, baseRevision: state.revision, attempt: plan.attempt, issues: [{ code: error?.code ?? "itinerary_planning_failed", severity: "blocking", message: stale ? "旅行条件已经变化，这份旧试排不会继续使用。" : "这次没有完成路线核验，当前方案保持不变。", stopIds: [], dayIndex: null, allowedRepairDirections: stale ? [] : ["request_context"] }], committed: false, checkedAt: null };
+      terminal = stale || plan.attempt === 2;
+    }
+    const completedAt = new Date(this.clock?.() ?? Date.now()).toISOString();
+    if (payload.providerCallCount == null) payload.providerCallCount = 0;
+    this.planningRunCoordinator.recordLaneCompletion(plan.runId, { lane: "itinerary_plan", attempt: plan.attempt, completedAt, status: payload.status, result: { planFingerprint, payload } });
+    if (terminal) {
+      const acquired = this.planningRunCoordinator.tryJoin(plan.runId);
+      if (acquired.acquired) this.planningRunCoordinator.completeJoin(plan.runId, { joinArtifactId: `join_${plan.runId}`, operationId, status: payload.status, completedAt });
+    }
+    return payload;
   }
 
   async refreshTripMobility(input) {
@@ -1183,6 +1559,7 @@ export class TravelService {
   async researchTripOptions(input) {
     validateRequest("research_trip_options", input);
     const state = requireTrip(await this.store.get(input.tripId), input.tripId);
+    this.planningRunCoordinator?.supersedeTrip(state.tripId, "candidate_set_changed");
     const rawRequestedDomains = Array.isArray(input.domains) && input.domains.length ? input.domains : FOUR_DOMAINS;
     const hasConfirmedBookedArrival = state.brief?.intercityBooked === true
       && state.nodes.some((node) => node.selected && node.domain === "transport" && node.operability?.mobilityRole === "user_confirmed_arrival");
@@ -1438,6 +1815,7 @@ export class TravelService {
   async proposeTripChange(input, actor = "skill") {
     validateRequest("propose_trip_change", input, actor);
     const state = requireTrip(await this.store.get(input.tripId), input.tripId);
+    this.planningRunCoordinator?.supersedeTrip(state.tripId, "candidate_set_changed");
     const result = stageTripPatch(state, input.proposal, { clock: this.clock });
     if (result.status !== "proposed") return result;
     const saved = await this.store.save(result.state, { expectedStorageVersion: state.storageVersion });
@@ -1450,14 +1828,20 @@ export class TravelService {
     if (input.baseRevision != null && Number(input.baseRevision) !== state.revision) {
       return { schemaVersion: "trip-commit-result-v1", status: "needs_rebase", tripId: state.tripId, revision: state.revision, validation: { ok: false, reason: "itinerary_preview_stale" } };
     }
+    const pendingProposal = state.pendingProposals.find((proposal) => proposal.proposalId === input.proposalId) ?? null;
+    if (!pendingProposal?.itineraryPlan) this.planningRunCoordinator?.supersedeTrip(state.tripId, "selection_changed");
     const hasSelections = input.selections && Object.values(input.selections).some(Boolean);
+    const hasItineraryPlan = Boolean(pendingProposal?.itineraryPlan);
     let preflight = null;
-    if (hasSelections) {
-      const selectionKey = JSON.stringify(Object.entries(input.selections).sort(([left], [right]) => left.localeCompare(right)));
+    if (hasSelections || hasItineraryPlan) {
+      const selectionKey = JSON.stringify(Object.entries(input.selections ?? {}).sort(([left], [right]) => left.localeCompare(right)));
       const cached = input.previewId ? this.mobilityPreviewCache.get(input.previewId) : null;
-      const preview = cached?.tripId === state.tripId && cached.revision === state.revision && cached.selections === selectionKey
+      let preview = cached?.tripId === state.tripId && cached.revision === state.revision && cached.selections === selectionKey
         ? cached.preview
-        : await this.previewTripMobility({ tripId: input.tripId, baseRevision: state.revision, selections: input.selections });
+        : await this.previewTripMobility({ tripId: input.tripId, baseRevision: state.revision, ...(hasItineraryPlan ? { itineraryPlan: pendingProposal.itineraryPlan } : { selections: input.selections }) });
+      if (input.routeModes && Object.keys(input.routeModes).length) {
+        preview = await this.previewTripMobility({ tripId: input.tripId, baseRevision: state.revision, previewId: preview.previewId, routeModes: input.routeModes });
+      }
       preflight = preview;
       if (preview.feasibility?.canConfirm !== true) {
         return { schemaVersion: "trip-commit-result-v1", status: "rejected", tripId: state.tripId, revision: state.revision, validation: { ok: false, reason: "itinerary_not_executable" }, feasibility: preview.feasibility, previewId: preview.previewId };
@@ -1467,6 +1851,11 @@ export class TravelService {
     if (result.status !== "committed") return result;
     if (preflight?.mobility && preflight.feasibility?.canConfirm === true) {
       result.state.environment = { ...result.state.environment, mobility: preflight.mobility, updatedAt: new Date(this.clock?.() ?? Date.now()).toISOString() };
+      result.state.pendingProposals = result.state.pendingProposals.map((proposal) => {
+        if (!proposal.itineraryPlan) return proposal;
+        const { itineraryPlan, itineraryPreviewId, planningRunId, planningAttempt, ...rest } = proposal;
+        return rest;
+      });
       result.qa = validateTripCoherence(result.state);
     }
     const saved = await this.store.save(result.state, { expectedStorageVersion: state.storageVersion });
@@ -1484,6 +1873,7 @@ export class TravelService {
       pendingProposalIds: saved.pendingProposals.map((proposal) => proposal.proposalId),
       mobility: preflight?.mobility ?? null,
       feasibility: preflight?.feasibility ?? null,
+      routeModes: preflight?.routeModes ?? input.routeModes ?? {},
     };
   }
 
@@ -1494,6 +1884,23 @@ export class TravelService {
     if (result.status !== "rejected_by_user") return result;
     const saved = await this.store.save(result.state, { expectedStorageVersion: state.storageVersion });
     return { schemaVersion: result.schemaVersion, status: result.status, tripId: saved.tripId, revision: saved.revision, storageVersion: saved.storageVersion };
+  }
+
+  async discardItineraryTrial(input) {
+    const state = requireTrip(await this.store.get(input.tripId), input.tripId);
+    if (input.baseRevision != null && Number(input.baseRevision) !== state.revision) return { schemaVersion: "itinerary-trial-discard-result-v1", status: "needs_rebase", tripId: state.tripId, revision: state.revision };
+    const proposal = state.pendingProposals.find((item) => item.proposalId === input.proposalId && item.itineraryPlan);
+    if (!proposal) return { schemaVersion: "itinerary-trial-discard-result-v1", status: "unchanged", tripId: state.tripId, revision: state.revision };
+    this.planningRunCoordinator?.supersedeTrip(state.tripId, "trial_discarded_by_user");
+    const next = structuredClone(state);
+    next.pendingProposals = next.pendingProposals.flatMap((item) => {
+      if (item.proposalId !== proposal.proposalId) return [item];
+      if (!(item.operations ?? []).length) return [];
+      const { itineraryPlan, itineraryPreviewId, planningRunId, planningAttempt, ...rest } = item;
+      return [rest];
+    });
+    const saved = await this.store.save(next, { expectedStorageVersion: state.storageVersion });
+    return { schemaVersion: "itinerary-trial-discard-result-v1", status: "discarded", tripId: saved.tripId, revision: saved.revision, storageVersion: saved.storageVersion };
   }
 
   async prepareBookingHandoff(input) {

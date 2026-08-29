@@ -1010,6 +1010,7 @@ function validatePatch(state: DynamicRecord, proposal: DynamicRecord, { at = new
   const writeSet = unique(asArray(proposal.writeSet));
   const allowed = new Set(asArray(proposal.writeContract?.allowedNodeIds));
   const operationNodeIds = unique(asArray(proposal.operations).map((operation) => operation?.nodeId));
+  const itineraryNodeIds = unique(asArray(proposal.itineraryPlan?.days).flatMap((day) => asArray(day?.stops).map((stop) => stop?.nodeId)));
   if (operationNodeIds.some((nodeId) => typeof nodeId !== "string" || !writeSet.includes(nodeId))) {
     return { ok: false, reason: "operation_outside_write_set" };
   }
@@ -1022,7 +1023,7 @@ function validatePatch(state: DynamicRecord, proposal: DynamicRecord, { at = new
     const node = nodes.get(nodeId);
     if (!node && !candidateNodeIds.has(nodeId)) return { ok: false, reason: "write_node_not_found", nodeId };
     if (allowed.size && !allowed.has(nodeId)) return { ok: false, reason: "write_set_out_of_contract", nodeId };
-    if (node && immutablePatchTarget(node) && proposal.overrideLock !== true) return { ok: false, reason: "locked_node_mutation_blocked", nodeId };
+    if (node && operationNodeIds.includes(nodeId) && immutablePatchTarget(node) && proposal.overrideLock !== true) return { ok: false, reason: "locked_node_mutation_blocked", nodeId };
   }
   for (const operation of asArray(proposal.operations)) {
     if (operation.kind === "add_candidate") {
@@ -1047,7 +1048,14 @@ function validatePatch(state: DynamicRecord, proposal: DynamicRecord, { at = new
   }
   const offers = validateFreshOffers(state, proposal, at);
   if (!offers.ok) return offers;
-  if (!Array.isArray(proposal.operations) || proposal.operations.length === 0) return { ok: false, reason: "patch_operations_missing" };
+  if (!Array.isArray(proposal.operations)) return { ok: false, reason: "patch_operations_missing" };
+  if (proposal.operations.length === 0 && !proposal.itineraryPlan) return { ok: false, reason: "patch_operations_missing" };
+  if (proposal.itineraryPlan) {
+    if (proposal.itineraryPlan.tripId !== state.tripId || proposal.itineraryPlan.baseRevision !== state.revision) return { ok: false, reason: "itinerary_plan_stale" };
+    if (!itineraryNodeIds.length || itineraryNodeIds.some((nodeId) => !nodes.has(nodeId) && !candidateNodeIds.has(nodeId))) return { ok: false, reason: "itinerary_plan_node_not_found" };
+    const protectedNodeIds = new Set([...writeSet, ...asArray(proposal.readSet).map((entry) => entry.nodeId)]);
+    if (itineraryNodeIds.some((nodeId) => !protectedNodeIds.has(nodeId))) return { ok: false, reason: "itinerary_plan_outside_contract" };
+  }
   return { ok: true };
 }
 
@@ -1190,11 +1198,10 @@ function applyProposalSelections(proposal: DynamicRecord, selections: DynamicRec
 function partialSelectionProposals(state: DynamicRecord, proposal: DynamicRecord, selections: DynamicRecord): { commitProposal: DynamicRecord; residualOperations: DynamicRecord[]; acceptedDomains: string[] } {
   const operations = asArray(proposal.operations);
   if (!operations.length || operations.some((operation) => !["add_candidate", "select"].includes(operation.kind) || !FOUR_DOMAINS.includes(operation.node?.domain))) throw new Error("partial_selection_requires_candidate_proposal");
-  if (asArray(proposal.readSet).length) throw new Error("partial_selection_read_set_not_supported");
   const acceptedDomains = Object.keys(selections ?? {});
   if (!acceptedDomains.length) throw new Error("partial_selection_required");
   const commitOperations = [];
-  const replacementReadSet = [];
+  const replacementReadSet = [...asArray(proposal.readSet)];
   const replacementAlternatives = [];
   for (const domain of acceptedDomains) {
     requireDomain(domain);
@@ -1330,7 +1337,9 @@ export function commitTripPatch(state: DynamicRecord, proposal: DynamicRecord, {
   } catch (error: unknown) {
     return { schemaVersion: "trip-commit-result-v1", status: "rejected", validation: { ok: false, reason: error instanceof Error ? error.message : "patch_application_failed" }, state };
   }
-  const changedNodeIds = unique<string>(proposal.operations.map((operation: DynamicRecord) => String(operation.nodeId)));
+  const changedNodeIds = unique<string>(proposal.operations.length
+    ? proposal.operations.map((operation: DynamicRecord) => String(operation.nodeId))
+    : asArray(proposal.writeSet).map((nodeId) => String(nodeId)));
   if (next.environment?.mobility) {
     next.environment.mobility = {
       ...next.environment.mobility,

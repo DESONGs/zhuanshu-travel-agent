@@ -2,7 +2,7 @@ import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useM
 import {
   AppleLogo, ArrowCounterClockwise, ArrowsClockwise, Baby, BatteryCharging, CalendarBlank, CaretDown, CheckCircle, ChatsCircle, CircleNotch,
   Clock, CloudSun, Compass, CurrencyCircleDollar, Elevator, ForkKnife, Globe, GoogleLogo, Heart, House, List, MapPin,
-  ImageSquare, LinkSimple, MapTrifold, Microphone, NavigationArrow, PaperPlaneRight, PersonSimpleWalk, Plus, QrCode, SignOut, Sparkle, User,
+  ImageSquare, Info, LinkSimple, MapTrifold, Microphone, NavigationArrow, PaperPlaneRight, PersonSimpleWalk, Plus, QrCode, SignOut, Sparkle, User,
   Stairs, StopCircle, Toilet, Train, Trash, WarningCircle, WechatLogo, Wheelchair, X,
 } from "@phosphor-icons/react";
 import { api } from "./api-client.js";
@@ -407,12 +407,13 @@ function ActivityStrip({ activities }) {
   const { locale, pick } = useUiLocale();
   if (!activities?.length) return null;
   const labels = locale === "en"
-    ? { interpret_visual_context: "Understanding the image with this trip", save_trip_understanding: "Trip requirements saved", research_trip_options: "Researching the connected trip", get_trip_control_view: "Trip requirements loaded", get_trip_plan_view: "Current plan loaded", estimate_costs: "Trip budget calculated", explain_recommendation: "Recommendation evidence loaded", confirm_user_arrival: "Confirmed arrival saved", confirm_trip_selection: "Selected option confirmed", accept_trip_change: "Plan confirmed", refresh_trip_mobility: "City movement checked", reject_trip_change: "Options dismissed", trip_readiness: "Travel readiness updated" }
-    : { interpret_visual_context: "已结合这趟旅行理解图片", save_trip_understanding: "已记住旅行要求", research_trip_options: "已核验吃住行玩候选", get_trip_control_view: "已读取旅行要求", get_trip_plan_view: "已读取当前方案", estimate_costs: "已按真实价格口径计算整趟预算", explain_recommendation: "已读取候选的推荐依据", confirm_user_arrival: "已记录确认的抵达事实", confirm_trip_selection: "已确认所选候选", accept_trip_change: "已确认方案", refresh_trip_mobility: "已核验城市内移动", reject_trip_change: "已放弃候选", trip_readiness: "已更新出发准备" };
-  const failureStatuses = new Set(["provider_unavailable", "AUTH_REQUIRED", "ACCOUNT_LIMITED", "RATE_LIMITED", "SOURCE_UNAVAILABLE", "EMPTY_VERIFIED", "failed", "error"]);
-  const latest = [...new Map(activities.map((activity) => [activity.toolName, activity])).values()];
-  const activityText = (activity) => activity.toolName === "interpret_visual_context" && activity.status === "completed" ? pick("已结合图片理解这次需求", "Image understood in this request") : activity.toolName === "interpret_visual_context" && activity.status === "failed" ? pick("这次没有读完图片", "The image could not be read") : activity.toolName === "confirm_user_arrival" && activity.status !== "committed" ? pick("抵达事实尚未确认", "Arrival is not confirmed yet") : activity.toolName === "confirm_trip_selection" && activity.status !== "committed" ? pick("候选尚未确认", "The option is not confirmed yet") : activity.toolName === "research_trip_options" && activity.status === "error" ? pick("本轮没有重新搜索，原候选保持不变", "No new search was run; existing options were kept") : activity.toolName === "restore_trip_draft" ? activity.status === "recovered" ? pick("已恢复旅行草案", "Trip draft restored") : pick("旅行草案需要恢复", "Trip draft needs recovery") : activity.toolName === "research_trip_options" && ["provider_unavailable", "AUTH_REQUIRED", "SOURCE_UNAVAILABLE"].includes(activity.status) ? pick("没有取得实时地点资料", "Live place data was not available") : activity.toolName === "research_trip_options" && activity.status === "ACCOUNT_LIMITED" ? pick("地图资料暂时无法访问", "Map data is temporarily unavailable") : activity.toolName === "research_trip_options" && activity.status === "RATE_LIMITED" ? pick("实时资料请求较多，请稍后再试", "Live sources are busy. Try again shortly.") : activity.toolName === "research_trip_options" && activity.status === "EMPTY_VERIFIED" ? pick("本次来源未返回可核验结果", "The checked sources returned no verified result") : activity.toolName === "refresh_trip_mobility" && activity.status === "provider_unavailable" ? pick("城市路线资料暂不可用", "City routing is temporarily unavailable") : activity.toolName === "refresh_trip_mobility" && activity.status === "needs_context" ? pick("确认更多地点后再核验路线", "Confirm more places before routing") : `${labels[activity.toolName] ?? pick("已处理旅行要求", "Travel request processed")}${activity.status === "proposed" ? pick("，可以在方案中比较", "; ready to compare") : ""}`;
-  return <section className="agent-progress-rail" aria-live="polite" aria-label={pick("本轮处理记录", "Steps for this request")}><header><Sparkle weight="fill" /><span><strong>{pick("本轮处理情况", "What happened this time")}</strong><small>{pick("只显示实际完成或明确失败的步骤", "Only completed or explicitly failed steps are shown")}</small></span></header><ol>{latest.map((activity) => { const warning = failureStatuses.has(activity.status); const running = activity.status === "running"; const stateLabel = running ? pick("处理中", "In progress") : warning ? pick("需要处理", "Needs attention") : pick("已完成", "Completed"); return <li key={activity.toolName} className={warning ? "warning" : running ? "running" : "complete"}><i>{running ? <CircleNotch className="spin" /> : warning ? <WarningCircle weight="fill" /> : <CheckCircle weight="fill" />}</i><span><strong>{activityText(activity)}</strong><small>{stateLabel}</small></span></li>; })}</ol></section>;
+    ? { interpret_visual_context: "Understanding the image with this trip", save_trip_understanding: "Trip requirements saved", research_trip_options: "Researching the connected trip", get_trip_control_view: "Trip requirements loaded", get_trip_plan_view: "Current plan loaded", estimate_costs: "Trip budget calculated", explain_recommendation: "Recommendation evidence loaded", plan_itinerary_trial: "Itinerary route checked", confirm_user_arrival: "Confirmed arrival saved", confirm_trip_selection: "Selected option confirmed", accept_trip_change: "Plan confirmed", refresh_trip_mobility: "City movement checked", reject_trip_change: "Options dismissed", trip_readiness: "Travel readiness updated" }
+    : { interpret_visual_context: "已结合这趟旅行理解图片", save_trip_understanding: "已记住旅行要求", research_trip_options: "已核验吃住行玩候选", get_trip_control_view: "已读取旅行要求", get_trip_plan_view: "已读取当前方案", estimate_costs: "已按真实价格口径计算整趟预算", explain_recommendation: "已读取候选的推荐依据", plan_itinerary_trial: "已核验行程站序与路线", confirm_user_arrival: "已记录确认的抵达事实", confirm_trip_selection: "已确认所选候选", accept_trip_change: "已确认方案", refresh_trip_mobility: "已核验城市内移动", reject_trip_change: "已放弃候选", trip_readiness: "已更新出发准备" };
+  const failureStatuses = new Set(["provider_unavailable", "AUTH_REQUIRED", "ACCOUNT_LIMITED", "RATE_LIMITED", "SOURCE_UNAVAILABLE", "EMPTY_VERIFIED", "failed", "error", "blocked", "needs_context", "stale_discarded"]);
+  const latest = [...new Map(activities.map((activity) => [`${activity.toolName}:${activity.attempt ?? "single"}`, activity])).values()];
+  const repaired = activities.some((activity) => activity.toolName === "plan_itinerary_trial" && activity.status === "trial_ready");
+  const activityText = (activity) => activity.toolName === "plan_itinerary_trial" && activity.status === "needs_repair" ? pick("路线核验发现冲突，已进入一次修正", "A route conflict was found and one repair was started") : activity.toolName === "plan_itinerary_trial" && activity.status === "trial_ready" ? pick("路线、时间与同行人限制已核验，可比较优化试排", "Route, timing and traveler constraints checked; the optimized draft is ready") : activity.toolName === "plan_itinerary_trial" && activity.status === "stale_discarded" ? pick("旅行条件已变化，旧试排已丢弃", "Trip conditions changed; the old draft was discarded") : activity.toolName === "plan_itinerary_trial" && ["blocked", "needs_context"].includes(activity.status) ? pick("这次没有形成可执行优化路线", "No executable optimized route was produced") : activity.toolName === "interpret_visual_context" && activity.status === "completed" ? pick("已结合图片理解这次需求", "Image understood in this request") : activity.toolName === "interpret_visual_context" && activity.status === "failed" ? pick("这次没有读完图片", "The image could not be read") : activity.toolName === "confirm_user_arrival" && activity.status !== "committed" ? pick("抵达事实尚未确认", "Arrival is not confirmed yet") : activity.toolName === "confirm_trip_selection" && activity.status !== "committed" ? pick("候选尚未确认", "The option is not confirmed yet") : activity.toolName === "research_trip_options" && activity.status === "error" ? pick("本轮没有重新搜索，原候选保持不变", "No new search was run; existing options were kept") : activity.toolName === "restore_trip_draft" ? activity.status === "recovered" ? pick("已恢复旅行草案", "Trip draft restored") : pick("旅行草案需要恢复", "Trip draft needs recovery") : activity.toolName === "research_trip_options" && ["provider_unavailable", "AUTH_REQUIRED", "SOURCE_UNAVAILABLE"].includes(activity.status) ? pick("没有取得实时地点资料", "Live place data was not available") : activity.toolName === "research_trip_options" && activity.status === "ACCOUNT_LIMITED" ? pick("地图资料暂时无法访问", "Map data is temporarily unavailable") : activity.toolName === "research_trip_options" && activity.status === "RATE_LIMITED" ? pick("实时资料请求较多，请稍后再试", "Live sources are busy. Try again shortly.") : activity.toolName === "research_trip_options" && activity.status === "EMPTY_VERIFIED" ? pick("本次来源未返回可核验结果", "The checked sources returned no verified result") : activity.toolName === "refresh_trip_mobility" && activity.status === "provider_unavailable" ? pick("城市路线资料暂不可用", "City routing is temporarily unavailable") : activity.toolName === "refresh_trip_mobility" && activity.status === "needs_context" ? pick("确认更多地点后再核验路线", "Confirm more places before routing") : `${labels[activity.toolName] ?? pick("已处理旅行要求", "Travel request processed")}${activity.status === "proposed" ? pick("，可以在方案中比较", "; ready to compare") : ""}`;
+  return <section className="agent-progress-rail" aria-live="polite" aria-label={pick("本轮处理记录", "Steps for this request")}><header><Sparkle weight="fill" /><span><strong>{pick("本轮处理情况", "What happened this time")}</strong><small>{pick("只显示实际完成或明确失败的步骤", "Only completed or explicitly failed steps are shown")}</small></span></header><ol>{latest.map((activity) => { const repairResolved = activity.status === "needs_repair" && repaired; const warning = failureStatuses.has(activity.status) || (activity.status === "needs_repair" && !repairResolved); const running = activity.status === "running"; const stateLabel = running ? pick("处理中", "In progress") : repairResolved ? pick("已修正", "Repaired") : warning ? pick("需要处理", "Needs attention") : pick("已完成", "Completed"); return <li key={`${activity.toolName}:${activity.attempt ?? "single"}`} className={warning ? "warning" : running ? "running" : "complete"}><i>{running ? <CircleNotch className="spin" /> : warning ? <WarningCircle weight="fill" /> : <CheckCircle weight="fill" />}</i><span><strong>{activityText(activity)}</strong><small>{stateLabel}</small></span></li>; })}</ol></section>;
 }
 
 function CandidatePhoto({ candidate }) {
@@ -1155,7 +1156,7 @@ function mobilityWithModeOverrides(mobility, overrides) {
 function itineraryStopLabel(stop, pick) {
   if (!stop) return pick("时间待补", "Time needed");
   const roles = {
-    intercity_arrival: pick("抵达", "Arrival"), stay_check_in: pick("入住", "Check-in"), stay_departure: pick("从住宿出发", "Leave stay"),
+    intercity_arrival: pick("抵达", "Arrival"), bag_drop: pick("寄存行李", "Bag drop"), stay_check_in: pick("入住", "Check-in"), stay_departure: pick("从住宿出发", "Leave stay"),
     stay_return: pick("返回住宿", "Return to stay"), meal: pick("用餐", "Meal"), activity: pick("游玩", "Activity"), local_transport: pick("市内移动", "Local transfer"),
   };
   const time = stop.startAt ? compactDateTime(stop.startAt) : stop.date;
@@ -1180,15 +1181,13 @@ function RouteWeatherDisclosure({ weather, onEdit }) {
   return <details className={`route-weather-disclosure ${active ? "watch" : "clear"}`}><summary><CloudSun weight="duotone" /><span><strong>{active ? pick("天气会影响这版行程", "Weather affects this plan") : pick("天气与行程", "Weather and this trip")}</strong><small>{[dateLabel, conditions.join(" / "), temperatureLabel].filter(Boolean).join(" · ") || pick("预报范围待明确", "Forecast window pending")}</small></span><span>{pick("查看提醒", "View advice")}<CaretDown /></span></summary><div><p>{summary}</p><WeatherPlanningCard weather={weather} onEdit={onEdit} /></div></details>;
 }
 
-function RoutePreviewPanel({ trip, plan, nodes, mobility, comparisonNodes = [], comparisonMobility = null, preview, previewStatus, previewIsCurrent, onFocusMap, onPreviewNode, onEditWeather, onRetryRoute }) {
+function RoutePreviewPanel({ trip, plan, nodes, mobility, comparisonNodes = [], comparisonMobility = null, preview, previewStatus, previewIsCurrent, routeModes = {}, onRouteModeChange, onFocusMap, onPreviewNode, onEditWeather, onOptimize, planningContext, onRetryRoute }) {
   const { locale, pick } = useUiLocale();
   const [focusNodeId, setFocusNodeId] = useState(null);
-  const [modeOverrides, setModeOverrides] = useState({});
   useEffect(() => {
     if (focusNodeId && !nodes.some((node) => node.nodeId === focusNodeId)) setFocusNodeId(null);
   }, [nodes, focusNodeId]);
-  useEffect(() => setModeOverrides({}), [mobility?.checkedAt, preview?.previewId]);
-  const displayMobility = useMemo(() => mobilityWithModeOverrides(mobility, modeOverrides), [mobility, modeOverrides]);
+  const displayMobility = useMemo(() => mobilityWithModeOverrides(mobility, routeModes), [mobility, routeModes]);
   const rows = routeTimeline(displayMobility, nodes, previewIsCurrent ? preview?.itinerary : displayMobility?.itinerary);
   const route = routeTotals(displayMobility);
   const baselineRoute = previewIsCurrent ? preview?.impact?.baseline?.route ?? null : null;
@@ -1222,15 +1221,17 @@ function RoutePreviewPanel({ trip, plan, nodes, mobility, comparisonNodes = [], 
       {previewStatus === "loading" ? <span className="route-recalculating"><CircleNotch className="spin" />{pick("正在重算多点路线…", "Recalculating the multi-stop route…")}</span> : null}
     </div>
     {isDraft ? <div className="route-trial-impact" aria-live="polite"><strong>{pick("试排影响", "Draft impact")}</strong>{previewStatus === "loading" ? <span>{pick("重算中…", "Recalculating…")}</span> : deltaParts.length ? deltaParts.map((part) => <span key={part.label} className={part.tone}>{part.label}</span>) : previewIsCurrent && preview?.impact?.baseline?.kind === "none" ? <span>{pick(`首次试排：${Math.round(route.totalMinutes)} 分钟 · 约 ¥${Math.round(route.estimatedFareCny)}`, `First draft: ${Math.round(route.totalMinutes)} min · about CNY ${Math.round(route.estimatedFareCny)}`)}</span> : <span>{pick("等待路线核验", "Waiting for route check")}</span>}{walkingTarget != null || transferTarget != null ? <em className={(walkingTarget != null && maxLegWalkingMeters > walkingTarget) || (transferTarget != null && maxLegTransfers > transferTarget) ? "warning" : "ok"}>{pick("体力校验", "Effort")} {walkingTarget != null ? `${Math.round(maxLegWalkingMeters)}/${walkingTarget}m` : ""}{transferTarget != null ? ` · ${maxLegTransfers}/${transferTarget}` : ""}{(walkingTarget == null || maxLegWalkingMeters <= walkingTarget) && (transferTarget == null || maxLegTransfers <= transferTarget) ? <CheckCircle weight="bold" /> : null}</em> : null}</div> : null}
+    {preview?.planningSource === "model_plan" && preview?.planSummary ? <div className="agent-trial-summary"><Sparkle weight="fill" /><span><strong>{pick("AI 已生成并核验这版站序", "AI generated and checked this stop order")}</strong><small>{preview.planSummary.objective}</small><em>{(preview.planSummary.priorities ?? []).slice(0, 3).join(" · ")}</em></span></div> : null}
+    {isDraft && preview?.planningSource === "conservative_fallback" ? <p className="route-planning-source"><Info weight="fill" />{pick("这是用于比较候选的快速连线，不代表 AI 已优化站序。", "This is a quick route for comparing options, not an AI-optimized stop order.")}</p> : null}
     {unresolvedNodes.length ? <div className="route-unresolved-warning"><WarningCircle weight="fill" /><span><strong>{pick("这次没有把所有试选地点接入路线", "Not every drafted place joined the route")}</strong><small>{unresolvedNodes.map((node) => node.title).join("、")}{pick(" 暂未成功定位；地图和时间合计不包含这些地点。", " could not be located, so the map and totals do not include them.")}</small></span><button type="button" onClick={onRetryRoute}><ArrowsClockwise />{pick("重算路线", "Retry route")}</button></div> : null}
-    <details className="route-stop-disclosure"><summary><span>{route.legCount || Math.max(0, rows.length - 1)} {pick("段移动", "legs")} · {route.totalMinutes ? `${Math.round(route.totalMinutes)} ${pick("分钟", "min")}` : "—"} · {Number.isFinite(route.walkingMeters) ? `${Math.round(route.walkingMeters)} m` : "—"} · {Number.isFinite(route.estimatedFareCny) && route.estimatedFareCny > 0 ? `¥${Math.round(route.estimatedFareCny)}` : "—"}</span><CaretDown /></summary><div className="route-stop-sheet"><BudgetBoard budget={activeBudget} previewDelta={budgetDelta} /><div className="route-context-grid">{walkingTarget != null || transferTarget != null ? <div className="route-traveler-fit within"><PersonSimpleWalk weight="duotone" /><span><strong>{pick("同行人体力校验", "Traveler effort")}</strong><small>{walkingTarget != null ? `${Math.round(maxLegWalkingMeters)}/${walkingTarget}m` : ""}{transferTarget != null ? ` · ${maxLegTransfers}/${transferTarget}` : ""}</small></span></div> : null}</div><section className="route-stop-timeline" aria-labelledby="route-stop-title"><header><span><strong id="route-stop-title">{pick("按时间看每一站", "Stops in time order")}</strong><small>{pick("建议时间可在确认前继续调整", "Suggested times can still be adjusted")}</small></span><button type="button" onClick={() => onEditWeather?.(`${pick("请根据这份按天试排，比较是否有更省时间、更少步行的顺序，并先解释再给可撤销建议：", "Review this day-by-day draft for a faster order with less walking. Explain first and return a reversible suggestion: ")} ${rows.map((row) => `${row.schedule?.date ?? ""} ${row.schedule?.startAt ?? "时间待核验"} ${row.schedule?.role ?? ""} ${row.node?.title ?? row.place?.label}`).join(" → ")}`, pick("询问更优顺序", "Ask about a better order"))}><Sparkle weight="fill" />{pick("向 AI 询问更优顺序", "Ask AI about a better order")}</button></header><ol>{rows.map(({ node, place, leg, schedule }, index) => {
+    <details className="route-stop-disclosure"><summary><span>{route.legCount || Math.max(0, rows.length - 1)} {pick("段移动", "legs")} · {route.totalMinutes ? `${Math.round(route.totalMinutes)} ${pick("分钟", "min")}` : "—"} · {Number.isFinite(route.walkingMeters) ? `${Math.round(route.walkingMeters)} m` : "—"} · {Number.isFinite(route.estimatedFareCny) && route.estimatedFareCny > 0 ? `¥${Math.round(route.estimatedFareCny)}` : "—"}</span><CaretDown /></summary><div className="route-stop-sheet"><BudgetBoard budget={activeBudget} previewDelta={budgetDelta} /><div className="route-context-grid">{walkingTarget != null || transferTarget != null ? <div className="route-traveler-fit within"><PersonSimpleWalk weight="duotone" /><span><strong>{pick("同行人体力校验", "Traveler effort")}</strong><small>{walkingTarget != null ? `${Math.round(maxLegWalkingMeters)}/${walkingTarget}m` : ""}{transferTarget != null ? ` · ${maxLegTransfers}/${transferTarget}` : ""}</small></span></div> : null}</div><section className="route-stop-timeline" aria-labelledby="route-stop-title"><header><span><strong id="route-stop-title">{pick("按时间看每一站", "Stops in time order")}</strong><small>{pick("建议时间可在确认前继续调整", "Suggested times can still be adjusted")}</small></span><button type="button" onClick={() => onOptimize?.(`${pick("请直接优化当前按天路线，比较先寄存行李、先入住或先游玩的取舍。保留固定抵达、预约和同行人限制，生成并核验一份可撤销试排：", "Optimize this day-by-day route now. Compare bag drop, check-in first, or sightseeing first; preserve fixed arrivals, reservations and traveler constraints, then return a checked reversible draft: ")} ${rows.map((row) => `${row.schedule?.date ?? ""} ${row.schedule?.startAt ?? "时间待核验"} ${row.schedule?.role ?? ""} ${row.node?.title ?? row.place?.label}`).join(" → ")}`, planningContext)}><Sparkle weight="fill" />{pick("AI 优化当前路线", "Optimize this route with AI")}</button></header><ol>{rows.map(({ node, place, leg, schedule }, index) => {
       const meta = domainMeta(node?.domain ?? "transport");
       const Icon = meta.icon;
       const recommended = leg?.alternatives?.find((alternative) => alternative.mode === leg.recommendedMode) ?? null;
       const alternatives = (leg?.alternatives ?? []).filter((alternative) => alternative.mode !== leg.recommendedMode).slice(0, 2);
       return <li key={schedule?.stopId ?? `${place?.nodeId ?? place?.label}-${index}`} className={node?.nodeId === focusNodeId ? "active" : ""}>
         <div className="route-stop"><button type="button" className="route-stop-main" onClick={() => node?.nodeId && setFocusNodeId(node.nodeId)}><span>{index + 1}</span><Icon weight="duotone" /><span><small>{schedule ? itineraryStopLabel(schedule, pick) : node ? scheduleLabel(node) : pick("时间待补", "Time needed")}</small><strong>{schedule?.role === "intercity_arrival" ? place?.label : node?.title || place?.label || pick("地点待核验", "Place needs checking")}</strong></span></button>{node ? <button type="button" className="route-stop-detail" onClick={() => onPreviewNode(node.nodeId)} aria-label={pick(`查看${node.title}详情`, `Open details for ${node.title}`)}><NavigationArrow /></button> : null}</div>
-        {leg ? <div className="route-leg"><div className="route-mode-tabs" aria-label={pick("比较这段路的交通方式", "Compare modes for this leg")}>{leg.alternatives.map((alternative) => <button key={alternative.mode} type="button" className={alternative.mode === leg.recommendedMode ? "active" : ""} aria-pressed={alternative.mode === leg.recommendedMode} onClick={() => setModeOverrides((current) => ({ ...current, [leg.legId]: alternative.mode }))}>{MOBILITY_MODE_LABELS[alternative.mode] || alternative.mode}</button>)}</div><strong>{recommended ? `${recommended.totalMinutes} ${pick("分钟", "min")}` : pick("路线待核验", "Route needs checking")}</strong>{recommended?.walkingMeters != null ? <small>{pick("步行", "Walk")} {Math.round(recommended.walkingMeters)} m{recommended.transfers != null ? ` · ${recommended.transfers} ${pick("次换乘", "transfers")}` : ""}{recommended.estimatedFareCny != null ? ` · ${pick("约", "about")} ¥${Math.round(recommended.estimatedFareCny)}` : ""}</small> : null}{alternatives.length ? <em>{alternatives.map((alternative) => `${MOBILITY_MODE_LABELS[alternative.mode] || alternative.mode} ${alternative.totalMinutes} min`).join(" / ")}</em> : null}</div> : null}
+        {leg ? <div className="route-leg"><div className="route-mode-tabs" aria-label={pick("比较这段路的交通方式", "Compare modes for this leg")}>{leg.alternatives.map((alternative) => <button key={alternative.mode} type="button" className={alternative.mode === leg.recommendedMode ? "active" : ""} aria-pressed={alternative.mode === leg.recommendedMode} onClick={() => onRouteModeChange?.(leg.legId, alternative.mode)}>{MOBILITY_MODE_LABELS[alternative.mode] || alternative.mode}</button>)}</div><strong>{recommended ? `${recommended.totalMinutes} ${pick("分钟", "min")}` : pick("路线待核验", "Route needs checking")}</strong>{recommended?.walkingMeters != null ? <small>{pick("步行", "Walk")} {Math.round(recommended.walkingMeters)} m{recommended.transfers != null ? ` · ${recommended.transfers} ${pick("次换乘", "transfers")}` : ""}{recommended.estimatedFareCny != null ? ` · ${pick("约", "about")} ¥${Math.round(recommended.estimatedFareCny)}` : ""}</small> : null}{alternatives.length ? <em>{alternatives.map((alternative) => `${MOBILITY_MODE_LABELS[alternative.mode] || alternative.mode} ${alternative.totalMinutes} min`).join(" / ")}</em> : null}</div> : null}
       </li>;
     })}</ol></section><RouteWeatherDisclosure weather={plan?.weather} onEdit={onEditWeather} /></div></details>
     {previewStatus === "error" ? <div className="route-preview-error"><WarningCircle weight="fill" /><span>{pick("这次路线没有完成核验，当前继续显示上一版完整路线。", "The new route was not verified, so the previous complete route remains visible.")}</span><button type="button" onClick={onRetryRoute}><ArrowsClockwise />{pick("重新核验路线", "Retry route")}</button></div> : null}
@@ -1238,21 +1239,26 @@ function RoutePreviewPanel({ trip, plan, nodes, mobility, comparisonNodes = [], 
   </aside>;
 }
 
-function useTripMobilityPreview({ trip, plan, proposal, acceptedItems, selections }) {
-  const [preview, setPreview] = useState(null);
+function useTripMobilityPreview({ trip, plan, proposal, acceptedItems, selections, agentTrial }) {
+  const [candidatePreview, setCandidatePreview] = useState(null);
+  const [modePreview, setModePreview] = useState(null);
+  const [routeModes, setRouteModes] = useState({});
   const [previewSelectionKey, setPreviewSelectionKey] = useState("");
   const [previewStatus, setPreviewStatus] = useState("idle");
   const [previewNonce, setPreviewNonce] = useState(0);
   const requestSequence = useRef(0);
   const previewCache = useRef(new Map());
   const pendingNodeIds = useMemo(() => new Set(PLANNING_FLOW.flatMap((domain) => (proposal?.byDomain?.[domain] ?? []).map((node) => node.nodeId))), [proposal]);
-  const activeSelections = useMemo(() => Object.fromEntries(Object.entries(selections).filter(([, nodeId]) => pendingNodeIds.has(nodeId))), [selections, pendingNodeIds]);
+  const uiSelections = useMemo(() => Object.fromEntries(Object.entries(selections).filter(([, nodeId]) => pendingNodeIds.has(nodeId))), [selections, pendingNodeIds]);
+  const agentPreview = agentTrial?.status === "trial_ready" && agentTrial.tripId === trip?.tripId && agentTrial.baseRevision === plan?.revision ? agentTrial : null;
+  const activeSelections = agentPreview?.accept?.selections ?? uiSelections;
   const selectionKey = JSON.stringify(Object.entries(activeSelections).sort(([left], [right]) => left.localeCompare(right)));
 
   useEffect(() => {
+    if (agentPreview) return undefined;
     if (!trip?.tripId || !Object.keys(activeSelections).length) {
       requestSequence.current += 1;
-      setPreview(null);
+      setCandidatePreview(null);
       setPreviewSelectionKey("");
       setPreviewStatus("idle");
       return undefined;
@@ -1260,7 +1266,7 @@ function useTripMobilityPreview({ trip, plan, proposal, acceptedItems, selection
     const cacheKey = `${trip.tripId}:${plan?.revision}:${selectionKey}:${previewNonce}`;
     const cached = previewCache.current.get(cacheKey);
     if (cached) {
-      setPreview(cached);
+      setCandidatePreview(cached);
       setPreviewSelectionKey(selectionKey);
       setPreviewStatus(["completed", "partial"].includes(cached.status) ? "ready" : "blocked");
       return undefined;
@@ -1275,7 +1281,7 @@ function useTripMobilityPreview({ trip, plan, proposal, acceptedItems, selection
       api.previewMobility(trip.tripId, plan?.revision, activeSelections, controller.signal).then((result) => {
         if (requestId !== requestSequence.current) return;
         previewCache.current.set(cacheKey, result);
-        setPreview(result);
+        setCandidatePreview(result);
         setPreviewSelectionKey(selectionKey);
         setPreviewStatus(["completed", "partial"].includes(result.status) ? "ready" : "blocked");
       }).catch(() => {
@@ -1287,7 +1293,29 @@ function useTripMobilityPreview({ trip, plan, proposal, acceptedItems, selection
       window.clearTimeout(requestTimeout);
       controller?.abort();
     };
-  }, [trip?.tripId, plan?.revision, selectionKey, previewNonce]);
+  }, [trip?.tripId, plan?.revision, selectionKey, previewNonce, agentPreview]);
+
+  const basePreview = agentPreview ?? candidatePreview;
+  useEffect(() => {
+    setRouteModes({});
+    setModePreview(null);
+  }, [basePreview?.previewId]);
+  useEffect(() => {
+    if (!trip?.tripId || !basePreview?.previewId || !Object.keys(routeModes).length) {
+      setModePreview(null);
+      return undefined;
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      api.previewMobility(trip.tripId, plan?.revision, activeSelections, controller.signal, basePreview.previewId, routeModes)
+        .then((result) => setModePreview(result))
+        .catch(() => setModePreview(null));
+    }, 160);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [trip?.tripId, plan?.revision, basePreview?.previewId, selectionKey, JSON.stringify(routeModes)]);
+
+  const preview = modePreview ?? basePreview;
+  const effectivePreviewStatus = agentPreview ? (preview?.feasibility?.canConfirm ? "ready" : "blocked") : previewStatus;
 
   const draftNodes = useMemo(() => {
     if (preview?.selectedNodes?.length) return preview.selectedNodes;
@@ -1296,17 +1324,17 @@ function useTripMobilityPreview({ trip, plan, proposal, acceptedItems, selection
     const chosen = PLANNING_FLOW.flatMap((domain) => (proposal?.byDomain?.[domain] ?? []).filter((node) => activeSelections[domain] === node.nodeId).map((node) => ({ ...node, domain })));
     return [...new Map([...kept, ...chosen].map((node) => [node.nodeId, node])).values()].sort((left, right) => scheduleSortValue(left) - scheduleSortValue(right));
   }, [preview, acceptedItems, activeSelections, proposal]);
-  const previewIsCurrent = Boolean(preview && previewSelectionKey === selectionKey);
-  const routeNodes = preview?.selectedNodes?.length ? preview.selectedNodes : previewStatus === "error" && acceptedItems.length ? acceptedItems : draftNodes;
-  const routeMobility = Object.keys(activeSelections).length ? preview?.mobility ?? plan?.mobility : plan?.mobility;
+  const previewIsCurrent = Boolean(preview && (agentPreview || previewSelectionKey === selectionKey));
+  const routeNodes = preview?.selectedNodes?.length ? preview.selectedNodes : effectivePreviewStatus === "error" && acceptedItems.length ? acceptedItems : draftNodes;
+  const routeMobility = agentPreview || Object.keys(activeSelections).length ? preview?.mobility ?? plan?.mobility : plan?.mobility;
   const routeHasUnresolvedChoices = previewIsCurrent && (preview?.mobility?.coverage?.unresolvedNodeIds?.length ?? 0) > 0;
   const routeCanConfirm = previewIsCurrent && preview?.feasibility?.canConfirm === true;
   return {
     activeSelections,
     selectionKey,
-    selectedCount: Object.keys(activeSelections).length,
+    selectedCount: agentPreview ? 1 : Object.keys(activeSelections).length,
     preview,
-    previewStatus,
+    previewStatus: effectivePreviewStatus,
     previewIsCurrent,
     routeNodes,
     routeMobility,
@@ -1314,18 +1342,22 @@ function useTripMobilityPreview({ trip, plan, proposal, acceptedItems, selection
     routeCanConfirm,
     routeBlocker: previewIsCurrent ? preview?.feasibility?.primaryBlocker ?? null : null,
     previewId: previewIsCurrent ? preview?.previewId ?? null : null,
+    routeModes,
+    setRouteMode: (legId, mode) => setRouteModes((current) => ({ ...current, [legId]: mode })),
+    agentTrial: agentPreview,
+    accept: agentPreview?.accept ?? null,
     retry: () => setPreviewNonce((current) => current + 1),
   };
 }
 
-function PlanningWorkbench({ trip, plan, proposal, acceptedItems, selections, onSelectCandidate, previewModel, onPreviewCandidate, onAccept, onAskAgent, onFocusMap, onUpdateReadiness, onRequestLogin, onShowMap, loading }) {
+function PlanningWorkbench({ trip, plan, proposal, acceptedItems, selections, onSelectCandidate, previewModel, onPreviewCandidate, onAccept, onAskAgent, onRunPlanning, onClearAgentTrial, onFocusMap, onUpdateReadiness, onRequestLogin, onShowMap, loading, planningRequestActive }) {
   const { locale, pick } = useUiLocale();
   const [activeDomain, setActiveDomain] = useState("stay");
   const [comparisonOpen, setComparisonOpen] = useState(false);
   const [showAllCandidates, setShowAllCandidates] = useState(false);
   const domainFocusRef = useRef(null);
   const acceptedByDomain = useMemo(() => Object.fromEntries(PLANNING_FLOW.map((domain) => [domain, acceptedItems.filter((node) => node.domain === domain)])), [acceptedItems]);
-  const { activeSelections, selectedCount, preview, previewStatus, previewIsCurrent, routeNodes, routeMobility, routeHasUnresolvedChoices, routeCanConfirm, routeBlocker, previewId } = previewModel;
+  const { activeSelections, selectedCount, preview, previewStatus, previewIsCurrent, routeNodes, routeMobility, routeHasUnresolvedChoices, routeCanConfirm, routeBlocker, previewId, routeModes, setRouteMode, agentTrial, accept } = previewModel;
   const replacingCount = Object.keys(activeSelections).filter((domain) => acceptedByDomain[domain]?.length).length;
   const confirmedCount = PLANNING_FLOW.filter((domain) => acceptedByDomain[domain]?.length).length;
   const selectionOverview = PLANNING_FLOW.map((domain) => {
@@ -1364,6 +1396,7 @@ function PlanningWorkbench({ trip, plan, proposal, acceptedItems, selections, on
     return () => window.removeEventListener("keydown", handleComparisonEscape);
   }, [comparisonOpen, selectedCount]);
   return <section className={`planning-workbench ${comparisonOpen ? "comparison-open" : "overview-open"} ${selectedCount ? "trial-active" : ""}`} aria-label={pick("旅行规划工作台", "Trip planning workspace")}>
+    {planningRequestActive ? <div className="planning-live-status" role="status"><CircleNotch className="spin" /><span><strong>{pick("AI 正在生成站序并核验真实路线", "AI is building the stop order and checking real routes")}</strong><small>{pick("当前方案保持不变；如果发现冲突，只会修正一次。", "The current plan stays in place; one bounded repair is allowed if a conflict is found.")}</small></span></div> : null}
     <div className="planning-workbench-layout"><div className="planning-decision-panel">
       {!comparisonOpen ? <section className="planning-overview-view" aria-label={pick("整趟安排", "Trip outline")}>
         <header className="decision-view-header"><h2 id="planning-workbench-title">{pick("整趟安排", "Trip outline")}</h2><p>{pick("先看整趟，再进入一个环节比较替代方案", "Review the whole trip, then compare one part")}</p></header>
@@ -1385,8 +1418,8 @@ function PlanningWorkbench({ trip, plan, proposal, acceptedItems, selections, on
         </div>
         <p className="comparison-source-note">{pick("这些候选不会改动行程，确认后才写入。", "These options do not change the trip until you confirm.")} {proposal?.providerLabel ? `${pick("来源", "Source")}: ${consumerProviderLabel(proposal.providerLabel)}` : ""}{activeDomain === "transport" && proposal?.caveats?.find((item) => /高铁|无票班次/u.test(item)) ? <strong>{proposal.caveats.find((item) => /高铁|无票班次/u.test(item))}</strong> : null}</p>
       </section>}
-    </div><RoutePreviewPanel trip={trip} plan={plan} nodes={routeNodes} comparisonNodes={acceptedItems} mobility={routeMobility} comparisonMobility={plan?.mobility} preview={preview} previewStatus={previewStatus} previewIsCurrent={previewIsCurrent} onFocusMap={onFocusMap} onPreviewNode={onPreviewCandidate} onEditWeather={onAskAgent} onRetryRoute={previewModel.retry} /></div>
-    {selectedCount ? <footer className={`planning-confirm-bar ${routeBlocker ? "blocked" : ""}`}><button type="button" className="keep-current-button" onClick={() => Object.keys(activeSelections).forEach((domain) => onSelectCandidate(domain, null))}>{pick("保持当前", "Keep current")}</button><span>{routeBlocker || pick("试排不会修改已确认行程", "Drafting does not change the confirmed trip")}</span><button type="button" className="button primary" disabled={loading || previewStatus !== "ready" || routeHasUnresolvedChoices || !routeCanConfirm} onClick={() => proposal?.proposalId && onAccept(proposal.proposalId, activeSelections, { partial: true, previewId, baseRevision: plan?.revision })}>{loading || previewStatus === "loading" ? <CircleNotch className="spin" /> : null}{routeBlocker ? pick("暂不能采用", "Cannot use yet") : pick("采用此方案", "Use this option")}</button></footer> : null}
+    </div><RoutePreviewPanel trip={trip} plan={plan} nodes={routeNodes} comparisonNodes={acceptedItems} mobility={routeMobility} comparisonMobility={plan?.mobility} preview={preview} previewStatus={previewStatus} previewIsCurrent={previewIsCurrent} routeModes={routeModes} onRouteModeChange={setRouteMode} onFocusMap={onFocusMap} onPreviewNode={onPreviewCandidate} onEditWeather={onAskAgent} onOptimize={onRunPlanning} planningContext={{ proposalId: agentTrial?.proposalId ?? proposal?.proposalId ?? null, previewId, selections: activeSelections, routeModes, currentOrder: (preview?.itinerary?.stops ?? []).map((stop) => stop.nodeId) }} onRetryRoute={previewModel.retry} /></div>
+    {selectedCount ? <footer className={`planning-confirm-bar ${routeBlocker ? "blocked" : ""} ${agentTrial ? "agent-trial" : ""}`}><button type="button" className="keep-current-button" onClick={() => { if (agentTrial) onClearAgentTrial?.(); else Object.keys(activeSelections).forEach((domain) => onSelectCandidate(domain, null)); }}>{pick("保持当前", "Keep current")}</button>{agentTrial ? <button type="button" className="continue-adjust-button" onClick={() => onAskAgent(pick("继续调整这份 AI 优化试排：", "Continue adjusting this AI-optimized draft:"), pick("继续调整路线", "Adjust route"))}>{pick("继续调整", "Keep adjusting")}</button> : null}<span>{routeBlocker || (agentTrial ? pick("AI 试排已核验，但尚未写入行程", "The AI draft is checked but not yet in your trip") : pick("试排不会修改已确认行程", "Drafting does not change the confirmed trip"))}</span><button type="button" className="button primary" disabled={loading || previewStatus !== "ready" || routeHasUnresolvedChoices || !routeCanConfirm} onClick={() => { const target = agentTrial ? accept : proposal?.proposalId ? { proposalId: proposal.proposalId, selections: activeSelections, partial: true, previewId, baseRevision: plan?.revision } : null; if (target) onAccept(target.proposalId, target.selections, { partial: target.partial, previewId, baseRevision: target.baseRevision, routeModes }); }}>{loading || previewStatus === "loading" ? <CircleNotch className="spin" /> : null}{routeBlocker ? pick("暂不能采用", "Cannot use yet") : agentTrial ? pick("采用优化方案", "Use optimized plan") : pick("采用此方案", "Use this option")}</button></footer> : null}
   </section>;
 }
 
@@ -1429,15 +1462,13 @@ function TodayPanel({ trip, plan, nodes, onShowItinerary, onPrefill }) {
   </section>;
 }
 
-function MobileTrialMapPanel({ trip, plan, acceptedItems, previewModel, onKeep, onAdopt, onPreviewNode, onOptimize, loading }) {
+function MobileTrialMapPanel({ trip, plan, acceptedItems, previewModel, onKeep, onAdopt, onPreviewNode, onOptimize, loading, planningRequestActive }) {
   const { locale, pick } = useUiLocale();
   const [expanded, setExpanded] = useState(false);
-  const [modeOverrides, setModeOverrides] = useState({});
   const dragStartRef = useRef(null);
   const dragHandledRef = useRef(false);
-  const { preview, previewStatus, previewIsCurrent, routeNodes, routeMobility } = previewModel;
-  useEffect(() => setModeOverrides({}), [preview?.previewId]);
-  const displayMobility = useMemo(() => mobilityWithModeOverrides(routeMobility, modeOverrides), [routeMobility, modeOverrides]);
+  const { preview, previewStatus, previewIsCurrent, routeNodes, routeMobility, routeModes, setRouteMode, agentTrial } = previewModel;
+  const displayMobility = useMemo(() => mobilityWithModeOverrides(routeMobility, routeModes), [routeMobility, routeModes]);
   const rows = routeTimeline(displayMobility, routeNodes, preview?.itinerary);
   const route = routeTotals(displayMobility);
   const baselineRoute = previewIsCurrent ? preview?.impact?.baseline?.route ?? null : null;
@@ -1452,9 +1483,10 @@ function MobileTrialMapPanel({ trip, plan, acceptedItems, previewModel, onKeep, 
     preview?.impact?.budgetDelta?.estimated ? { label: `${pick("整趟", "Trip")} Δ ${preview.impact.budgetDelta.estimated > 0 ? "+" : "−"}¥${Math.abs(Math.round(preview.impact.budgetDelta.estimated))}`, tone: preview.impact.budgetDelta.estimated > 0 ? "up" : "down" } : null,
   ].filter(Boolean) : [];
   return <section className={`mobile-trial-map-panel ${expanded ? "expanded" : "compact"}`} aria-label={pick("地图试排", "Map preview")}>
+    {planningRequestActive ? <div className="mobile-planning-live-status" role="status"><CircleNotch className="spin" />{pick("AI 正在生成并核验路线，当前方案保持不变", "AI is generating and checking the route; the current plan remains")}</div> : null}
     <div className="mobile-trial-map-canvas"><TripDecisionMap nodes={routeNodes} comparisonNodes={acceptedItems} mobility={displayMobility} comparisonMobility={plan?.mobility} activeNodeId={null} onFocusNode={() => {}} tripId={trip?.tripId} staticMapAvailable={plan?.mapPreviewAvailable === true} label={pick("当前与试排路线地图", "Current and draft route map")} locale={locale} /><div className="mobile-route-legend"><span><i className="trial" />{pick("试排路线", "Draft route")}</span><span><i className="current" />{pick("当前路线", "Current route")}</span></div></div>
-    <section className="mobile-route-sheet"><button type="button" className="mobile-route-grip" onClick={() => { if (dragHandledRef.current) { dragHandledRef.current = false; return; } setExpanded((current) => !current); }} onPointerDown={(event) => { dragHandledRef.current = false; dragStartRef.current = event.clientY; event.currentTarget.setPointerCapture?.(event.pointerId); }} onPointerUp={(event) => { const start = dragStartRef.current; dragStartRef.current = null; if (start == null) return; const deltaY = event.clientY - start; if (deltaY < -36) { dragHandledRef.current = true; setExpanded(true); } else if (deltaY > 36) { dragHandledRef.current = true; setExpanded(false); } }} onPointerCancel={() => { dragStartRef.current = null; dragHandledRef.current = false; }} aria-label={expanded ? pick("收起路线详情", "Collapse route details") : pick("展开路线详情", "Expand route details")} aria-expanded={expanded}><span /></button><div className="mobile-route-impact"><strong>{pick("试排影响", "Draft impact")}</strong>{previewStatus === "loading" ? <span>{pick("重算中…", "Recalculating…")}</span> : impactParts.length ? impactParts.map((part) => <span key={part.label} className={part.tone}>{part.label}</span>) : previewIsCurrent && preview?.impact?.baseline?.kind === "none" ? <span>{pick(`首次试排 ${Math.round(route.totalMinutes)} 分钟 · 约 ¥${Math.round(route.estimatedFareCny)}`, `First draft ${Math.round(route.totalMinutes)} min · about CNY ${Math.round(route.estimatedFareCny)}`)}</span> : <span>{pick("等待核验", "Waiting")}</span>}{walkingTarget != null ? <em className={maxWalking > walkingTarget ? "warning" : "ok"}>{pick("体力", "Effort")} {Math.round(maxWalking)}/{walkingTarget}m</em> : null}</div>{expanded && rows.length > 2 ? <button type="button" className="mobile-route-optimize" onClick={() => onOptimize?.(`${pick("请根据这份按天试排，比较是否有更省时间、更少步行的顺序，并先解释再给可撤销建议：", "Review this day-by-day draft for a faster order with less walking. Explain first and return a reversible suggestion: ")} ${rows.map((row) => `${row.schedule?.date ?? ""} ${row.schedule?.startAt ?? "时间待核验"} ${row.schedule?.role ?? ""} ${row.node?.title ?? row.place?.label}`).join(" → ")}`, pick("询问更优顺序", "Ask about a better order"))}><Sparkle weight="fill" />{pick("向 AI 询问更优顺序", "Ask AI about a better order")}</button> : null}<div className="mobile-route-stops">{rows.map(({ node, place, leg, schedule }, index) => { const recommended = leg?.alternatives?.find((alternative) => alternative.mode === leg.recommendedMode); return <div className="mobile-route-stop" key={schedule?.stopId ?? `${place?.nodeId ?? place?.label}-${index}`}><button type="button" onClick={() => node && onPreviewNode(node.nodeId)}><span>{index + 1}</span><span><strong>{schedule?.role === "intercity_arrival" ? place?.label : node?.title || place?.label}</strong><small>{schedule ? itineraryStopLabel(schedule, pick) : scheduleLabel(node)}</small></span><time>{schedule?.startAt ? compactDateTime(schedule.startAt).split(" ").at(-1) : ""}</time></button>{expanded && leg?.alternatives?.length ? <div className="mobile-route-modes">{leg.alternatives.map((alternative) => <button type="button" key={alternative.mode} className={alternative.mode === leg.recommendedMode ? "active" : ""} onClick={() => setModeOverrides((current) => ({ ...current, [leg.legId]: alternative.mode }))}>{MOBILITY_MODE_LABELS[alternative.mode] || alternative.mode}<small>{alternative.totalMinutes} min · {Math.round(alternative.walkingMeters ?? 0)}m{alternative.estimatedFareCny != null ? ` · ¥${Math.round(alternative.estimatedFareCny)}` : ""}</small></button>)}</div> : null}</div>; })}</div></section>
-    {previewModel.routeBlocker ? <p className="mobile-route-blocker" role="alert"><WarningCircle weight="fill" />{previewModel.routeBlocker}</p> : null}<footer className="mobile-trial-confirm"><button type="button" onClick={onKeep}>{pick("保持当前", "Keep current")}</button><button type="button" className="primary" disabled={loading || previewStatus !== "ready" || previewModel.routeHasUnresolvedChoices || !previewModel.routeCanConfirm} onClick={onAdopt}>{loading || previewStatus === "loading" ? <CircleNotch className="spin" /> : null}{previewModel.routeBlocker ? pick("暂不能采用", "Cannot use yet") : pick("采用此方案", "Use this option")}</button></footer>
+    <section className="mobile-route-sheet"><button type="button" className="mobile-route-grip" onClick={() => { if (dragHandledRef.current) { dragHandledRef.current = false; return; } setExpanded((current) => !current); }} onPointerDown={(event) => { dragHandledRef.current = false; dragStartRef.current = event.clientY; event.currentTarget.setPointerCapture?.(event.pointerId); }} onPointerUp={(event) => { const start = dragStartRef.current; dragStartRef.current = null; if (start == null) return; const deltaY = event.clientY - start; if (deltaY < -36) { dragHandledRef.current = true; setExpanded(true); } else if (deltaY > 36) { dragHandledRef.current = true; setExpanded(false); } }} onPointerCancel={() => { dragStartRef.current = null; dragHandledRef.current = false; }} aria-label={expanded ? pick("收起路线详情", "Collapse route details") : pick("展开路线详情", "Expand route details")} aria-expanded={expanded}><span /></button><div className="mobile-route-impact"><strong>{agentTrial ? pick("AI 优化影响", "AI optimization impact") : pick("试排影响", "Draft impact")}</strong>{previewStatus === "loading" ? <span>{pick("重算中…", "Recalculating…")}</span> : impactParts.length ? impactParts.map((part) => <span key={part.label} className={part.tone}>{part.label}</span>) : previewIsCurrent && preview?.impact?.baseline?.kind === "none" ? <span>{pick(`首次试排 ${Math.round(route.totalMinutes)} 分钟 · 约 ¥${Math.round(route.estimatedFareCny)}`, `First draft ${Math.round(route.totalMinutes)} min · about CNY ${Math.round(route.estimatedFareCny)}`)}</span> : <span>{pick("等待核验", "Waiting")}</span>}{walkingTarget != null ? <em className={maxWalking > walkingTarget ? "warning" : "ok"}>{pick("体力", "Effort")} {Math.round(maxWalking)}/{walkingTarget}m</em> : null}</div>{agentTrial ? <p className="mobile-agent-trial-reason"><Sparkle weight="fill" />{preview?.planSummary?.objective}</p> : null}{expanded && rows.length > 2 ? <button type="button" className="mobile-route-optimize" onClick={() => onOptimize?.(`${pick("请直接优化当前按天路线，比较先寄存行李、先入住或先游玩的取舍。保留固定抵达、预约和同行人限制，并生成核验后的可撤销试排：", "Optimize this day-by-day route now. Compare bag drop, check-in first, or sightseeing first; preserve fixed arrivals, reservations and traveler constraints, then return a checked reversible draft: ")} ${rows.map((row) => `${row.schedule?.date ?? ""} ${row.schedule?.startAt ?? "时间待核验"} ${row.schedule?.role ?? ""} ${row.node?.title ?? row.place?.label}`).join(" → ")}`, { proposalId: agentTrial?.proposalId ?? null, previewId: preview?.previewId ?? null, selections: previewModel.activeSelections, routeModes, currentOrder: rows.map((row) => row.schedule?.nodeId ?? row.node?.nodeId).filter(Boolean) })}><Sparkle weight="fill" />{pick("AI 优化当前路线", "Optimize this route with AI")}</button> : null}<div className="mobile-route-stops">{rows.map(({ node, place, leg, schedule }, index) => { const recommended = leg?.alternatives?.find((alternative) => alternative.mode === leg.recommendedMode); return <div className="mobile-route-stop" key={schedule?.stopId ?? `${place?.nodeId ?? place?.label}-${index}`}><button type="button" onClick={() => node && onPreviewNode(node.nodeId)}><span>{index + 1}</span><span><strong>{schedule?.role === "intercity_arrival" ? place?.label : node?.title || place?.label}</strong><small>{schedule ? itineraryStopLabel(schedule, pick) : scheduleLabel(node)}</small></span><time>{schedule?.startAt ? compactDateTime(schedule.startAt).split(" ").at(-1) : ""}</time></button>{expanded && leg?.alternatives?.length ? <div className="mobile-route-modes">{leg.alternatives.map((alternative) => <button type="button" key={alternative.mode} className={alternative.mode === leg.recommendedMode ? "active" : ""} onClick={() => setRouteMode(leg.legId, alternative.mode)}>{MOBILITY_MODE_LABELS[alternative.mode] || alternative.mode}<small>{alternative.totalMinutes} min · {Math.round(alternative.walkingMeters ?? 0)}m{alternative.estimatedFareCny != null ? ` · ¥${Math.round(alternative.estimatedFareCny)}` : ""}</small></button>)}</div> : null}</div>; })}</div></section>
+    {previewModel.routeBlocker ? <p className="mobile-route-blocker" role="alert"><WarningCircle weight="fill" />{previewModel.routeBlocker}</p> : null}<footer className="mobile-trial-confirm"><button type="button" onClick={onKeep}>{pick("保持当前", "Keep current")}</button><button type="button" className="primary" disabled={loading || previewStatus !== "ready" || previewModel.routeHasUnresolvedChoices || !previewModel.routeCanConfirm} onClick={onAdopt}>{loading || previewStatus === "loading" ? <CircleNotch className="spin" /> : null}{previewModel.routeBlocker ? pick("暂不能采用", "Cannot use yet") : agentTrial ? pick("采用优化方案", "Use optimized plan") : pick("采用此方案", "Use this option")}</button></footer>
   </section>;
 }
 
@@ -1472,7 +1504,7 @@ function TripWorkspaceEmpty({ hasMessages = false }) {
   return <section className="workspace-zero-state workbench-zero-state"><div className="workspace-zero-copy"><MapTrifold weight="duotone" /><h2>{hasMessages ? pick("需求已经保留，可以继续补充", "Your request is saved. Continue when ready.") : pick("地图和行程会在这里出现", "Your map and trip will appear here")}</h2><p>{hasMessages ? pick("资料恢复或信息补齐后，旅行助手会从当前对话继续，不用重新填写。", "When sources recover or details are complete, the Agent continues from this conversation.") : pick("旅行助手理解需求后，会把地点、路线、准备事项和待确认选择放在同一个工作区。", "Once the Agent understands your request, places, routes, preparation and choices stay in one workspace.")}</p><ul><li><MapPin weight="duotone" /><span><strong>{pick("先看空间关系", "See the spatial picture")}</strong><small>{pick("住宿锚点、到达方式和地点分布", "Stay anchor, arrival and place distribution")}</small></span></li><li><Compass weight="duotone" /><span><strong>{pick("只比较关键取舍", "Compare meaningful tradeoffs")}</strong><small>{pick("时间、预算、步行和同行人适配", "Time, budget, walking and traveler fit")}</small></span></li><li><CheckCircle weight="duotone" /><span><strong>{pick("确认后才加入旅行", "Confirm before anything changes")}</strong><small>{pick("缺失资料和风险始终明确显示", "Missing evidence and risks stay visible")}</small></span></li></ul></div><div className="workbench-zero-skeleton" aria-hidden="true"><div className="zero-map-grid"><i /><i /><i /><span /></div><div className="zero-decision-lines">{PLANNING_FLOW.map((domain) => { const Icon = domainMeta(domain).icon; return <span key={domain}><Icon weight="duotone" /><i /><i /></span>; })}</div></div></section>;
 }
 
-function PlanCanvas({ conversation, trip, plan, tripRecovery, dataUnavailable, onRefresh, onRetryResearch, onRecoverTrip, onAcceptProposal, onRejectProposal, onSubmitFeedback, onUpdateReadiness, onRequestLogin, onPrefill, onFocusMap, onTrialStateChange, activeMobileView, onMobileViewChange, loading }) {
+function PlanCanvas({ conversation, trip, plan, agentTrial, planningRequestActive, tripRecovery, dataUnavailable, onRefresh, onRetryResearch, onRecoverTrip, onAcceptProposal, onRejectProposal, onSubmitFeedback, onUpdateReadiness, onRequestLogin, onPrefill, onRunPlanning, onClearAgentTrial, onFocusMap, onTrialStateChange, activeMobileView, onMobileViewChange, loading }) {
   const { locale, pick } = useUiLocale();
   const items = useMemo(() => Object.entries(plan?.byDomain ?? {})
     .flatMap(([domain, nodes]) => nodes.filter((node) => node.selected).map((node) => ({ ...node, domain })))
@@ -1485,7 +1517,7 @@ function PlanCanvas({ conversation, trip, plan, tripRecovery, dataUnavailable, o
   const proposalSelectionFingerprint = proposal ? `${proposal.proposalId}:${proposal.baseRevision}:${proposalCandidates.map((node) => node.nodeId).join(",")}` : "";
   const acceptedSelectionFingerprint = items.map((node) => `${node.domain}:${node.nodeId}`).join(",");
   useEffect(() => setSelections({}), [proposalSelectionFingerprint, acceptedSelectionFingerprint]);
-  const previewModel = useTripMobilityPreview({ trip, plan, proposal, acceptedItems: items, selections });
+  const previewModel = useTripMobilityPreview({ trip, plan, proposal, acceptedItems: items, selections, agentTrial });
   useEffect(() => onTrialStateChange?.({ active: previewModel.selectedCount > 0, count: previewModel.selectedCount, status: previewModel.previewStatus }), [previewModel.selectedCount, previewModel.previewStatus, onTrialStateChange]);
   useEffect(() => {
     const handleEscape = (event) => {
@@ -1496,6 +1528,7 @@ function PlanCanvas({ conversation, trip, plan, tripRecovery, dataUnavailable, o
     return () => window.removeEventListener("keydown", handleEscape);
   }, [previewModel.selectedCount]);
   const selectCandidate = (domain, nodeId) => {
+    if (agentTrial) onClearAgentTrial?.();
     setSelections((current) => {
       const next = { ...current };
       if (nodeId) next[domain] = nodeId;
@@ -1511,13 +1544,13 @@ function PlanCanvas({ conversation, trip, plan, tripRecovery, dataUnavailable, o
   const previewDetailNode = previewModel.preview?.selectedNodes?.find((node) => node.nodeId === detailNodeId) ?? null;
   const detailNode = baseDetailNode && previewDetailNode ? { ...baseDetailNode, ...previewDetailNode, operability: { ...(baseDetailNode.operability ?? {}), ...(previewDetailNode.operability ?? {}) } } : baseDetailNode;
   return <section className={`trip-workspace mobile-mode-${activeMobileView}`} id="trip-plan-canvas">
-    {trip && activeMobileView === "map" ? previewModel.selectedCount ? <MobileTrialMapPanel trip={trip} plan={plan} acceptedItems={items} previewModel={previewModel} onKeep={() => setSelections({})} onAdopt={() => proposal?.proposalId && onAcceptProposal(proposal.proposalId, previewModel.activeSelections, { partial: true, previewId: previewModel.previewId, baseRevision: plan?.revision })} onPreviewNode={setDetailNodeId} onOptimize={onPrefill} loading={loading} /> : <TodayPanel trip={trip} plan={plan} nodes={items} onShowItinerary={() => onMobileViewChange("itinerary")} onPrefill={onPrefill} /> : !trip ? tripRecovery ? <div className="workspace-empty recovery-launchpad">
+    {trip && activeMobileView === "map" ? previewModel.selectedCount ? <MobileTrialMapPanel trip={trip} plan={plan} acceptedItems={items} previewModel={previewModel} onKeep={() => { if (previewModel.agentTrial) onClearAgentTrial?.(); else setSelections({}); }} onAdopt={() => { const target = previewModel.agentTrial ? previewModel.accept : proposal?.proposalId ? { proposalId: proposal.proposalId, selections: previewModel.activeSelections, partial: true, previewId: previewModel.previewId, baseRevision: plan?.revision } : null; if (target) onAcceptProposal(target.proposalId, target.selections, { partial: target.partial, previewId: previewModel.previewId, baseRevision: target.baseRevision, routeModes: previewModel.routeModes }); }} onPreviewNode={setDetailNodeId} onOptimize={onRunPlanning} loading={loading} planningRequestActive={planningRequestActive} /> : <TodayPanel trip={trip} plan={plan} nodes={items} onShowItinerary={() => onMobileViewChange("itinerary")} onPrefill={onPrefill} /> : !trip ? tripRecovery ? <div className="workspace-empty recovery-launchpad">
       <div className="recovery-card"><span className="recovery-icon"><ArrowsClockwise weight="bold" /></span><h2>{pick("旅行要求还在，草案需要重新建立", "Your requirements are safe; the trip draft needs rebuilding")}</h2><p>{pick("这段历史对话保存完整，但原来的旅行草案已经丢失。重新建立后，助手会沿用你说过的目的地、同行人和偏好，不需要从头填写。", "The conversation is intact, but its trip draft is missing. Rebuilding will reuse the destination, travelers and preferences you already shared.")}</p><button className="button primary" type="button" onClick={onRecoverTrip} disabled={loading}>{loading ? <CircleNotch className="spin" /> : <ArrowsClockwise />}{pick("恢复并继续规划", "Restore and continue")}</button><small>{pick("不会自动确认、购买或覆盖其他旅行。", "This will not confirm, purchase or overwrite another trip.")}</small></div>
       <div className="launchpad-preview"><div className="launch-domain-grid">{DOMAIN_ITEMS.map(({ key, icon: Icon }) => <div key={key}><Icon weight="duotone" /><strong>{domainLabel(key, locale)}</strong><span>{key === "transport" ? pick("路线与换乘", "Routes and transfers") : key === "stay" ? pick("位置与住宿", "Location and stays") : key === "food" ? pick("本地餐饮", "Local food") : pick("体验与节奏", "Experiences and pace")}</span></div>)}</div><p><MapTrifold />{pick("地图、地点图片、路线和设施会与候选一起出现。", "Maps, place photos, routes and facilities appear with the options.")}</p></div>
     </div> : loading ? <PlanningWorkspaceSkeleton /> : <TripWorkspaceEmpty hasMessages={Boolean(conversation?.messages?.length)} /> : <>
       <section className="itinerary-pane" aria-label={pick("旅行安排", "Trip plan")}>
         {proposal || items.length ? <>
-          <PlanningWorkbench trip={trip} plan={plan} proposal={proposal} acceptedItems={items} selections={selections} onSelectCandidate={selectCandidate} previewModel={previewModel} onPreviewCandidate={setDetailNodeId} onAccept={onAcceptProposal} onAskAgent={onPrefill} onFocusMap={onFocusMap} onUpdateReadiness={onUpdateReadiness} onRequestLogin={onRequestLogin} onShowMap={() => onMobileViewChange("map")} loading={loading} />
+          <PlanningWorkbench trip={trip} plan={plan} proposal={proposal} acceptedItems={items} selections={selections} onSelectCandidate={selectCandidate} previewModel={previewModel} onPreviewCandidate={setDetailNodeId} onAccept={onAcceptProposal} onAskAgent={onPrefill} onRunPlanning={onRunPlanning} onClearAgentTrial={onClearAgentTrial} onFocusMap={onFocusMap} onUpdateReadiness={onUpdateReadiness} onRequestLogin={onRequestLogin} onShowMap={() => onMobileViewChange("map")} loading={loading} planningRequestActive={planningRequestActive} />
         </> : dataUnavailable ? <div className="canvas-empty blocked-research"><WarningCircle weight="duotone" /><h3>{pick("暂时找不到实时地点资料", "Live place data is temporarily unavailable")}</h3><p>{pick("你的旅行要求已经记住了。等资料恢复后再继续查找，之前说过的内容不用重来。", "Your requirements are saved. Continue when the source recovers; you will not need to repeat what you shared.")}</p><button className="button retry" onClick={onRetryResearch} disabled={loading}><ArrowsClockwise />{pick("重新查找旅行方案", "Try research again")}</button></div> : <div className="canvas-empty"><Sparkle weight="duotone" /><h3>{pick("还差一点旅行信息", "A little more trip context is needed")}</h3><p>{pick("继续在对话中补充。助手只会追问真正影响方案的问题。", "Continue in chat. The Agent only asks questions that can change the plan.")}</p></div>}
       </section>
     </>}
@@ -1554,6 +1587,8 @@ function TravelEditor({ session, onLogout, onRequestLogin }) {
   const [selectedModelId, setSelectedModelId] = useState("");
   const [mobileView, setMobileView] = useState("conversation");
   const [trialState, setTrialState] = useState({ active: false, count: 0, status: "idle" });
+  const [agentTrial, setAgentTrial] = useState(null);
+  const [planningRequestActive, setPlanningRequestActive] = useState(false);
   const [mobileKeyboardOpen, setMobileKeyboardOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [conversationCollapsed, setConversationCollapsed] = useState(() => typeof window !== "undefined" && window.innerWidth > 900 && window.innerWidth < 1180);
@@ -1662,6 +1697,9 @@ function TravelEditor({ session, onLogout, onRequestLogin }) {
         pace: control.brief.pace,
       });
       setPlan(nextPlan);
+      setAgentTrial((current) => nextPlan.itineraryTrial?.status === "trial_ready"
+        ? nextPlan.itineraryTrial
+        : current?.tripId === tripId && current?.baseRevision === nextPlan.revision ? current : null);
       setTripRecovery(null);
       return true;
     } catch (error) {
@@ -1682,10 +1720,12 @@ function TravelEditor({ session, onLogout, onRequestLogin }) {
   }, [conversation?.messages?.length, pendingText, status.loading, status.activities]);
   const selectConversation = useCallback(async (conversationId) => {
     requestSequenceRef.current += 1;
+    setPlanningRequestActive(false);
     setStatus({ loading: true });
     try {
       const selected = await api.conversation(conversationId);
       setConversation(selected);
+      setAgentTrial(null);
       setImageAttachment(null);
       setMediaStatus({});
       setSelectedModelId(selected.modelId);
@@ -1705,11 +1745,12 @@ function TravelEditor({ session, onLogout, onRequestLogin }) {
   }, [refreshConversations, selectConversation]);
   const createConversation = async () => {
     requestSequenceRef.current += 1;
+    setPlanningRequestActive(false);
     setStatus({ loading: true });
     try {
       const modelId = selectedModelId || providerStatus?.modelSelection?.defaultModelId || "deepseek-v4-flash";
       const created = await api.createConversation({ modelId });
-      setConversation(created); setTrip(null); setPlan(null); setTripRecovery(null); setDraft(""); setDraftContext(""); setImageAttachment(null); setMediaStatus({}); setConversationCollapsed(false); setMobileView("conversation"); setHistoryOpen(false);
+      setConversation(created); setTrip(null); setPlan(null); setTripRecovery(null); setAgentTrial(null); setDraft(""); setDraftContext(""); setImageAttachment(null); setMediaStatus({}); setConversationCollapsed(false); setMobileView("conversation"); setHistoryOpen(false);
       setSelectedModelId(created.modelId);
       await refreshConversations(); setStatus({});
     } catch (error) { setStatus({ error: messageError(error) }); }
@@ -1746,36 +1787,40 @@ function TravelEditor({ session, onLogout, onRequestLogin }) {
       setConversationManagementStatus({ error: messageError(error) });
     }
   };
-  const submitMessage = async (text) => {
+  const submitMessage = async (text, { planningContext = null } = {}) => {
     const attachment = imageAttachment;
     const clean = text.trim() || (attachment ? pick("请结合这张旅行图片理解我的需求，并直接继续核验和规划。", "Use this travel image to understand my request, then continue checking sources and planning.") : "");
     if (!clean || status.loading) return;
     const requestSequence = ++requestSequenceRef.current;
+    setPlanningRequestActive(Boolean(planningContext));
     setStatus({ loading: true }); setPendingText(clean); setDraft(""); setDraftContext(""); setImageAttachment(null); setMediaStatus({});
     try {
       let current = conversation;
       const modelId = selectedModelId || providerStatus?.modelSelection?.defaultModelId || "deepseek-v4-flash";
       if (!current) current = await api.createConversation({ modelId });
-      const result = await api.sendConversationMessage(current.conversationId, clean, modelId, attachment ? [{ mimeType: attachment.mimeType, data: attachment.data }] : undefined);
+      const result = await api.sendConversationMessage(current.conversationId, clean, modelId, attachment ? [{ mimeType: attachment.mimeType, data: attachment.data }] : undefined, planningContext);
       if (requestSequence !== requestSequenceRef.current) return;
       setConversation(result.conversation);
       setSelectedModelId(result.conversation.modelId);
       await refreshConversations();
       const resultTripId = result.tripId ?? result.conversation.tripId;
       await loadTrip(resultTripId);
+      if (result.itineraryTrial?.status === "trial_ready") setAgentTrial(result.itineraryTrial);
       if (resultTripId) setMobileView("itinerary");
       setPendingText("");
       setStatus({ activities: result.activities ?? [], turnStatus: result.status });
+      setPlanningRequestActive(false);
       if (result.multimodal?.status === "completed") setMediaStatus({ notice: pick("图片已在本轮参与理解、核验和规划；原图未保存。", "The image was used for this planning turn and was not saved.") });
-    } catch (error) { if (requestSequence === requestSequenceRef.current) { setPendingText(""); setDraft(clean); setImageAttachment(attachment); setStatus({ error: messageError(error) }); } }
+    } catch (error) { if (requestSequence === requestSequenceRef.current) { setPlanningRequestActive(false); setPendingText(""); setDraft(planningContext ? "" : clean); setImageAttachment(attachment); setStatus({ error: messageError(error) }); } }
   };
-  const acceptProposal = async (proposalId, selections, { partial = false, previewId = undefined, baseRevision = undefined } = {}) => {
+  const acceptProposal = async (proposalId, selections, { partial = false, previewId = undefined, baseRevision = undefined, routeModes = undefined } = {}) => {
     if (!trip?.tripId || status.loading) return;
     setStatus({ loading: true });
     try {
-      const result = await api.accept(trip.tripId, proposalId, selections, partial, previewId, baseRevision);
+      const result = await api.accept(trip.tripId, proposalId, selections, partial, previewId, baseRevision, routeModes);
       if (result.status !== "committed") throw Object.assign(new Error(result.status), { code: result.validation?.reason ?? result.status });
       await loadTrip(trip.tripId);
+      setAgentTrial(null);
       if (["completed", "partial"].includes(result.mobility?.status)) {
         setStatus({ activities: [{ toolName: "accept_trip_change", status: "committed" }, { toolName: "refresh_trip_mobility", status: result.mobility.status }] });
       } else {
@@ -1794,6 +1839,18 @@ function TravelEditor({ session, onLogout, onRequestLogin }) {
       await loadTrip(trip.tripId);
       setStatus({ activities: [{ toolName: "reject_trip_change", status: "rejected_by_user" }] });
     } catch (error) { setStatus({ error: messageError(error) }); }
+  };
+  const discardAgentTrial = async () => {
+    const current = agentTrial;
+    setAgentTrial(null);
+    if (!trip?.tripId || !current?.proposalId) return;
+    try {
+      await api.discardItineraryTrial(trip.tripId, current.proposalId, plan?.revision);
+      await loadTrip(trip.tripId);
+    } catch (error) {
+      setAgentTrial(current);
+      setStatus({ error: messageError(error) });
+    }
   };
   const submitFeedback = async (node, input) => {
     if (!trip?.tripId || !node?.nodeId || !plan) throw Object.assign(new Error("feedback_context_unavailable"), { code: "feedback_context_unavailable" });
@@ -1862,7 +1919,7 @@ function TravelEditor({ session, onLogout, onRequestLogin }) {
         <Composer value={draft} onChange={updateDraft} onSubmit={submitMessage} loading={status.loading} inputRef={composerRef} contextLabel={draftContext} onClearContext={() => { setDraft(""); setDraftContext(""); composerRef.current?.focus(); }} onInspectImage={inspectImage} imageAttachment={imageAttachment} onRemoveImage={() => { setImageAttachment(null); setMediaStatus({}); composerRef.current?.focus(); }} imageLoading={mediaStatus.loading} onLinkPrompt={() => prepareDraft(locale === "en" ? "I want to import a travel share link:\n\nIf this link cannot be read safely, do not guess its content. Tell me the next verifiable step." : "我想导入一个旅行分享链接：\n\n如果当前无法安全读取这个链接，请不要猜测内容；告诉我可以核验的下一步。", pick("旅行分享链接", "Travel share link"))} />
       </section>
       <ResizeHandle className="workspace-resizer" label={pick("调整对话与方案宽度", "Resize chat and trip result")} onPointerDown={(event) => resizePane("conversation", event, 320, maxConversationPaneWidth())} onNudge={(delta) => nudgePane("conversation", delta, 320, maxConversationPaneWidth())} />
-      <PlanCanvas conversation={conversation} trip={trip} plan={plan} tripRecovery={tripRecovery} dataUnavailable={providerStatus?.data?.amapOfficialMcp === "blocked" && !["available_read_only", "trial_read_only"].includes(providerStatus?.data?.fliggyFlyAi) && providerStatus?.data?.tuniuOfficialMcp !== "available_read_only"} onRefresh={() => loadTrip(conversation?.tripId).catch((error) => setStatus({ error: messageError(error) }))} onRetryResearch={() => submitMessage(locale === "en" ? "Continue planning and research the connected trip again." : "继续规划，请重新查找吃、住、行、玩方案。") } onRecoverTrip={() => submitMessage(locale === "en" ? "Rebuild the trip draft from the requirements already stated in this conversation and continue planning the connected trip." : "请根据这段对话中已经说明的旅行要求，重新建立旅行草案并继续规划吃、住、行、玩。") } onAcceptProposal={acceptProposal} onRejectProposal={rejectProposal} onSubmitFeedback={submitFeedback} onUpdateReadiness={updateReadiness} onRequestLogin={onRequestLogin} onPrefill={prepareDraft} onFocusMap={() => setConversationCollapsed(true)} onTrialStateChange={handleTrialStateChange} activeMobileView={mobileView} onMobileViewChange={setMobileView} loading={status.loading} />
+      <PlanCanvas conversation={conversation} trip={trip} plan={plan} agentTrial={agentTrial} planningRequestActive={planningRequestActive} tripRecovery={tripRecovery} dataUnavailable={providerStatus?.data?.amapOfficialMcp === "blocked" && !["available_read_only", "trial_read_only"].includes(providerStatus?.data?.fliggyFlyAi) && providerStatus?.data?.tuniuOfficialMcp !== "available_read_only"} onRefresh={() => loadTrip(conversation?.tripId).catch((error) => setStatus({ error: messageError(error) }))} onRetryResearch={() => submitMessage(locale === "en" ? "Continue planning and research the connected trip again." : "继续规划，请重新查找吃、住、行、玩方案。") } onRecoverTrip={() => submitMessage(locale === "en" ? "Rebuild the trip draft from the requirements already stated in this conversation and continue planning the connected trip." : "请根据这段对话中已经说明的旅行要求，重新建立旅行草案并继续规划吃、住、行、玩。") } onAcceptProposal={acceptProposal} onRejectProposal={rejectProposal} onSubmitFeedback={submitFeedback} onUpdateReadiness={updateReadiness} onRequestLogin={onRequestLogin} onPrefill={prepareDraft} onRunPlanning={(prompt, planningContext) => submitMessage(prompt, { planningContext })} onClearAgentTrial={discardAgentTrial} onFocusMap={() => setConversationCollapsed(true)} onTrialStateChange={handleTrialStateChange} activeMobileView={mobileView} onMobileViewChange={setMobileView} loading={status.loading} />
     </div>
     <nav className="mobile-bottom-tabs" aria-label={pick("旅行工作区", "Trip workspace")}><button type="button" className={mobileView === "conversation" ? "active" : ""} onClick={() => setMobileView("conversation")}><ChatsCircle />{pick("对话", "Chat")}</button><button type="button" className={mobileView === "itinerary" ? "active" : ""} disabled={!trip} onClick={() => setMobileView("itinerary")}><List />{pick("行程", "Trip")}{pendingDecisionCount ? <span>{pendingDecisionCount}</span> : null}</button><button type="button" className={mobileView === "map" ? "active" : ""} disabled={!trip} onClick={() => setMobileView("map")}><MapTrifold />{pick("地图", "Map")}</button></nav>
     {status.error && (mobileView !== "conversation" || conversationCollapsed) ? <div className="workspace-toast error" role="alert"><WarningCircle weight="fill" /><span>{status.error}</span><button type="button" onClick={() => setStatus({})}><X /></button></div> : null}

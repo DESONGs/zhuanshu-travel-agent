@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
-import { analysisCoverageText, budgetCalculationText, domainAvailabilityText, explicitSelectionIntent, TravelConversationAgent, userFacingAgentText } from "../src/agent/travel-conversation-agent.mjs";
+import { analysisCoverageText, budgetCalculationText, containsPaymentCardNumber, domainAvailabilityText, explicitSelectionIntent, itineraryPlanningIntent, TravelConversationAgent, userFacingAgentText } from "../src/agent/travel-conversation-agent.mjs";
+import { createTravelAnalysisRunCoordinator } from "../src/agent/travel-analysis-run-coordinator.mjs";
 import { TravelService } from "../src/api/travel-service.mjs";
 import { FileConversationRepository } from "../src/persistence/conversation-repository.mjs";
 import { TripStore } from "../travel-agent-pi-package/src/core/index.ts";
@@ -19,6 +20,16 @@ test("negative confirmation language never becomes a selection command", () => {
   assert.equal(explicitSelectionIntent("请比较预算，不要确认任何候选"), false);
   assert.equal(explicitSelectionIntent("暂不确认住宿，只看价格"), false);
   assert.equal(explicitSelectionIntent("我选择并确认全季酒店"), true);
+});
+
+test("travel dates and route timestamps are not mistaken for payment cards", () => {
+  assert.equal(containsPaymentCardNumber("2026-10-15T21:20:00+08:00 → 2026-10-16T10:00:00+08:00"), false);
+  assert.equal(containsPaymentCardNumber("4111 1111 1111 1111"), true);
+});
+
+test("only a direct itinerary optimization turn exposes the planning harness", () => {
+  assert.equal(itineraryPlanningIntent("这趟预算还剩多少"), false);
+  assert.equal(itineraryPlanningIntent("请直接优化当前按天路线，比较先寄存行李还是先入住"), true);
 });
 
 test("budget explanation keeps candidate quote quality separate from trip-total estimation", () => {
@@ -84,6 +95,76 @@ test("fixture: Pi conversation loop creates and reads a travel draft through bou
   assert.equal(control.travelers[1].displayName, "父亲");
   assert.equal(control.travelers[1].careNeeds.mobility.maxContinuousWalkMeters, 800);
   assert.equal(control.travelers[2].careNeeds.schedule.latestDinnerTime, "19:00");
+});
+
+test("Parent Agent executes one Plan-Check-Repair loop and returns a reversible itinerary Trial", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "travel-conversation-itinerary-plan-"));
+  const tripStore = new TripStore({ rootDir: join(rootDir, "trips") });
+  const routeAlternative = (mode, minutes, walkingMeters = 0) => ({ mode, totalMinutes: minutes, distanceMeters: 5_000, walkingMeters, transfers: mode === "transit" ? 1 : 0, estimatedFareCny: mode === "taxi" ? 35 : 4, scheduleBasis: "query_time_estimate", realTimeArrival: false, navigationUrl: null, polyline: [], steps: [], accessibilityFeatures: [], accessibilityAssessment: { hasStairs: false, hasElevator: false, hasEscalator: false, hasRamp: false, stepFreeContinuity: "not_verified", realTimeStatus: false } });
+  let providerCalls = 0;
+  const travelService = new TravelService({
+    store: tripStore,
+    planningRunCoordinator: createTravelAnalysisRunCoordinator(),
+    clock: () => new Date("2026-08-30T08:00:00.000Z"),
+    researchProvider: {
+      status: "configured",
+      async planMobility({ itineraryStops }) {
+        providerCalls += 1;
+        const place = (stop) => ({ nodeId: stop.nodeId, stopId: stop.stopId, label: stop.title, coordinates: null, dayIndex: stop.dayIndex, date: stop.date, role: stop.role, startAt: stop.startAt, endAt: stop.endAt });
+        const legs = itineraryStops.slice(0, -1).map((stop, index) => ({ legId: `agent_plan_leg_${index}`, origin: place(stop), destination: place(itineraryStops[index + 1]), recommendedMode: "transit", rationale: "fixture", alternatives: [routeAlternative("transit", 30, 300), routeAlternative("taxi", 20, 0)] }));
+        return { schemaVersion: "trip-mobility-v1", status: "completed", destination: "上海", source: "fixture", checkedAt: "2026-08-30T08:00:00.000Z", freshUntil: "2026-08-30T11:00:00.000Z", coverage: { routedNodeIds: [...new Set(itineraryStops.map((stop) => stop.nodeId))], unresolvedNodeIds: [], routedStopIds: itineraryStops.map((stop) => stop.stopId), unresolvedStopIds: [], unscheduled: false }, legs, travelerFit: { maxContinuousWalkMeters: 600, maxTransfers: 1 }, reason: null, caveats: [], sourceDocumentation: null, fabricatedResults: false };
+      },
+    },
+  });
+  await travelService.createTrip({ tripId: "trip_agent_plan", brief: { destination: "上海", dates: "2026-10-15 至 2026-10-17" }, travelers: [{ travelerId: "traveler_1", displayName: "父亲", careNeeds: { mobility: { maxContinuousWalkMeters: 600, maxTransfers: 1 } } }] });
+  const nodes = [
+    { nodeId: "arrival_pvg", domain: "transport", title: "浦东机场 T2", sourceStatus: "verified", sourceRefs: ["amap:arrival"], operability: { mobilityRole: "intercity_inventory", arrivalAt: "2026-10-15T09:00:00+08:00" } },
+    { nodeId: "stay_hotel", domain: "stay", title: "人民广场酒店", sourceStatus: "verified", sourceRefs: ["amap:stay"], operability: { openWeek: "00:00-23:59" } },
+    { nodeId: "play_museum", domain: "play", title: "上海博物馆", sourceStatus: "verified", sourceRefs: ["amap:play"], operability: { openWeek: "09:00-17:00" } },
+  ];
+  await travelService.proposeTripChange({ tripId: "trip_agent_plan", proposal: { schemaVersion: "trip-patch-proposal-v1", proposalId: "proposal_agent_plan", tripId: "trip_agent_plan", baseRevision: 0, writeSet: nodes.map((node) => node.nodeId), writeContract: { allowedNodeIds: nodes.map((node) => node.nodeId) }, readSet: [], operations: nodes.map((node) => ({ kind: "add_candidate", nodeId: node.nodeId, node })) } });
+
+  const faux = fauxProvider({ provider: "fixture-pi", models: [{ id: "fixture-parent" }] });
+  const models = createModels();
+  models.setProvider(faux.provider);
+  let runId = null;
+  const makePlan = (attempt, activityStart, fixed) => ({
+    schemaVersion: "itinerary-plan-v1", runId, tripId: "trip_agent_plan", baseRevision: 0, attempt,
+    objective: "先寄存行李再参观", priorities: ["少步行", "保留抵达"], lockedNodeIds: [], fixedAnchors: [{ nodeId: "arrival_pvg", kind: "arrival", startAt: "2026-10-15T09:00:00+08:00", endAt: "2026-10-15T09:00:00+08:00" }],
+    days: [{ dayIndex: 1, date: "2026-10-15", stops: [
+      { nodeId: "arrival_pvg", role: "intercity_arrival", timeWindow: { startAt: "2026-10-15T09:00:00+08:00", endAt: "2026-10-15T09:00:00+08:00" }, durationMinutes: 0, fixed: true, preferredModes: ["taxi"], rationale: "固定抵达" },
+      { nodeId: "stay_hotel", role: "bag_drop", timeWindow: { startAt: "2026-10-15T10:00:00+08:00", endAt: "2026-10-15T10:15:00+08:00" }, durationMinutes: 15, fixed: false, preferredModes: ["taxi"], rationale: "先寄存行李" },
+      { nodeId: "play_museum", role: "activity", timeWindow: { startAt: activityStart, endAt: "2026-10-15T13:00:00+08:00" }, durationMinutes: 120, fixed, preferredModes: ["transit", "taxi"], rationale: "白天参观" },
+    ] }], assumptions: [], needsContext: [], evidenceRefs: ["amap:arrival", "amap:stay", "amap:play"],
+  });
+  faux.setResponses([
+    (context) => {
+      runId = context.systemPrompt.match(/runId[：=]([A-Za-z0-9_.:-]+)/)?.[1] ?? null;
+      assert.ok(runId);
+      assert.match(context.systemPrompt, /repair exactly once|修正一次/);
+      assert.ok(context.tools.some((tool) => tool.name === "plan_itinerary_trial"));
+      assert.equal(context.tools.some((tool) => tool.name === "get_trip_plan_view"), false);
+      assert.match(context.systemPrompt, /当前可用规划上下文/);
+      return fauxAssistantMessage(fauxToolCall("plan_itinerary_trial", makePlan(1, "2026-10-15T10:20:00+08:00", true)), { stopReason: "toolUse" });
+    },
+    fauxAssistantMessage("第一次核验发现冲突。"),
+    () => fauxAssistantMessage(fauxToolCall("plan_itinerary_trial", makePlan(2, "2026-10-15T11:00:00+08:00", false)), { stopReason: "toolUse" }),
+    fauxAssistantMessage("优化已经完成。"),
+  ]);
+  const agent = new TravelConversationAgent({ travelService, conversationRepository: new FileConversationRepository({ rootDir: join(rootDir, "conversations") }), modelRuntime: { models, model: faux.getModel("fixture-parent") }, clock: () => new Date("2026-08-30T08:00:00.000Z") });
+  const conversation = await agent.createConversation({ userId: "user_itinerary_planner", tripId: "trip_agent_plan" });
+  const turn = await agent.reply({ conversationId: conversation.conversationId, userId: "user_itinerary_planner", text: "请直接 AI 优化当前路线，先寄存行李再去博物馆。" });
+
+  assert.equal(turn.itineraryTrial.status, "trial_ready");
+  assert.equal(turn.agentTrace.planningCallCount, 2);
+  assert.equal(turn.agentTrace.planningProviderCallCount, 2);
+  assert.equal(turn.agentTrace.modelCallCount, 4, "initial tool call + response and one bounded repair tool call + response");
+  assert.deepEqual(turn.activities.filter((activity) => activity.toolName === "plan_itinerary_trial").map((activity) => [activity.attempt, activity.status]), [[1, "needs_repair"], [2, "trial_ready"]]);
+  assert.match(turn.conversation.messages.at(-1).text, /可撤销试排/);
+  assert.equal(providerCalls, 2);
+  const after = await travelService.getTripPlanView("trip_agent_plan");
+  assert.equal(after.revision, 0);
+  assert.equal(Object.values(after.byDomain).flat().some((node) => node.selected), false);
 });
 
 test("a native multimodal Parent Agent sees the image and can build the trip with ordinary tools in the same turn", async () => {

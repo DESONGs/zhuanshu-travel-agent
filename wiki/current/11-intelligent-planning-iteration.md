@@ -2,7 +2,7 @@
 
 - 日期：2026-08-27
 - 角色：产品迭代规划（PM），承接真实使用反馈、双份代码层诊断与「要 agentic 不要 workflow」的方向拍板
-- 状态：方向已确认；Agent Runtime/Skills/并行状态一致性底座已落地，预算账本、出行总账与主动补缺仍按本文 M1/M2 继续实施
+- 状态：方向已确认；Agent Runtime/Skills/并行状态一致性底座与旅行行程 Plan–Check–Repair Harness 已落地，出行总账与主动补缺仍按本文 M1/M2 继续实施
 - 证据基础：`wiki/research/2026-08-26-user-golden-path-provider-fusion-bug-audit.md`、`2026-08-27-visible-planning-workbench-and-route-preview-qa.md`、Agent 编排层与 Provider 数据层代码诊断（行号见 §3）
 
 ## 1. 用户反馈与核心判断
@@ -257,4 +257,30 @@ V3 前端方案（`wiki/research/2026-08-29-ui-component-sources-and-first-princ
 - **A0 行程正确性门禁已关闭。** 新增派生的 Day/Date/Role itinerary 与 feasibility；城际目的地节点使用 `arrivalAt`，柔性时间窗按真实移动耗时顺延，缺路、固定时间逆序、已知营业冲突和楼梯硬冲突会在提交前阻断。确认复用同 revision preview，不重复请求路线。
 - **C / D 尚未全部关闭。** A0 已提前交付按天数据基础、路线模式比较和可执行性缺口；全程出行策略总账、执行事件、租车判断、四端真机与真实 OAuth 仍按既有上线门继续，不能从本次 Web QA 推断完成。
 
-验证：严格 TypeScript、164 项完整测试、Web production build、微信/支付宝 native contract 均通过；真实浏览器完成 1440、1152（125% 等效）、393 视口，以及“自然语言请求 → 航班/高铁 → 分域预算 → Day 1/2 多点路线 → 模式切换 → feasibility gate → 确认”路径。复杂四域语义 fan-out 仍可能 partial，诚实降级生效，但不能称为稳定完整分析。
+验证：严格 TypeScript、175 项完整测试、Web production build、微信/支付宝 native contract 均通过；真实浏览器完成 1440、1152（125% 等效）、393 视口，以及“自然语言请求 → 航班/高铁 → 分域预算 → Day 1/2 多点路线 → 模式切换 → feasibility gate → 确认”路径。复杂四域语义 fan-out 仍可能 partial，诚实降级生效，但不能称为稳定完整分析。
+
+## 13. 旅行行程 Plan–Check–Repair Harness（2026-08-30）
+
+### 职责归位
+
+- LLM 负责 Day、站序、时间窗、停留时长、role、跨域取舍与理由；不生成路线分钟、价格、营业、设施或无障碍事实。
+- `plan_itinerary_trial` 复用 TravelService、AMap Mobility 与 `finalizeItinerarySchedule()`，检查相邻路线、固定时间、跨日、旅行日期、营业证据、步行、换乘、楼梯、锁定项和新鲜度。
+- Parent 最多提交 attempt 1 与一次 bounded repair attempt 2。成功结果进入现有 pending proposal artifact；用户确认前 Trip revision、selected nodes 与当前 Mobility 不变。
+- 用户逐段选择 transit/taxi/walk 后，选择会进入服务端 Trial 重检，并在确认后保存；不再只改变前端显示。
+
+### 复用与拒绝
+
+从 assignment-agent Planner/Adaptive Execution Ledger 只复用机制：run/plan/revision、`runId:attempt` operation ID、acceptance evidence、events、blocked/repair 与 stop condition。不复制 Office task types、文件 run 目录、Todo 平台、通用 Planner Extension 或文档 worker。
+
+当前 Travel 直接复用 `TravelAnalysisRunCoordinator` 的 supersede/abort/stale/idempotency/exactly-once join，`plan-trip` Skill、Parent Pi turn、TravelService、AMap、TripPatchProposal 与 TripState。Dynamic Workflow 继续只负责无反馈依赖的语义 fan-out；行程修正留在 Parent 的顺序循环，不新增 Sub-agent 或第二编排内核。
+
+### 用户可见闭环
+
+- 桌面与移动端按钮恢复为“AI 优化当前路线”，点击立即执行，不再预填 Composer。
+- 请求期间只显示真实总状态；完成后 activity 对应实际 context read 与 planning Tool。成功 Trial 显示地图、按天时间轴、总耗时、步行、换乘、估算费用、理由与当前方案影响。
+- 操作固定为“采用优化方案 / 保持当前 / 继续调整”；保持当前会只移除 itinerary Trial，不删除研究候选。
+- 快速候选试排继续使用 `buildItineraryDraft()`，但固定标识为 `conservative_fallback`，不能称为 AI 优化。
+
+### 真实验收
+
+2026-08-30 的上海家庭旅行真实浏览器路径中，DeepSeek 生成“夜间抵达先入住，次日博物馆→本帮菜→返回住宿”的计划；AMap/Checker 得到 5 段、79 分钟、0 米步行、0 次换乘、估算 ¥283。393px 端把机场段改成公交后，服务端因 1145 米步行超过 600 米上限禁用确认；切回打车后确认成功，revision 1→2，`planningSource=model_plan`。完整反证与边界见审计文档 §13。

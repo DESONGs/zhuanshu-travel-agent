@@ -29,6 +29,7 @@ export function createTravelService(env = process.env, options = {}) {
   const researchProvider = options.researchProvider ?? createTravelResearchProvider(env, options.providerOptions);
   const executionPolicy = workflowExecutionPolicy(env);
   const analysisRunCoordinator = options.analysisRunCoordinator ?? createTravelAnalysisRunCoordinator();
+  const planningRunCoordinator = options.planningRunCoordinator ?? createTravelAnalysisRunCoordinator();
   const analysisFanout = options.analysisFanout === false || !executionPolicy.semanticFanoutEnabled
     ? null
     : options.analysisFanout ?? createTravelAnalysisFanout(env, { clock: options.clock, coordinator: analysisRunCoordinator, childConcurrency: options.analysisOptions?.childConcurrency ?? env.TRAVEL_AGENT_ANALYSIS_CHILD_CONCURRENCY, ...(options.analysisOptions ?? {}) });
@@ -38,6 +39,7 @@ export function createTravelService(env = process.env, options = {}) {
     clock: options.clock,
     analysisFanout,
     analysisRunCoordinator,
+    planningRunCoordinator,
     analysisDegradedReason: executionPolicy.semanticFanoutEnabled ? null : executionPolicy.status,
   });
   service.workflowExecution = executionPolicy;

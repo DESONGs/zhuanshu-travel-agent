@@ -92,6 +92,13 @@
 
 final result: passed
 
+## 2026-08-30 AI 行程优化交互补验
+
+- 1440px：点击“AI 优化当前路线”直接发送当前 Trial context，工作台原位显示真实规划状态；完成后地图、按天时间轴、理由、路线总计与“采用优化方案 / 保持当前 / 继续调整”同屏出现。
+- 393×852：MapRouteSheet 显示 6 个 stop occurrences、Day/时间/role、分段交通方式和 sticky 确认。把机场段切为公交后，服务端返回 1145m > 600m 的具名阻断，采用按钮禁用；切回打车后恢复。
+- 确认前 revision 与 selected nodes 不变；确认后 Trial 消失并进入 Today。浏览器 console error/warn 为 0。
+- 进行中只显示“正在生成站序并核验真实路线”的真实总状态；完成 activity 分别来自服务端 context read 和 `plan_itinerary_trial`，不播放按秒进度。
+
 ## 2026-08-29 V3 PM/Design 审查落地
 
 - 真实自然语言请求（虚构上海家庭旅行）在桌面入口返回吃/住/行/玩各最多 6 个候选；Decision Spine 首屏只显示每域当前项，Focused Compare 首屏 3 项并提供“查看另外 N 个候选”，避免同时铺满。

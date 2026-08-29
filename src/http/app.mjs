@@ -293,7 +293,7 @@ export function createHttpApp({
   }));
   app.post("/api/conversations/:conversationId/messages", asyncRoute(async (request, response) => {
     const session = await requireConversationOwner(request, request.params.conversationId);
-    response.json(await travelConversationAgent.reply({ conversationId: request.params.conversationId, userId: session.userId, text: request.body?.text, images: request.body?.images, modelId: request.body?.modelId }));
+    response.json(await travelConversationAgent.reply({ conversationId: request.params.conversationId, userId: session.userId, text: request.body?.text, images: request.body?.images, modelId: request.body?.modelId, planningContext: request.body?.planningContext }));
   }));
   app.post("/api/visual-evidence/inspect", asyncRoute(async (request, response) => {
     const session = requireSession(request);
@@ -332,11 +332,15 @@ export function createHttpApp({
   }));
   app.post("/api/trips/:tripId/proposals/:proposalId/accept", asyncRoute(async (request, response) => {
     await requireTripMember(request, request.params.tripId);
-    response.json(await travelService.acceptTripChange({ tripId: request.params.tripId, proposalId: request.params.proposalId, selections: request.body?.selections, partial: request.body?.partial === true, previewId: request.body?.previewId, baseRevision: request.body?.baseRevision }));
+    response.json(await travelService.acceptTripChange({ tripId: request.params.tripId, proposalId: request.params.proposalId, selections: request.body?.selections, partial: request.body?.partial === true, previewId: request.body?.previewId, baseRevision: request.body?.baseRevision, routeModes: request.body?.routeModes }));
   }));
   app.post("/api/trips/:tripId/proposals/:proposalId/reject", asyncRoute(async (request, response) => {
     await requireTripMember(request, request.params.tripId);
     response.json(await travelService.rejectTripChange({ tripId: request.params.tripId, proposalId: request.params.proposalId }));
+  }));
+  app.post("/api/trips/:tripId/itinerary-trials/:proposalId/discard", asyncRoute(async (request, response) => {
+    await requireTripMember(request, request.params.tripId);
+    response.json(await travelService.discardItineraryTrial({ tripId: request.params.tripId, proposalId: request.params.proposalId, baseRevision: request.body?.baseRevision }));
   }));
   app.post("/api/trips/:tripId/mobility/refresh", asyncRoute(async (request, response) => {
     await requireTripMember(request, request.params.tripId);
@@ -348,7 +352,7 @@ export function createHttpApp({
     const abort = () => controller.abort();
     request.once("aborted", abort);
     try {
-      response.json(await travelService.previewTripMobility({ tripId: request.params.tripId, baseRevision: request.body?.baseRevision, selections: request.body?.selections, signal: controller.signal }));
+      response.json(await travelService.previewTripMobility({ tripId: request.params.tripId, baseRevision: request.body?.baseRevision, selections: request.body?.selections, previewId: request.body?.previewId, routeModes: request.body?.routeModes, signal: controller.signal }));
     } finally {
       request.off("aborted", abort);
     }

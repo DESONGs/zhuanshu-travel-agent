@@ -5,7 +5,7 @@ import { createConversationRecord, validateConversation } from "../persistence/c
 import { DEFAULT_USER_MODEL_ID, modelCredentialConfigured, userModelOption } from "./user-model-options.mjs";
 import { DEEPSEEK_VISION_MODEL_ID, TRAVEL_MODEL_PROVIDERS } from "./travel-model-providers.mjs";
 import { renderTravelSkillsForPrompt, selectParentTravelSkills } from "./travel-skill-loader.mjs";
-import { ResearchCriteriaInputSchema } from "../../travel-agent-pi-package/src/contracts/index.ts";
+import { ItineraryPlanSchema, ResearchCriteriaInputSchema } from "../../travel-agent-pi-package/src/contracts/index.ts";
 
 const PROVIDERS = TRAVEL_MODEL_PROVIDERS;
 const MAX_VISIBLE_MESSAGES = 40;
@@ -74,6 +74,25 @@ function trimText(value, limit = 6_000) {
   return String(value ?? "").trim().slice(0, limit);
 }
 
+function normalizePlanningContext(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const safeIdValue = (input) => /^[A-Za-z0-9_.:-]{1,128}$/.test(String(input ?? "")) ? String(input) : null;
+  const selections = Object.fromEntries(Object.entries(value.selections ?? {})
+    .filter(([domain, nodeId]) => LINKED_TRAVEL_DOMAINS.includes(domain) && safeIdValue(nodeId))
+    .map(([domain, nodeId]) => [domain, String(nodeId)]));
+  const routeModes = Object.fromEntries(Object.entries(value.routeModes ?? {})
+    .filter(([legId, mode]) => safeIdValue(legId) && ["walk", "transit", "taxi"].includes(String(mode)))
+    .map(([legId, mode]) => [legId, String(mode)]));
+  const currentOrder = (Array.isArray(value.currentOrder) ? value.currentOrder : []).map(safeIdValue).filter(Boolean).slice(0, 16);
+  return {
+    proposalId: safeIdValue(value.proposalId),
+    previewId: safeIdValue(value.previewId),
+    selections,
+    routeModes,
+    currentOrder,
+  };
+}
+
 function compactToolPayload(value) {
   const text = JSON.stringify(value, null, 2);
   return text.length > 10_000 ? `${text.slice(0, 9_800)}\n[truncated]` : text;
@@ -112,13 +131,29 @@ function proposalDigest(proposal) {
 }
 
 function planDigest(plan) {
+  const planningNodes = [...new Map([
+    ...Object.values(plan.byDomain ?? {}).flat(),
+    ...(plan.pendingProposals ?? []).flatMap((proposal) => Object.values(proposal.byDomain ?? {}).flat()),
+  ].map((node) => [node.nodeId, node])).values()].slice(0, 24).map((node) => ({
+    nodeId: node.nodeId,
+    domain: node.domain,
+    title: node.title,
+    selected: node.selected === true,
+    locked: Boolean(node.lock),
+    sourceRefs: (node.sourceRefs ?? []).slice(0, 8),
+    arrivalAt: node.operability?.arrivalAt ?? null,
+    departureAt: node.operability?.departureAt ?? null,
+    planningWindow: node.operability?.planningWindow ?? null,
+    mobilityRole: node.operability?.mobilityRole ?? null,
+    price: node.price ?? null,
+  }));
   return {
     tripId: plan.tripId,
     revision: plan.revision,
     acceptedDomains: Object.fromEntries(LINKED_TRAVEL_DOMAINS.map((domain) => [domain, (plan.byDomain?.[domain] ?? []).filter((candidate) => candidate.selected).map((candidate) => candidate.title).slice(0, 6)])),
     pendingProposals: (plan.pendingProposals ?? []).slice(0, 2).map(proposalDigest),
     budget: plan.budget ?? null,
-    weather: plan.weather ? { status: plan.weather.status, coverage: plan.weather.coverage, provider: plan.weather.provider, affectedDomains: plan.weather.planningImpact?.affectedDomains ?? [] } : null,
+    weather: plan.weather ? { status: plan.weather.status, coverage: plan.weather.coverage, provider: plan.weather.provider, checkedAt: plan.weather.checkedAt ?? null, forecastDays: (plan.weather.forecastDays ?? []).filter((day) => (plan.weather.tripDates ?? []).includes(day.date)).slice(0, 7), planningImpact: plan.weather.planningImpact ?? null } : null,
     mobility: plan.mobility ? {
       status: plan.mobility.status,
       reason: plan.mobility.reason ?? null,
@@ -135,6 +170,48 @@ function planDigest(plan) {
     } : null,
     readiness: plan.readiness ? { status: plan.readiness.status, attentionItems: plan.readiness.items.filter((item) => item.status !== "ready" && item.status !== "not_applicable").map((item) => ({ itemId: item.itemId, title: item.title, status: item.status })).slice(0, 6) } : null,
     today: plan.today ? { status: plan.today.status, currentTask: plan.today.currentTask?.title ?? null, nextTask: plan.today.nextTask?.title ?? null } : null,
+    planningNodes,
+    itinerary: plan.itinerary ?? plan.mobility?.itinerary ?? null,
+    feasibility: plan.feasibility ?? plan.mobility?.feasibility ?? null,
+  };
+}
+
+function itineraryPlanningDigest(plan, clientContext = null) {
+  const allNodes = [...new Map([
+    ...Object.values(plan.byDomain ?? {}).flat(),
+    ...(plan.pendingProposals ?? []).flatMap((proposal) => Object.values(proposal.byDomain ?? {}).flat()),
+  ].map((node) => [node.nodeId, node])).values()];
+  const focusedNodeIds = new Set([...(clientContext?.currentOrder ?? []), ...Object.values(clientContext?.selections ?? {})]);
+  const sourceNodes = focusedNodeIds.size
+    ? allNodes.filter((node) => focusedNodeIds.has(node.nodeId) || (node.selected === true && node.lock))
+    : allNodes.slice(0, 24);
+  const nodes = sourceNodes.map((node) => ({
+    nodeId: node.nodeId,
+    domain: node.domain,
+    title: node.title,
+    selected: node.selected === true,
+    locked: Boolean(node.lock),
+    sourceRefs: (node.sourceRefs ?? []).slice(0, 8),
+    mobilityRole: node.operability?.mobilityRole ?? null,
+    arrivalAt: node.operability?.arrivalAt ?? null,
+    departureAt: node.operability?.departureAt ?? null,
+    planningWindow: node.operability?.planningWindow ?? null,
+    openingHours: node.operability?.openWeek ?? null,
+    price: node.price ?? null,
+  }));
+  return {
+    status: "planning_context_ready",
+    tripId: plan.tripId,
+    baseRevision: plan.revision,
+    nodes,
+    allowedEvidenceRefs: [...new Set(nodes.flatMap((node) => node.sourceRefs))],
+    lockedNodeIds: nodes.filter((node) => node.selected && node.locked).map((node) => node.nodeId),
+    fixedAnchors: nodes.flatMap((node) => node.arrivalAt ? [{ nodeId: node.nodeId, kind: "arrival", startAt: node.arrivalAt, endAt: node.arrivalAt }] : []),
+    currentItinerary: plan.itinerary ?? plan.mobility?.itinerary ?? null,
+    travelerFit: plan.mobility?.travelerFit ?? null,
+    budget: plan.budget ?? null,
+    weather: plan.weather ? { coverage: plan.weather.coverage, checkedAt: plan.weather.checkedAt ?? null, forecastDays: (plan.weather.forecastDays ?? []).filter((day) => (plan.weather.tripDates ?? []).includes(day.date)).slice(0, 7), planningImpact: plan.weather.planningImpact ?? null } : null,
+    currentUiTrial: clientContext,
   };
 }
 
@@ -209,6 +286,11 @@ function explicitSelectionIntent(value) {
   const affirmative = text.replace(/先给候选[^，。；;\n]*|(?:先)?(?:不要|不需要|无需|暂不|先不)(?:替我|自动)?确认[^，。；;\n]*|不需要你确认[^，。；;\n]*/gu, " ");
   return /(?:我)?(?:选择|确认|选定|决定住|就住|锁定)[^，。；;\n]{0,60}(?:酒店|住宿|餐厅|景点|候选|全季|外滩|博物馆)/u.test(affirmative)
     || /(?:酒店|住宿|餐厅|景点|候选)[^，。；;\n]{0,40}(?:选择|确认|选定|锁定)/u.test(affirmative);
+}
+
+function itineraryPlanningIntent(value) {
+  const text = String(value ?? "");
+  return /(?:AI\s*)?(?:优化|重排).{0,12}(?:路线|站序|顺序|行程)|(?:路线|站序|顺序|按天行程).{0,12}(?:优化|重排)|先.{0,24}(?:寄存|入住|游玩).{0,24}(?:再|还是)|plan\s+the\s+itinerary|optimi[sz]e.{0,20}(?:route|itinerary|stop order)/iu.test(text);
 }
 
 function explicitArrivalConfirmationIntent(value) {
@@ -294,6 +376,45 @@ function budgetCalculationText(result) {
   return `${total}。${rows.join("。")}。候选是否已确认与价格性质是两回事：未确认的 OTA 候选仍可有本次实价快照；按人数、晚数或餐次汇总后的整趟数字仍标为估算。本轮没有确认、购买或改写任何候选。`;
 }
 
+function planningTrialDigest(result) {
+  const alternatives = (result.mobility?.legs ?? []).map((leg) => leg.alternatives?.find((item) => item.mode === leg.recommendedMode)).filter(Boolean);
+  return {
+    status: result.status,
+    runId: result.runId,
+    attempt: result.attempt,
+    proposalId: result.proposalId ?? null,
+    previewId: result.previewId ?? null,
+    issues: (result.issues ?? result.feasibility?.issues ?? []).map((issue) => ({ issueCode: issue.code, severity: issue.severity, affectedStopIds: issue.stopIds, observed: issue.observed ?? null, allowedRepairDirections: issue.allowedRepairDirections ?? [], message: issue.message })),
+    itinerary: result.itinerary ? {
+      days: result.itinerary.days,
+      stops: result.itinerary.stops.map((stop) => ({ stopId: stop.stopId, nodeId: stop.nodeId, dayIndex: stop.dayIndex, date: stop.date, role: stop.role, startAt: stop.startAt, endAt: stop.endAt, fixed: stop.fixed, rationale: stop.rationale ?? null })),
+    } : null,
+    route: {
+      legCount: alternatives.length,
+      totalMinutes: alternatives.reduce((sum, item) => sum + Number(item.totalMinutes ?? 0), 0),
+      walkingMeters: alternatives.reduce((sum, item) => sum + Number(item.walkingMeters ?? 0), 0),
+      transfers: alternatives.reduce((sum, item) => sum + Number(item.transfers ?? 0), 0),
+      estimatedFareCny: alternatives.reduce((sum, item) => sum + Number(item.estimatedFareCny ?? 0), 0),
+    },
+    planSummary: result.planSummary ?? null,
+    providerCallCount: result.providerCallCount ?? 0,
+    accept: result.accept ?? null,
+    committed: false,
+  };
+}
+
+function planningTrialText(result) {
+  if (result?.status === "trial_ready") {
+    const digest = planningTrialDigest(result);
+    const changed = digest.planSummary?.priorities?.slice(0, 2).join("、") || "时间、步行和换乘";
+    return `我已经按${changed}生成并核验了一份可撤销试排：共 ${digest.route.legCount} 段移动，约 ${Math.round(digest.route.totalMinutes)} 分钟，步行约 ${Math.round(digest.route.walkingMeters)} 米，${digest.route.transfers} 次换乘，市内交通估算约 ¥${Math.round(digest.route.estimatedFareCny)}。地图和按天时间轴已切换到优化试排；它还没有写入行程，你可以采用、保持当前或继续调整。`;
+  }
+  const issue = result?.issues?.[0] ?? result?.feasibility?.issues?.find((item) => item.severity === "blocking");
+  if (result?.status === "needs_context") return issue?.message ?? "这次还缺少一个会影响路线的关键信息，当前方案保持不变。";
+  if (result?.status === "stale_discarded") return "你刚刚修改了旅行条件，这份旧试排已经丢弃，没有覆盖新的要求。";
+  return `${issue?.message ?? "这次仍没有形成可执行的优化路线"} 当前方案保持不变，也没有写入任何调整。`;
+}
+
 function confirmedSelectionText(result) {
   const selected = result?.selectedNode;
   if (!selected) return "这次没有完成候选确认，当前行程没有被修改。";
@@ -332,9 +453,26 @@ function appendMessage(conversation, { role, text, kind = null, modelId = null, 
   return { ...conversation, messages: [...conversation.messages, message].slice(-80), updatedAt: message.createdAt };
 }
 
+function containsPaymentCardNumber(text) {
+  const candidates = String(text ?? "").match(/(?:\d[ -]?){13,19}/g) ?? [];
+  return candidates.some((candidate) => {
+    const digits = candidate.replace(/\D/g, "");
+    if (digits.length < 13 || digits.length > 19) return false;
+    let total = 0;
+    let double = false;
+    for (let index = digits.length - 1; index >= 0; index -= 1) {
+      let value = Number(digits[index]);
+      if (double) { value *= 2; if (value > 9) value -= 9; }
+      total += value;
+      double = !double;
+    }
+    return total % 10 === 0;
+  });
+}
+
 function inputHasSensitiveSecret(text) {
   return /(?:cookie|token|authorization|password|secret|api[_ -]?key)\s*[:=]/i.test(text)
-    || /\b(?:\d[ -]?){13,19}\b/.test(text)
+    || containsPaymentCardNumber(text)
     || /(?:passport|证件|身份证)\s*(?:号码|号|number)?\s*[:：]\s*[A-Za-z0-9-]{6,}/i.test(text);
 }
 
@@ -413,7 +551,7 @@ function tripBriefForPrompt(control) {
   });
 }
 
-function parentSystemPrompt({ conversation, control, referenceTime, hasVisualInput = false, activeSkills = [] }) {
+function parentSystemPrompt({ conversation, control, referenceTime, hasVisualInput = false, activeSkills = [], planningRunId = null, planningContext = null }) {
   const referenceDate = new Date(referenceTime ?? Date.now()).toLocaleDateString("zh-CN", { timeZone: "Asia/Hong_Kong", year: "numeric", month: "2-digit", day: "2-digit" });
   return `你是用户正在交谈的旅行顾问。你的任务是理解整段对话，把零散想法持续整理成一趟旅行，并协调吃、住、行、玩之间的取舍。你不是问卷、关键词分类器或行程录入表单。
 
@@ -427,6 +565,11 @@ ${hasVisualInput ? `本轮包含用户主动上传的旅行图片。你能直接
 - 面向用户自然说明你从图片理解了什么、哪些已由资料核验、哪些仍需确认；不要暴露视觉模型、图片 token、内部路由或工程术语。` : ""}
 
 ${renderTravelSkillsForPrompt(activeSkills)}
+
+${planningRunId ? `<itinerary-planning-run>
+本轮旅行规划 runId：${planningRunId}。调用 plan_itinerary_trial 时必须原样复制该 runId、当前 tripId 与 baseRevision。第一次调用 attempt=1；只有 Checker 返回 needs_repair 时才允许基于结构化问题修正一次并以同一 runId 调用 attempt=2。最多两次，不能新建另一个 run 绕过预算。
+${planningContext ? `用户当前正在比较的临时试排（不是已确认事实）：${JSON.stringify(planningContext)}` : ""}
+</itinerary-planning-run>` : ""}
 
 产品边界：
 - 用户先讲自然语言需求；不要要求用户先手工添加行程条目。
@@ -453,6 +596,7 @@ ${renderTravelSkillsForPrompt(activeSkills)}
 - Provider 地址或描述可以说明“看起来更靠近目标区域”，但在城市路线核验前不得断言“最少走路”“步行十分钟”或已经满足逐人行动要求。班次和价格必须带本次 checkedAt 语义；到达时间与用户已确认事实不一致时，只能说明是库存对照，不能覆盖接驳时间。
 - research_trip_options 返回候选后，只需告诉用户方案区已出现可以比较的选择，并概括最重要的取舍。用户可通过方案区按钮确认，也可在聊天中明确点名候选后由 confirm_trip_selection 提交。只有工具返回 committed 才能说“已确认、已锁定、已写入行程”；没有 commit 时必须明确仍未确认。
 - 用户询问整趟预算、某项更换会贵多少或“为什么推荐它”时，必须调用 estimate_costs 或 explain_recommendation。价格数字只能复述工具返回的 amount、quality、basis 与 checkedAt；unknown 就说待核验，禁止自行补数字。
+- 用户要求优化站序、安排按天路线、比较“先寄存行李还是先玩”或点击“AI 优化当前路线”时，先调用 get_trip_plan_view 读取当前 nodeId、固定抵达/预约、同行人和证据，再由你按照 plan-trip Skill 生成 ItineraryPlan 并调用 plan_itinerary_trial。evidenceRefs 只能从 allowedEvidenceRefs 复制；没有必要引用证据时传空数组，不能自行生成引用。你决定 Day、顺序、时间窗、停留时长、角色和理由；不得编造路线分钟、费用、营业或设施。工具返回 needs_repair 时，只能按 issueCode、observed facts 和 allowedRepairDirections 修正一次；返回 trial_ready 前不得说已经优化。成功 Trial 仍未确认，只有用户点击采用后才进入行程。
 - research_trip_options 的摘要可能包含并行语义分析结论。若 conditionRevision.status=recommended，可根据 reasonCodes 与 needsContext 最多修正一次受影响域的结构化 criteria 并再次研究；若 status=not_needed，不要为了展示循环重复搜索，要明确说明当前证据没有要求改条件。任何修正仍只调用同一个 Provider 研究入口，子分析不拥有 Provider。
 - 用户问“为什么推荐打车/地铁是否可行”时，先读取当前方案。回答必须分别给出步行目标与实际米数、换乘目标与实际次数、时间和估价，并把楼梯已发现、无台阶连续性未知、电梯运行状态未知分开说明；未知不能冒充冲突。
 - 工具摘要会逐域给出候选数量和 missingDomains。只把数量为 0 的域说成“待补”或“缺失”；数量大于 0 的域必须说成“已有候选”，不得把已有交通、住宿或游玩候选误报为待补。
@@ -465,6 +609,29 @@ ${renderTravelSkillsForPrompt(activeSkills)}
 ${historyForPrompt(conversation.messages)}
 
 请用与用户一致的语言回答。回答简洁、具体，使用纯文本，不使用 Markdown 标记；提出下一步时解释它会怎样影响吃住行玩之间的取舍。`;
+}
+
+function itineraryPlanningSystemPrompt({ control, referenceTime, activeSkills, planningRunId, planningContext, planningDigest }) {
+  const referenceDate = new Date(referenceTime ?? Date.now()).toLocaleDateString("zh-CN", { timeZone: "Asia/Hong_Kong", year: "numeric", month: "2-digit", day: "2-digit" });
+  return `你是 Travel Parent Agent，本轮只完成一件事：把当前候选与已确认事实组织成一份可撤销的按天路线试排，并用 plan_itinerary_trial 核验。今天是 ${referenceDate}。
+
+${renderTravelSkillsForPrompt(activeSkills.filter((skill) => skill.skillId === "plan-trip"))}
+
+规划运行：runId=${planningRunId}。第一次调用 attempt=1；只有核验返回 needs_repair 时才允许使用同一 runId 调用 attempt=2。最多修正一次。
+用户当前临时试排（不是已确认事实）：${JSON.stringify(planningContext ?? {})}
+当前旅行控制状态：${tripBriefForPrompt(control)}
+当前可用规划上下文：${JSON.stringify(planningDigest ?? {})}
+
+执行规则：
+1. 上面的规划上下文已经包含 current nodes、allowedEvidenceRefs、固定抵达/预约、当前 itinerary、天气和同行人路线限制；不要再调用读取工具。
+2. 只能引用其中的 nodeId。evidenceRefs 只能复制 allowedEvidenceRefs；不需要时传空数组。不得创造酒店、景点、餐厅、路线、价格、营业或设施事实。
+3. 你决定 Day、站序、timeWindow、durationMinutes、role、preferredModes 与 rationale。明确比较先寄存、先入住或先游玩的取舍；确定性代码负责路线分钟、费用算术、营业时间、步行、换乘、楼梯和新鲜度。
+   本轮只重排 currentOrder 中的站点，不补返程、不填满空白天、不重新研究候选。只有缺失信息让这些当前站点完全无法定位或定时，才写入 needsContext；价格未知、未来空白日、预订政策和未选择的返程属于 assumptions，不是本次路线 blocker。
+4. 固定抵达、预约、锁定项与具名同行人限制必须保留。用户没有确认的候选不是 locked node。
+5. 调用 plan_itinerary_trial。若返回 needs_repair，只根据 issueCode、observed facts 和 allowedRepairDirections 修正受影响的 flexible stops，再调用 attempt=2。不得删除硬约束、重复相同计划或新建 run。
+6. 只有 trial_ready 才能称为已生成优化试排。它仍未确认，不能说已写入行程。失败、超时或 needs_context 时保留当前方案。
+
+面向用户只说路线、时间、步行、换乘、费用、取舍和是否待确认，不说 Schema、Runtime、Provider、TripState、Patch、revision、runId 或工程枚举。`;
 }
 
 function toolResult(value, details = value) {
@@ -590,9 +757,10 @@ export class TravelConversationAgent {
     };
   }
 
-  async reply({ conversationId, userId, text, images = [], modelId = null } = {}) {
+  async reply({ conversationId, userId, text, images = [], modelId = null, planningContext = null } = {}) {
     const turnStartedAt = Date.now();
     const safeImages = normalizeVisualImages(images);
+    const safePlanningContext = normalizePlanningContext(planningContext);
     const input = trimText(text, 4_000) || (safeImages.length ? DEFAULT_VISUAL_REQUEST : "");
     if (!input) throw agentError("empty_conversation_message");
     if (inputHasSensitiveSecret(input)) throw agentError("sensitive_conversation_input_blocked");
@@ -709,6 +877,9 @@ export class TravelConversationAgent {
     let latestAnalysisRunId = null;
     let researchCompletionText = null;
     let latestBudgetCalculation = null;
+    let itineraryTrialResult = null;
+    let planningProviderCallCount = 0;
+    const planningRunId = safeId("planrun");
     const tools = [
       {
         name: "save_trip_understanding",
@@ -820,7 +991,7 @@ export class TravelConversationAgent {
           if (!activeTripId) return toolFailure("trip_not_created");
           const view = await this.travelService.getTripPlanView(activeTripId);
           latestPlanView = view;
-          return toolResult(planDigest(view), { status: "ready", tripId: activeTripId, revision: view.revision });
+          return toolResult(planningTurn ? itineraryPlanningDigest(view, safePlanningContext) : planDigest(view), { status: "ready", tripId: activeTripId, revision: view.revision });
         },
       },
       {
@@ -881,6 +1052,21 @@ export class TravelConversationAgent {
         },
       },
       {
+        name: "plan_itinerary_trial",
+        label: "生成并核验行程试排",
+        description: `根据 plan-trip Skill 生成一份按天站序与时间窗，再交给真实路线、预算、营业时间和同行人约束核验。只能引用 get_trip_plan_view 返回的 nodeId/evidenceRefs。本轮 runId 必须是 ${planningRunId}；最多 attempt 1 和一次 repair attempt 2。成功结果仍未确认。`,
+        parameters: ItineraryPlanSchema,
+        executionMode: "sequential",
+        execute: async (_toolCallId, params) => {
+          if (!activeTripId) return toolFailure("trip_not_created");
+          if (params.runId !== planningRunId || params.tripId !== activeTripId) return toolFailure("itinerary_planning_run_identity_mismatch");
+          const result = await this.travelService.planItineraryTrial({ tripId: activeTripId, plan: params, baselinePreviewId: safePlanningContext?.previewId ?? null });
+          itineraryTrialResult = result;
+          planningProviderCallCount += Number(result.providerCallCount ?? 0);
+          return toolResult(planningTrialDigest(result), { status: result.status, tripId: activeTripId, runId: result.runId, attempt: result.attempt, proposalId: result.proposalId ?? null });
+        },
+      },
+      {
         name: "confirm_user_arrival",
         label: "确认已安排的抵达事实",
         description: "仅当用户明确说机票/车票已经自行安排，并确认到达机场或车站与时间时调用。它建立接驳起点，不选择库存班次，也不购买或退改。",
@@ -897,7 +1083,7 @@ export class TravelConversationAgent {
           if (!explicitArrivalConfirmationIntent(input)) return toolFailure("explicit_user_confirmation_required");
           const result = await this.travelService.confirmUserArrival({ tripId: activeTripId, ...params });
           if (result.status !== "committed") return toolResult(result, { status: result.status ?? "rejected", tripId: activeTripId });
-          let mobility = committed.mobility ?? null;
+          let mobility = result.mobility ?? null;
           latestPlanView = await this.travelService.getTripPlanView(activeTripId);
           if ((latestPlanView.byDomain?.stay ?? []).some((node) => node.selected)) {
             mobility = await this.travelService.refreshTripMobility({ tripId: activeTripId });
@@ -987,11 +1173,27 @@ export class TravelConversationAgent {
     const promptConversation = { ...conversation, messages: conversation.messages.slice(0, -1) };
     const referenceTime = new Date(this.clock?.() ?? Date.now()).toISOString();
     const activeSkills = selectParentTravelSkills({ control, input, hasVisualInput: safeImages.length > 0 });
+    const planningEnabled = activeSkills.some((skill) => skill.skillId === "plan-trip");
+    const planningTurn = planningEnabled && itineraryPlanningIntent(input);
+    let embeddedPlanningDigest = null;
+    if (planningTurn && activeTripId) {
+      latestPlanView = await this.travelService.getTripPlanView(activeTripId);
+      embeddedPlanningDigest = itineraryPlanningDigest(latestPlanView, safePlanningContext);
+      activities.push({ toolName: "get_trip_plan_view", status: "ready" });
+    }
+    const activeTools = planningTurn
+      ? enabledTools.filter((tool) => tool.name === "plan_itinerary_trial")
+      : enabledTools.filter((tool) => tool.name !== "plan_itinerary_trial");
     const toolCallCounts = new Map();
     let toolCallCount = 0;
     let researchCallCount = 0;
+    let planningCallCount = 0;
+    let modelCallCount = 0;
+    const systemPrompt = planningTurn
+      ? itineraryPlanningSystemPrompt({ control, referenceTime, activeSkills, planningRunId, planningContext: safePlanningContext, planningDigest: embeddedPlanningDigest })
+      : parentSystemPrompt({ conversation: promptConversation, control, referenceTime, hasVisualInput: safeImages.length > 0, activeSkills });
     const agent = new Agent({
-      initialState: { systemPrompt: parentSystemPrompt({ conversation: promptConversation, control, referenceTime, hasVisualInput: safeImages.length > 0, activeSkills }), model, tools: enabledTools, thinkingLevel: configuration.thinkingLevel ?? (configuration.provider === "deepseek" ? "high" : "low") },
+      initialState: { systemPrompt, model, tools: activeTools, thinkingLevel: planningTurn ? "low" : configuration.thinkingLevel ?? (configuration.provider === "deepseek" ? "high" : "low") },
       streamFn: models.streamSimple.bind(models),
       toolExecution: "sequential",
       sessionId: conversation.conversationId,
@@ -1001,17 +1203,24 @@ export class TravelConversationAgent {
         const seen = toolCallCounts.get(hash) ?? 0;
         if (seen >= 2) return { block: true, reason: "travel_agent_repeated_tool_call_blocked", terminate: true };
         if (toolCall.name === "research_trip_options" && researchCallCount >= 2) return { block: true, reason: "travel_agent_research_revision_budget_exhausted", terminate: true };
+        if (toolCall.name === "plan_itinerary_trial" && (!planningTurn || planningCallCount >= 2)) return { block: true, reason: planningTurn ? "travel_agent_itinerary_repair_budget_exhausted" : "plan_trip_skill_required", terminate: true };
         toolCallCounts.set(hash, seen + 1);
         toolCallCount += 1;
         if (toolCall.name === "research_trip_options") researchCallCount += 1;
+        if (toolCall.name === "plan_itinerary_trial") planningCallCount += 1;
         return undefined;
       },
     });
     agent.subscribe((event) => {
+      if (event.type === "turn_start") modelCallCount += 1;
       if (event.type === "tool_execution_start") activities.push({ toolName: event.toolName, status: "running" });
       if (event.type === "tool_execution_end") {
         const current = activities.findLast((item) => item.toolName === event.toolName && item.status === "running");
-        if (current) current.status = event.isError ? "failed" : (event.result?.details?.status ?? "completed");
+        if (current) {
+          current.status = event.isError ? "failed" : (event.result?.details?.status ?? "completed");
+          if (event.result?.details?.attempt != null) current.attempt = event.result.details.attempt;
+          if (event.result?.details?.runId) current.runId = event.result.details.runId;
+        }
       }
     });
 
@@ -1019,6 +1228,10 @@ export class TravelConversationAgent {
       const deadline = setTimeout(() => agent.abort(), 90_000);
       try {
         await agent.prompt(input, safeImages);
+        if (planningTurn && itineraryTrialResult?.status === "needs_repair" && planningCallCount === 1 && Date.now() - turnStartedAt < 75_000) {
+          const issues = planningTrialDigest(itineraryTrialResult).issues;
+          await agent.prompt(`<itinerary-repair-request>同一规划 run 的第一次核验未通过。只根据以下结构化问题修正受影响的 flexible stops，保留其他 nodeId、固定抵达、预约和锁定项；用同一 runId、attempt=2 再调用 plan_itinerary_trial。不要只解释，也不要开始新 run。${JSON.stringify(issues)}</itinerary-repair-request>`);
+        }
       } finally {
         clearTimeout(deadline);
       }
@@ -1035,7 +1248,9 @@ export class TravelConversationAgent {
         else if (researchFailure.status === "EMPTY_VERIFIED") responseText = "我已经记住这趟旅行的要求，但这次没有找到足够可靠的地点资料，所以暂时没有给出推荐。你可以补充更看重的体验，或稍后让我继续查找。";
         else responseText = "我已经记住这趟旅行的要求，但当前无法连接实时地点或天气资料，所以没有用不可靠的信息补出推荐。你可以继续补充偏好；资料服务恢复后，在这段对话中说“继续规划”即可接着完成。";
       }
-      if (selectionConfirmationResult) {
+      if (itineraryTrialResult) {
+        responseText = planningTrialText(itineraryTrialResult);
+      } else if (selectionConfirmationResult) {
         responseText = confirmedSelectionText(selectionConfirmationResult);
       } else if (arrivalConfirmationResult) {
         const arrival = arrivalConfirmationResult.arrival;
@@ -1070,9 +1285,14 @@ export class TravelConversationAgent {
           skills: activeSkills.map(({ skillId, version, digest }) => ({ skillId, version, digest })),
           toolCallCount,
           researchCallCount,
+          planningCallCount,
+          planningRunId: itineraryTrialResult?.runId ?? null,
+          planningProviderCallCount,
+          modelCallCount,
           analysisDecision: latestAnalysisDecision,
           activeRunId: latestAnalysisRunId,
         },
+        ...(itineraryTrialResult ? { itineraryTrial: itineraryTrialResult } : {}),
         ...(safeImages.length ? { multimodal: { status: "completed", persistence: "none", provider: configuration.provider, model: configuration.model } } : {}),
       };
     } catch (error) {
@@ -1090,4 +1310,4 @@ export class TravelConversationAgent {
   }
 }
 
-export { analysisCoverageText, budgetCalculationText, conversationView, domainAvailabilityText, explicitSelectionIntent, modelStatus, resolveConfiguredModel, userFacingAgentText, visualCompletionOptions };
+export { analysisCoverageText, budgetCalculationText, containsPaymentCardNumber, conversationView, domainAvailabilityText, explicitSelectionIntent, itineraryPlanningDigest, itineraryPlanningIntent, modelStatus, resolveConfiguredModel, userFacingAgentText, visualCompletionOptions };

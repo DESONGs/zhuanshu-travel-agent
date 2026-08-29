@@ -1,7 +1,7 @@
 # Agent Runtime、Skills 与动态并行架构
 
 - 日期：2026-08-27
-- 状态：四个 Changeset 与 P0/P1 状态一致性加固已实施；fixture、live model、Pi consumer、Provider、Web 自然会话和浏览器继续按独立验收门记录
+- 状态：四个 Changeset、P0/P1 状态一致性加固与行程 Plan–Check–Repair Harness 已实施；fixture、live model、Pi consumer、Provider、Web 自然会话和浏览器继续按独立验收门记录
 - 范围：Travel Parent Agent、Pi package、Extensions、Skills、Provider 研究、动态并行与相关测试
 - 约束：本轮只收敛真实运行链与并行能力，不重写 TripState、TravelService、Provider、HTTP/MCP 对外合同、购买边界或现有前端流程
 
@@ -370,3 +370,37 @@ Join 另外返回 `requiredLanes`、`startedLanes`、`completedLanes`、`failedL
 - 2026-08-27 用户确认：保留并真实利用动态并行能力，同时审查 package/Skill 的声明式完成和重复工程。
 
 后续实现若偏离本文，必须在 `10-v2-implementation-decisions.md` 记录替代决策、原因、影响和回滚方式。
+
+## 15. 有反馈依赖的行程规划 Harness（2026-08-30）
+
+行程规划不进入 Dynamic Workflow fan-out，也不新增 planning Sub-agent。原因是它的第二步依赖第一次 Checker 结果，属于 Parent 内的顺序反馈循环：
+
+```text
+Parent + plan-trip
+  → ItineraryPlan attempt 1
+  → plan_itinerary_trial
+  → AMap + deterministic Checker
+  → feasible: one pending proposal artifact
+  → needs_repair: Parent attempt 2 once
+  → blocked/needs_context: stop
+```
+
+### 单一合同与运行身份
+
+- `ItineraryPlanSchema` 是 Parent Tool 输入与 Runtime 校验的同一 TypeBox 对象；字段包括 run/trip/revision/attempt、objective/priorities、locks/fixed anchors、days/stops、timeWindow/duration/role/modes/rationale、assumptions/needsContext/evidenceRefs。
+- DeepSeek 对该嵌套 schema 的 `$id` 元数据会静默空返回，现已移除仅用于命名的 `$id`；字段与 Value.Check 没有另存副本。
+- `operationId = runId:attempt`；规划复用独立的 `TravelAnalysisRunCoordinator` 实例完成 supersede、AbortSignal、attempt replay、stale discard 与 terminal Join。它是短期运行控制，不是第二份旅行状态。
+- 规划上下文由服务端从现有 Trip/Proposal/Environment 只读组装；只在直接规划意图中加载 `plan-trip` 与唯一的 `plan_itinerary_trial`，避免普通回合携带大规划合同，也避免先用一轮模型 Tool 取回服务端已经拥有的事实。
+
+### 状态所有权
+
+- attempt 失败或 repair 不写状态；成功 Trial 可把 canonical plan 与 preview pointer 附着到现有 pending proposal，revision 与 selected nodes 不变。
+- 用户“保持当前”只移除 itinerary 字段；研究候选继续保留。用户“采用优化方案”才由现有 `acceptTripChange` 提交候选并把同一份已核验 Mobility 写入 `environment.mobility`。
+- 逐段 route mode 先经服务端复核，再随同一 Trial 确认。确认会复用 preview cache；缓存不存在时只能重新核验同一 canonical plan，不能让模型临时改写。
+- `buildItineraryDraft()` 只保留为 quick comparison / conservative fallback；正常计划通过 `itineraryPlanToDraft()` 保留模型明确站序，`finalizeItinerarySchedule()` 只顺延 flexible time，不擅自重排。
+
+### 与语义 fan-out 的关系
+
+Provider 研究仍是一批取数后最多三 lane 并行分析；规划 Harness 消费候选与已确认事实，不让 Child 再请求 Provider。一次成功规划 attempt 调一次 `planMobility`，不会随 lane 数增长。研究 partial 可以先提供候选，但 Parent 必须在 Trial 中重新做确定性路线核验，不能把 partial 分析写成完整规划。
+
+本次成功浏览器回合为 `planningAttempt=1`：1 次 `plan_itinerary_trial`、其内 1 次 `planMobility`，Parent 模型经历“生成 Tool 参数 → Tool 后回复”两次响应；没有触发 repair。独立 fixture 另证明 fixed conflict 会触发 attempt 2，第二次仍失败则停止；两类证据不能互相替代。高德独立 live smoke 同日为 `completed/partial`：play 6、food 0、stay 6、transport 6，静态地图、天气与单段 mobility 通过；浏览器的餐饮候选来自应用组合链，不能把高德 `food=0` 改写为高德餐饮已单独通过。

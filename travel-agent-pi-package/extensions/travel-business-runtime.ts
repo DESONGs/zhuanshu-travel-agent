@@ -1,7 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type, type Static, type TSchema } from "typebox";
 import { createTravelService } from "../../src/api/create-travel-service.mjs";
-import { ResearchCriteriaInputSchema, TripBriefSchema, TripPatchProposalSchema, TravelerSchema } from "../src/contracts/index.js";
+import { ItineraryPlanSchema, ResearchCriteriaInputSchema, TripBriefSchema, TripPatchProposalSchema, TravelerSchema } from "../src/contracts/index.js";
 
 const travelerProfileParameters = Type.Object({
   travelerId: Type.Optional(Type.String()),
@@ -115,6 +115,10 @@ export function registerTravelBusinessRuntime(pi: ExtensionAPI, { service = crea
     parameters: Type.Object({ tripId: Type.String(), proposal: TripPatchProposalSchema }), run: (params) => service.proposeTripChange(params),
   });
   register(pi, {
+    name: "plan_itinerary_trial", label: "Plan Itinerary Trial", description: "Check one model-authored itinerary against real routes and constraints; at most one repair attempt and no state commit.",
+    parameters: Type.Object({ tripId: Type.String(), plan: ItineraryPlanSchema }), run: (params) => service.planItineraryTrial(params),
+  });
+  register(pi, {
     name: "accept_trip_change", label: "Accept Trip Change", description: "Parent-only atomic commit of one staged proposal.",
     parameters: Type.Object({
       tripId: Type.String(),
@@ -125,6 +129,7 @@ export function registerTravelBusinessRuntime(pi: ExtensionAPI, { service = crea
       partial: Type.Optional(Type.Boolean()),
       previewId: Type.Optional(Type.String({ maxLength: 128 })),
       baseRevision: Type.Optional(Type.Integer({ minimum: 0 })),
+      routeModes: Type.Optional(Type.Record(Type.String(), Type.Union([Type.Literal("walk"), Type.Literal("transit"), Type.Literal("taxi")]))),
     }), run: (params) => service.acceptTripChange(params),
   });
   register(pi, {

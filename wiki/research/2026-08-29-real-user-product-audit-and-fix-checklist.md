@@ -2,7 +2,7 @@
 
 > 审计日期：2026-08-29
 > 审计性质：真实自然语言、真实当前 Provider、桌面与移动响应式路径
-> 当前状态：**14 项问题已完成代码修复；同一上海家庭旅行的桌面、移动、真实 Provider 与 TripState 复验通过，设备级边界见 §12。**
+> 当前状态：**14 项问题已完成代码修复；TA-UX-009 的“真实 AI 优化”在 2026-08-30 经 Plan–Check–Repair Harness 与桌面/移动真实浏览器补验，证据见 §13。**
 > 代码定位：分支 `codex/v2-deployment-readme-release`，审计前可复现 baseline `1cadbd2`
 > 重要说明：审计时工作区有 104 项未提交变更，因此本文对应的是当时本地运行快照，不是可由单一 Git commit 复现的发布版本。后续每次复验必须记录新的 commit、时间与 Provider `checkedAt`。
 
@@ -180,7 +180,7 @@
 | TA-UX-006 | P1 | 路线 Δ 使用空基准，且缺少交通方式切换比较 | VERIFIED | Codex | 同上 | 2026-08-29 |
 | TA-UX-007 | P1 | “命中人民广场”没有转换成距离、耗时和实际可达性 | VERIFIED | Codex | 同上 | 2026-08-29 |
 | TA-UX-008 | P1 | 本地/小众餐饮相关性不足，低评分商业美食城成为首选 | VERIFIED | Codex | 同上 | 2026-08-29 |
-| TA-UX-009 | P1 | “让 AI 优化站序”仅预填文本，行为与按钮承诺不一致 | VERIFIED | Codex | 同上 | 2026-08-29 |
+| TA-UX-009 | P1 | “让 AI 优化站序”仅预填文本，行为与按钮承诺不一致 | VERIFIED | Codex | `Plan–Check–Repair Harness` | 2026-08-30 |
 | TA-UX-010 | P1 | 桌面候选卡操作发生布局越界，主要 CTA 不可见 | VERIFIED | Codex | 同上 | 2026-08-29 |
 | TA-UX-011 | P1 | 酒店详情价格文案矛盾、图片/坐标/跳转不足 | VERIFIED | Codex | 同上 | 2026-08-29 |
 | TA-UX-012 | P2 | Activity 与地图暴露 `saved/proposed/开发底图` 等工程语言 | VERIFIED | Codex | 同上 | 2026-08-29 |
@@ -420,7 +420,7 @@ QA 只有在同一自然语言场景完成复验后才能改为 `VERIFIED`。以
 
 ### 承诺、人体工学与内容
 
-- 伪直接操作改名为“向 AI 询问更优顺序”，预填内容包含完整日期、时间窗、role 和当前顺序；它不再承诺已执行优化。
+- 2026-08-29 的临时修复仅把伪直接操作改名为“向 AI 询问更优顺序”，解决了承诺一致性，但没有完成真实优化。该结论已被 2026-08-30 的实现取代，见 §13。
 - 候选卡禁止 flex shrink，1440 与 1152×720（125% 等效）下 CTA 均位于卡片内部；393px 主要操作、顶部试排状态、Sheet grip 与模式按钮至少 44px。
 - Activity 只显示“处理中 / 已完成 / 需要处理”；地图显示“互动位置对比地图 / 高德地图快照”，不暴露 `saved/proposed/开发底图`。
 - 酒店详情统一 `firm/reference/estimate`，路线解析可补坐标；无 OTA 跳转时明确“当前只能比较”。设施仍固定注明非实时。
@@ -431,3 +431,38 @@ QA 只有在同一自然语言场景完成复验后才能改为 `VERIFIED`。以
 
 - 同一上海家庭旅行在 1440×900、1152×720 与 393×852 浏览器完成；console error/warn 为 0。
 - 真机多点触控、屏幕阅读器、生产 OAuth、交易与实时设施仍是独立上线门；本节 VERIFIED 只代表本报告定义的浏览器与合同验收，不扩张为完整 WCAG 或生产上线结论。
+
+## 13. TA-UX-009 真实 AI 优化补验（2026-08-30）
+
+### 13.1 实现边界
+
+- 新增一个 canonical TypeBox `ItineraryPlanSchema`，同时作为 Parent Tool 输入和 Runtime 校验输入；没有维护第二份 Planner Tool schema。
+- Parent 在规划回合只加载 `plan-trip`，并只暴露 `plan_itinerary_trial`。当前 Trip、候选、固定锚点、同行人和 UI 临时试排由服务端组装进本轮 context，不再让模型用一轮工具重新读取同一事实。
+- LLM 决定 Day、站序、时间窗、停留时长、role、preferred modes 与理由；AMap 和确定性 Checker 决定路线、时间加减、步行、换乘、楼梯、营业证据、锁定项与新鲜度。
+- 初始计划最多一次 repair；`runId:attempt` 是幂等 operation ID。Trial 只写入现有 pending proposal artifact，用户确认前不增加 Trip revision、不选择节点、不写当前 Mobility。
+- `buildItineraryDraft()` 继续服务快速候选比较和明确降级，UI 固定说明“快速连线，不代表 AI 已优化站序”；正常优化不再由它决定站序。
+
+### 13.2 真实桌面与移动证据
+
+同一上海三人家庭旅行在本地真实 DeepSeek Parent + 当前高德账号中完成：
+
+1. 初始自然语言研究返回四域候选；语义 fan-out 为 partial，UI 诚实说明不能当作完整规划。
+2. 四域首选形成保守快速试排：5 段移动、109 分钟、步行 215 米、估算 ¥256；Trip revision=1、selected nodes=0。
+3. 桌面点击“AI 优化当前路线”直接启动 Parent，不再预填 Composer。界面在请求期间显示“AI 正在生成站序并核验真实路线”。
+4. DeepSeek 生成的主方案保留 10 月 15 日 21:20 抵达，判断夜间不应赶博物馆/餐厅，安排“抵达 → 入住休息 → 次日从住宿出发 → 博物馆 → 本帮菜 → 返回住宿”。
+5. Checker 使用真实路线得到 5 段、79 分钟、步行 0 米、0 次换乘、估算 ¥283；页面显示 AI 理由、按天时间轴、地图和“采用优化方案 / 保持当前 / 继续调整”。
+6. 393×852 移动端显示同一 Trial。把机场段切成公交后，服务端返回“步行 1145 米，超过 600 米上限”并禁用采用；切回打车后恢复可确认。
+7. 确认后 revision 1→2，四域节点一次提交，`environment.mobility.itinerary.planningSource=model_plan`、`feasibility.canConfirm=true`、首段 mode=taxi；planning artifact 被清除。浏览器 console error/warn=0。
+
+成功规划回合为 attempt 1：1 次 `plan_itinerary_trial`、1 次 AMap `planMobility`，Parent 模型两次响应（生成 Tool 参数、Tool 后回复）；没有触发 repair。结构化 fixture 另覆盖“第一次 fixed conflict → attempt 2 修复成功”和“attempt 2 仍失败即停止”。
+
+### 13.3 修复过程中的反证
+
+- DeepSeek 对嵌套 Tool schema 中仅用于内部命名的 `$id` 会静默返回空消息；移除 `$id` 后，同一 canonical 字段合同真实产生 tool call。字段与 Runtime 校验没有复制或放宽。
+- 完整日期/时间曾被旧的银行卡正则误判；已改为 Luhn 校验，正常 ISO 行程不再被隐私门阻断，真实支付卡号仍会被拒绝。
+- 规划 Tool 曾在所有 Parent 回合暴露，导致普通首轮模型入口空返回；现在只有直接规划意图加载。规划 context 曾通过第二轮工具读取导致 90 秒耗尽；现在服务端只读组装，模型一轮生成计划并进入 Checker。
+
+### 13.4 仍未扩张的结论
+
+- 本次证明 Web 桌面与 393px 响应式浏览器路径，不等于 iOS、Android、微信或支付宝真机完成。
+- 当次库存、路线和估价仍是带 `checkedAt` 的动态快照；实时设施、生产商业授权、购买和自动退改不在本结论内。
