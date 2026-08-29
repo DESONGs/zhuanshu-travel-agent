@@ -23,8 +23,11 @@ test("Tuniu research normalizes official hotel and train inventory into shared c
   const result = await provider.research({ brief: { origin: "广州", destination: "大理", dates: "2026-09-15 至 2026-09-19", arrivalMode: "火车" }, domains: ["stay", "transport"] });
   assert.equal(result.status, "completed");
   assert.equal(result.byDomain.stay[0].cost, 680);
+  assert.deepEqual(result.byDomain.stay[0].price, { amount: 680, currency: "CNY", quality: "firm", basis: "per_night_room", checkedAt: result.checkedAt });
   assert.equal(result.byDomain.stay[0].media[0].url, "https://m.tuniucdn.com/hotel.jpg");
   assert.equal(result.byDomain.transport[0].cost, 420);
+  assert.equal(result.byDomain.transport[0].price.quality, "firm");
+  assert.equal(result.byDomain.transport[0].price.basis, "per_person_one_way");
   assert.equal(result.byDomain.transport[0].operability.availableSeats, 15);
   assert.deepEqual(fake.calls.map((call) => call.tool).sort(), ["searchLowestPriceTrain", "tuniuHotelSearch"]);
   assert.equal(result.byDomain.stay[0].operability.bookingUrl, undefined);

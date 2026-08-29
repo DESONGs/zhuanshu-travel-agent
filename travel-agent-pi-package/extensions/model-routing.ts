@@ -1,22 +1,14 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { Type } from "typebox";
-import { Value } from "typebox/value";
+import { resolveConfiguredModel } from "../../src/agent/travel-conversation-agent.mjs";
 
-const packageDir = dirname(dirname(fileURLToPath(import.meta.url)));
-
-const route = Type.Object({ purpose: Type.String() }, { additionalProperties: true });
-const modelRouting = Type.Object({
-  defaultRoute: Type.String(),
-  routes: Type.Object({ deliberation: route, extraction: route, verification: route, multimodal: route }),
-}, { additionalProperties: true });
-
-function routes() {
-  const value: unknown = JSON.parse(readFileSync(join(packageDir, "runtime", "model-routing.json"), "utf8"));
-  if (!Value.Check(modelRouting, value)) throw new Error("invalid_model_routing_configuration");
-  return value;
+function currentRoute(kind: "deliberation" | "extraction" | "verification" | "multimodal") {
+  if (kind === "verification") {
+    const fallback = resolveConfiguredModel(process.env, { role: "reasoning" });
+    return { purpose: "Verify dynamic facts with official providers first.", providerRole: "official_provider_first", modelFallback: fallback };
+  }
+  const role = kind === "multimodal" || kind === "extraction" ? "vision" : "reasoning";
+  return { purpose: kind === "deliberation" ? "Parent travel reasoning and tool use." : kind === "extraction" ? "Read-only evidence extraction." : "Multimodal parent travel reasoning.", ...resolveConfiguredModel(process.env, { role }) };
 }
 
 export default function (pi: ExtensionAPI) {
@@ -26,8 +18,7 @@ export default function (pi: ExtensionAPI) {
     description: "Return the configured reasoning, extraction, verification, or multimodal route. It selects no provider and returns no model credential.",
     parameters: Type.Object({ kind: Type.Union([Type.Literal("deliberation"), Type.Literal("extraction"), Type.Literal("verification"), Type.Literal("multimodal")]) }),
     async execute(_id, params) {
-      const config = routes();
-      const details = { schemaVersion: "travel-model-route-v1", kind: params.kind, route: config.routes[params.kind], credentialBoundary: "model credentials are runtime configuration, never tool output" };
+      const details = { schemaVersion: "travel-model-route-v1", kind: params.kind, route: currentRoute(params.kind), statusSource: "current_model_resolver", credentialBoundary: "model credentials are runtime configuration, never tool output" };
       return { content: [{ type: "text", text: JSON.stringify(details, null, 2) }], details };
     },
   });

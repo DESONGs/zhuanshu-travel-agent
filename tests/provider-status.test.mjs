@@ -39,6 +39,15 @@ test("provider status reports DeepSeek visual readiness independently from text-
   assert.equal(JSON.stringify(status).includes("must-not-appear"), false);
 });
 
+test("Kimi Child fallback remains unavailable until its dedicated structured Skill smoke passes", () => {
+  const pending = providerStatusSummary({ MOONSHOT_API_KEY: "must-not-appear", TRAVEL_AGENT_KIMI_SMOKE_STATUS: "passed_live_smoke", TRAVEL_AGENT_KIMI_CHILD_SMOKE_STATUS: "not_run" });
+  assert.equal(pending.model.kimiVision, "passed_live_smoke");
+  assert.equal(pending.model.kimiChild, "fallback_unavailable");
+  const passed = providerStatusSummary({ MOONSHOT_API_KEY: "must-not-appear", TRAVEL_AGENT_KIMI_CHILD_SMOKE_STATUS: "passed_live_smoke" });
+  assert.equal(passed.model.kimiChild, "available_child_fallback");
+  assert.equal(JSON.stringify(passed).includes("must-not-appear"), false);
+});
+
 test("user model choices prioritize DeepSeek V4 Flash, then Pro, then Kimi K3", () => {
   const status = providerStatusSummary({ DEEPSEEK_API_KEY: "deepseek", MOONSHOT_API_KEY: "kimi" });
   assert.equal(status.modelSelection.defaultModelId, "deepseek-v4-flash");

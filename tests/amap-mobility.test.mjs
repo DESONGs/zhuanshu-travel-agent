@@ -37,7 +37,8 @@ test("AMap mobility turns selected places into bounded walking, transit and taxi
   }));
 
   assert.equal(mobility.status, "completed");
-  assert.equal(mobility.legs.length, 1);
+  assert.equal(mobility.legs.length, 2, "a dated activity route should include the return to the stay anchor");
+  assert.equal(mobility.legs.at(-1).destination.nodeId, "stay_people_square");
   assert.equal(mobility.legs[0].recommendedMode, "transit");
   assert.deepEqual(mobility.travelerFit.constrainedTravelerIds, ["traveler_father"]);
   assert.equal(mobility.travelerFit.maxContinuousWalkMeters, 800);
@@ -110,6 +111,43 @@ test("AMap mobility connects an intercity arrival airport to the selected hotel"
   assert.equal(mobility.legs[0].destination.nodeId, "stay_old_town");
   assert.match(mobility.legs[0].rationale, /抵达后的接驳/);
   assert.deepEqual(geocodedAddresses, ["大理", "大理机场"]);
+});
+
+test("AMap taxi rationale audits walking and transfer thresholds without treating unknown accessibility as stairs", async () => {
+  const fetchImpl = async (url) => {
+    const parsed = new URL(url);
+    if (parsed.pathname === "/v3/geocode/geo") {
+      const airport = /浦东/.test(parsed.searchParams.get("address") ?? "");
+      return new Response(JSON.stringify({ status: "1", infocode: "10000", geocodes: [{ citycode: "021", adcode: "310000", location: airport ? "121.807928,31.152777" : "121.473701,31.230416" }] }));
+    }
+    if (parsed.pathname === "/v5/direction/transit/integrated") return new Response(JSON.stringify({ status: "1", infocode: "10000", route: { transits: [{ distance: "47000", walking_distance: "1128", cost: { duration: "9780", transit_fee: "26" }, segments: [{ walking: { steps: [{ instruction: "乘扶梯进入车站", distance: "500", duration: "420", navi: { walk_type: "8" } }] }, bus: { buslines: [{ name: "地铁2号线", departure_stop: { name: "浦东机场" }, arrival_stop: { name: "世纪大道" }, duration: "3600", distance: "30000" }] } }, { bus: { buslines: [{ name: "地铁4号线", departure_stop: { name: "世纪大道" }, arrival_stop: { name: "西藏南路" }, duration: "1800", distance: "10000" }] } }, { bus: { buslines: [{ name: "地铁8号线", departure_stop: { name: "西藏南路" }, arrival_stop: { name: "人民广场" }, duration: "1200", distance: "5000" }] } }] }] } }));
+    if (parsed.pathname === "/v5/direction/driving") return new Response(JSON.stringify({ status: "1", infocode: "10000", route: { paths: [{ distance: "47000", cost: { duration: "3120", taxi: "151" }, steps: [{ instruction: "驾车前往人民广场", step_distance: "47000", cost: { duration: "3120" } }] }] } }));
+    throw new Error(`unexpected path ${parsed.pathname}`);
+  };
+  const provider = new AmapTravelResearchProvider({ apiKey: "test-key", fetchImpl, requestIntervalMs: 0, rateLimitRetryMs: 0 });
+  const mobility = normalizeTripMobility(await provider.planMobility({
+    brief: { destination: "上海", dates: "2026-08-27 至 2026-08-29", arrivalTime: "14:00" },
+    travelers: [{ travelerId: "traveler_2", displayName: "父亲", careNeeds: { mobility: { maxContinuousWalkMeters: 600, avoidStairs: true } } }],
+    selectedNodes: [
+      { nodeId: "arrival_pvg_t2", domain: "transport", title: "已确认抵达：浦东机场 T2", selected: true, operability: { mobilityRole: "user_confirmed_arrival", arrivalRouteAnchor: { kind: "airport", city: "上海", label: "浦东机场 T2", terminal: "T2", time: "14:00" } } },
+      { nodeId: "stay_people_square", domain: "stay", title: "人民广场酒店", selected: true, location: { citycode: "021", coordinates: { longitude: 121.473701, latitude: 31.230416 } } },
+    ],
+  }));
+
+  const leg = mobility.legs[0];
+  assert.equal(leg.recommendedMode, "taxi");
+  assert.match(leg.rationale, /1128 米.*600 米目标/);
+  assert.match(leg.rationale, /换乘 2 次.*1 次目标/);
+  assert.match(leg.rationale, /52 分钟.*步行 0 米.*换乘 0 次/);
+  assert.match(leg.rationale, /未知项不是本次推荐打车的直接触发条件/);
+  assert.doesNotMatch(leg.rationale, /已发现楼梯/);
+  assert.deepEqual(leg.recommendationAudit.triggers, ["transit_walking_exceeds_target", "transit_transfers_exceed_target"]);
+  assert.equal(leg.recommendationAudit.transit.hasEscalator, true);
+  assert.equal(leg.recommendationAudit.transit.hasStairs, false);
+  assert.deepEqual(leg.recommendationAudit.accessibilityEvidence, { status: "not_verified", directTrigger: false });
+  assert.equal(mobility.travelerFit.planningWalkingTarget, 600);
+  assert.equal(mobility.travelerFit.planningTransferTarget, 1);
+  assert.equal(mobility.travelerFit.transferTargetSource, "reduced_mobility_default");
 });
 
 test("AMap mobility keeps account gates distinct from QPS and returns an honest unavailable state", async () => {

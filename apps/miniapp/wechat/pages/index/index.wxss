@@ -32,3 +32,21 @@
 .schedule-label { display:block; margin-bottom:6rpx; color:#6a7b85; font-size:20rpx; font-weight:700; }
 .map-cta { margin-top:22rpx; color:#315f77; border:1rpx solid #b9ced9; border-radius:18rpx; background:#eef7fb; font-size:24rpx; font-weight:700; }
 .facility-panel { margin-top:0; }
+.page { padding-bottom:150rpx; }
+.workspace-tabs.bottom-tabs { position:fixed; top:auto; right:0; bottom:0; left:0; z-index:10; height:112rpx; padding:0 24rpx env(safe-area-inset-bottom); display:flex; gap:0; border-top:1rpx solid #dfe4e7; background:#fff; }
+.workspace-tabs.bottom-tabs button { height:112rpx; line-height:112rpx; flex:1; position:relative; border-radius:0; color:#53616b; background:#fff; font-size:24rpx; font-weight:600; }
+.workspace-tabs.bottom-tabs button.active { color:#c9443b; background:#fff; box-shadow:none; }
+.workspace-tabs.bottom-tabs button[disabled] { opacity:.42; }
+.tab-badge { min-width:28rpx; height:28rpx; padding:0 7rpx; position:absolute; top:12rpx; left:calc(50% + 28rpx); display:flex; align-items:center; justify-content:center; border-radius:999rpx; color:#fff; background:#ff5a4f; font-size:18rpx; line-height:28rpx; }
+.candidate-price { margin:10rpx 0 4rpx; display:flex; align-items:baseline; gap:10rpx; }
+.candidate-price text:first-child { color:#1d2529; font-size:26rpx; font-weight:700; }
+.candidate-price text:last-child { color:#738087; font-size:20rpx; }
+.candidate-price.reference text:first-child { color:#795c31; }
+.candidate-price.estimate text:first-child { color:#2366a8; }
+.candidate-price.unknown text:first-child { color:#738087; font-size:22rpx; }
+.budget-board { background:#f8fafb; }
+.budget-rows { margin-top:14rpx; display:grid; gap:0; }
+.budget-rows>view { min-height:58rpx; display:grid; grid-template-columns:54rpx 120rpx minmax(0,1fr); align-items:center; gap:12rpx; border-top:1rpx solid #e1e7e9; }
+.budget-rows text:first-child { font-weight:700; }
+.budget-rows text:nth-child(2) { text-align:right; font-weight:700; }
+.budget-rows text:last-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#758188; font-size:20rpx; }

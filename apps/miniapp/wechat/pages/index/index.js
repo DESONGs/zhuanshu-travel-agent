@@ -45,13 +45,36 @@ function mobilityModel(mobility) {
   };
 }
 
+function priceModel(candidate) {
+  const source = candidate && candidate.price;
+  const legacy = Number(candidate && candidate.cost);
+  const amount = source ? source.amount : (Number.isFinite(legacy) && legacy > 0 ? legacy : null);
+  const quality = source && source.quality ? source.quality : amount == null ? "unknown" : "reference";
+  if (amount == null || quality === "unknown") return { priceLabel: "待核验", priceDetail: "未取得可靠价格", priceTone: "unknown" };
+  const prefix = quality === "reference" ? "≈" : quality === "estimate" ? "~" : "";
+  const detail = quality === "firm" ? "本次实价" : quality === "reference" ? "参考价" : "确定性估算";
+  return { priceLabel: `${prefix}¥${Math.round(amount)}`, priceDetail: detail, priceTone: quality };
+}
+
+function budgetModel(budget) {
+  if (!budget) return null;
+  const labels = { stay: "住", transport: "行", food: "吃", play: "玩" };
+  const rows = Object.keys(labels).map((domain) => {
+    const bucket = budget.domains && budget.domains[domain];
+    const unknown = !bucket || bucket.quality === "unknown" || (!bucket.estimated && bucket.unknownCount);
+    const prefix = bucket && bucket.quality === "reference" ? "≈" : bucket && bucket.quality === "estimate" ? "~" : "";
+    return { domain, label: labels[domain], amountLabel: unknown ? "待核验" : `${prefix}¥${Math.round(bucket.estimated || bucket.committed || 0)}`, basis: bucket && bucket.basis && bucket.basis[0] || "" };
+  });
+  return { summary: `整趟约 ¥${Math.round(budget.estimated || 0)}${budget.totalBudget != null ? ` / ¥${Math.round(budget.totalBudget)}` : ""}`, rows, exceedsBudget: budget.exceedsBudget === true };
+}
+
 function planModel(plan) {
   const proposal = plan && plan.pendingProposals && plan.pendingProposals[0];
   const labels = { play: "玩", food: "吃", stay: "住", transport: "行" };
-  const proposalDomains = proposal ? ["play", "food", "stay", "transport"].map((key) => ({
+  const proposalDomains = proposal ? ["transport", "stay", "food", "play"].map((key) => ({
     key,
     label: labels[key],
-    candidates: (proposal.byDomain[key] || []).map((candidate) => ({ ...candidate, selected: candidate.selected === true, photo: candidate.media && candidate.media[0] ? candidate.media[0].url : "", facilityText: candidate.operability && candidate.operability.mappedFacilities && candidate.operability.mappedFacilities.length ? `设施参考：${candidate.operability.mappedFacilities.map((facility) => facility.label).join("、")} · 非实时` : "" })),
+    candidates: (proposal.byDomain[key] || []).map((candidate) => ({ ...candidate, ...priceModel(candidate), selected: candidate.selected === true, photo: candidate.media && candidate.media[0] ? candidate.media[0].url : "", facilityText: candidate.operability && candidate.operability.mappedFacilities && candidate.operability.mappedFacilities.length ? `设施参考：${candidate.operability.mappedFacilities.map((facility) => facility.label).join("、")} · 非实时` : "" })),
   })).filter((domain) => domain.candidates.length).map((domain) => ({ ...domain, hasSelection: domain.candidates.some((candidate) => candidate.selected) })) : [];
   const accepted = plan ? Object.values(plan.byDomain || {}).flatMap((items) => items.filter((item) => item.selected)).map((item) => ({
     ...item,
@@ -67,7 +90,7 @@ function planModel(plan) {
     width: 24,
     height: 32,
   }));
-  return { proposal, proposalDomains, activeDomainKey: proposalDomains[0] ? proposalDomains[0].key : "play", markers, accepted, mobility: mobilityModel(plan && plan.mobility) };
+  return { proposal, proposalDomains, activeDomainKey: proposalDomains[0] ? proposalDomains[0].key : "transport", markers, accepted, mobility: mobilityModel(plan && plan.mobility), planBudget: budgetModel(plan && plan.budget) };
 }
 
 Page({
@@ -80,6 +103,7 @@ Page({
     trip: null,
     proposal: null,
     proposalDomains: [],
+    planBudget: null,
     markers: [],
     accepted: [],
     mobility: null,
@@ -173,17 +197,17 @@ Page({
   },
   async acceptProposal() {
     if (!this.data.proposal || !this.data.trip || this.data.loading) return;
-    if (this.data.proposalDomains.some((domain) => domain.candidates.length && !domain.candidates.some((candidate) => candidate.selected))) {
-      this.setData({ notice: "请先完成每一项选择，再确认整份方案。" });
+    if (!this.data.proposalDomains.some((domain) => domain.candidates.some((candidate) => candidate.selected))) {
+      this.setData({ notice: "请先选择一个想确认的候选；其他领域可以稍后再决定。" });
       return;
     }
     const selections = Object.fromEntries(this.data.proposalDomains.map((domain) => [domain.key, domain.candidates.find((candidate) => candidate.selected)?.nodeId]).filter((item) => item[1]));
     this.setData({ loading: true });
     try {
-      await app.request(`/api/trips/${encodeURIComponent(this.data.trip.tripId)}/proposals/${encodeURIComponent(this.data.proposal.proposalId)}/accept`, { method: "POST", data: { selections } });
+      await app.request(`/api/trips/${encodeURIComponent(this.data.trip.tripId)}/proposals/${encodeURIComponent(this.data.proposal.proposalId)}/accept`, { method: "POST", data: { selections, partial: true } });
       await app.request(`/api/trips/${encodeURIComponent(this.data.trip.tripId)}/mobility/refresh`, { method: "POST" });
       await this.loadTrip(this.data.trip.tripId);
-      this.setData({ notice: "方案已加入这趟旅行，仍可继续对话调整。", activeView: "itinerary" });
+      this.setData({ notice: "已确认所选候选；其他领域仍可继续比较。", activeView: "itinerary" });
     } catch (error) {
       this.setData({ notice: message(error) });
     } finally {

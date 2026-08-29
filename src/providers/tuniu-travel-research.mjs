@@ -80,6 +80,13 @@ function candidate({ domain, providerRef, title, summary, checkedAt, cost = 0, m
     entityId,
     checkedAt,
     cost,
+    price: {
+      amount: cost > 0 ? cost : null,
+      currency: "CNY",
+      quality: cost > 0 ? "firm" : "unknown",
+      basis: domain === "stay" ? "per_night_room" : "per_person_one_way",
+      checkedAt,
+    },
     media,
     location,
     operability: { provider: PROVIDER, providerRef, bookingProviderLabel: "途牛", researchDepth: "official_ota_search", checkedAt, ...operability },
@@ -106,7 +113,30 @@ function normalizeHotel(item, checkedAt) {
     cost,
     media: photo ? [{ url: photo, title: text(item.hotelName, 120), source: PROVIDER }] : [],
     location: address || district || city ? { ...(address ? { address, label: address } : {}), ...(district ? { district } : {}), ...(city ? { city } : {}) } : null,
-    operability: { rating: numeric(item.commentScore), priceHint: cost ? `¥${cost} 起` : null, roomName: text(item.roomName, 120) || null, roomArea: text(item.roomArea, 80) || null, roomWindow: text(item.roomWindow, 80) || null, meal: text(item.meal, 80) || null, refundPolicy: text(item.refund, 140) || null, inventoryVerified: true, offerFreshness: "search_time" },
+    operability: {
+      rating: numeric(item.commentScore),
+      priceHint: cost ? `¥${cost} 起` : null,
+      roomName: text(item.roomName, 120) || null,
+      roomArea: text(item.roomArea, 80) || null,
+      roomWindow: text(item.roomWindow, 80) || null,
+      meal: text(item.meal, 80) || null,
+      refundPolicy: text(item.refund, 140) || null,
+      inventoryVerified: true,
+      hotelOfferStatus: "available_search_offer",
+      offerFreshness: "search_time",
+      hotelOffer: {
+        provider: PROVIDER,
+        providerLabel: "途牛",
+        roomName: text(item.roomName, 120) || null,
+        meal: text(item.meal, 80) || null,
+        refundPolicy: text(item.refund, 140) || null,
+        totalPrice: cost || null,
+        currency: "CNY",
+        checkedAt,
+        bookingUrl: null,
+        dataNature: "read_only_search_offer",
+      },
+    },
   });
 }
 
@@ -158,7 +188,7 @@ export class TuniuTravelResearchProvider {
     return this.client?.status === "configured" ? "configured" : "provider_unavailable";
   }
 
-  async research({ brief = {}, domains = [], question = "" } = {}) {
+  async research({ brief = {}, domains = [], question = "", criteria = null } = {}) {
     if (this.status !== "configured") return { schemaVersion: "travel-provider-result-v1", status: "provider_unavailable", provider: PROVIDER, fabricatedResults: false };
     const destination = text(brief.destination, 120);
     if (!destination) throw Object.assign(new Error("destination_required"), { code: "destination_required" });
@@ -172,7 +202,7 @@ export class TuniuTravelResearchProvider {
       tasks.push({ domain: "stay", service: "hotel", tool: "tuniuHotelSearch", args, extract: (result) => result?.hotels ?? [], normalize: normalizeHotel });
     }
     if (requested.includes("transport") && origin && dates.start) {
-      for (const mode of intercityModes(brief, question)) {
+      for (const mode of intercityModes(brief, question, criteria)) {
         const flight = mode === "flight";
         tasks.push({
           domain: "transport",

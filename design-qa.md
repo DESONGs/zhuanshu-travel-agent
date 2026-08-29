@@ -92,6 +92,19 @@
 
 final result: passed
 
+## 2026-08-29 V3 PM/Design 审查落地
+
+- 真实自然语言请求（虚构上海家庭旅行）在桌面入口返回吃/住/行/玩各最多 6 个候选；Decision Spine 首屏只显示每域当前项，Focused Compare 首屏 3 项并提供“查看另外 N 个候选”，避免同时铺满。
+- 价格链已贯通：途牛库存快照显示 `firm + checkedAt`，高德与未核验库存显示 `reference`，未知显示“待核验”；按 3 人、2 晚、房间数和餐次聚合后的整趟预算固定显示 `estimate`。预算追问实际调用 `get_trip_plan_view` 与 `estimate_costs`，不重新搜索或确认候选。
+- 真实请求的语义 fan-out 本轮为 failed coverage；聊天与工作台均明确不能当作完整规划，候选和 TripState 保持未确认。等待态不再按时间伪造“正在查酒店/正在算路线”等阶段，完成后只显示真实 activity。
+- 试排在 393×852 自动进入 Map；机场 + 住宿后真实返回两站路线、57 分钟、路线费用 Δ、整趟预算 Δ 和 600m 体力阈值。MapRouteSheet 具有 40% 左右摘要态、85% 展开态、点击和上下拖动；拖动后的 click 不再反向切换。
+- Leaflet 在精细指针环境启用滚轮和 `+/-`，移动端隐藏缩放按钮并保留 pinch/touch zoom；地图仍只展示具名来源坐标与路线。
+- 1180px 及以下默认收起 Chat Rail，900/393 使用底部 Chat/Trip/Map；1440、1180、900、393 均完成真实渲染检查。详情、会话抽屉和删除确认共用本地 Overlay，验证 Escape、focus trap、body scroll lock 与整工作区 `inert`。
+- 微信/支付宝小程序同步抵达优先顺序、价格、分域预算、最多 6 候选和局部确认，不复制 Web 动效运行时。
+- 验证：156/156 tests、strict TypeScript、Web production build、微信/支付宝 native contract 通过；最终主 CSS gzip 31.53KB，主 JS gzip 133.76KB。本轮没有新增前端运行时依赖。
+
+保留风险：复杂四域自然请求的语义分析仍可能超过当前 90 秒预算并诚实降级；按天地图切换、全程出行总账、执行事件、真机 pinch/安全区、真实 OAuth 和生产底图仍需后续里程碑验收。
+
 ## 2026-08-24 原生多模态 Agent turn
 
 - 桌面与 390×844 移动视口均完成“选择图片 → 本地预览 → 补充自然语言 → 图文一起发送 → Agent 回答”的真实浏览器操作；图片可移除，移除后发送按钮和普通隐私提示正确恢复。
@@ -118,3 +131,66 @@ Design Read：面向国内与入境自由行者的产品级旅行工作台，保
 - 运行证据：新标签页 console error 为 0；`npm run check` 通过 118 项测试、TypeScript、Web production build 和微信/支付宝小程序合同。正文、次要文字与 placeholder 对比度分别为 17.61:1、6.38:1、5.26:1，主要按钮白字与深珊瑚背景为 4.80:1。主 JS 保持约 412.16KB，地图继续懒加载；主 CSS gzip 约 23.74KB，且移除了外部字体请求。
 
 仍需设备验收：Windows 125%/150% 缩放、宽折叠屏、iOS/Android Capacitor 真机和微信/支付宝真机。当前设计明确锁定高对比浅色主题；如果新增深色主题，必须连同地图瓦片、地点图片与全端安全区域单独验收。
+
+## 2026-08-27 旅行工作台 UI/UX 优化
+
+### 视觉真相源与实现证据
+
+- Source design：`design/2026-08-27-workspace-ui-ux-optimization/DESIGN-DOC.md`。
+- Source desktop：`mockups/desktop-workbench-1440.png`、`mockups/desktop-trial-1440.png`，均为 1440×900。
+- Source mobile：`mockups/mobile-trip-393.png`、`mockups/mobile-trial-map-393.png`，均为 393×852。
+- Rendered implementation：`implementation/*-pass2.png`，分别在 1440×900 和 393×852 CSS viewport、device scale factor 1 下由本地真实应用生成。
+- Full-view comparison：`comparisons/*-comparison-pass2.png`；每张将 source 与 implementation 等尺寸并排，未裁切 implementation。
+- Focused comparison：桌面试排态重点核对候选卡、当前/试排双路线、48px 影响条与相邻确认栏；移动试排态重点核对地图、45% 收起 sheet、影响条、两站摘要、确认栏与底部 tab。
+
+### 状态与用户路径
+
+- 默认态：整趟安排以四条行式环节卡展示抵达、住宿、餐饮、游玩；状态、时间窗、取舍摘要和“另有 N 个替代”均属于整行点击目标。
+- 比较态：点击任意环节一步进入当前方案与候选列表，具备面包屑、来源和“确认前不修改行程”说明。
+- 试排态：真实调用路线预览；桌面同屏显示当前/试排路线、时间/步行/费用差值和体力阈值，移动端自动切到地图并显示可展开的路线 sheet。
+- 确认边界：试排只保存在前端临时状态；“保持当前”清空试排，“采用此方案”继续走既有 TripPatchProposal 提交，不改购买和 Provider 边界。
+- 动态内容差异：截图中的候选名称、已确认数量、费用和准备项来自当前 TripState/Provider，不强行复制 mockup 的静态示例；结构、层级、动作位置和状态语义保持一致。
+
+### 响应式与可访问性验收
+
+- 1440×900：对话栏、400–480px 决策列、地图画布三栏成立；地图可视高度超过 55%；路线摘要默认收起。
+- 1000×800：对话栏自动转覆盖式入口，决策列与地图仍在同一工作区；无横向溢出。
+- 393×852：底部“对话 / 行程 / 地图”三入口完整可见，环节比较为整页，试排确认栏位于 tab bar 上方；无横向溢出。
+- 320×700：紧凑手机无横向溢出；核心状态、替代入口和底部三入口仍可达。
+- 852×393 横屏：底部 tab 转左侧 56px 导航轨，内容独立滚动，无横向溢出。
+- 键盘：`⌘/Ctrl+K` 聚焦 Composer；`⌘/Ctrl+B` 折叠/恢复对话栏；环节行 `↑/↓` 移动焦点；`Esc` 返回整趟安排。焦点与状态不只依赖颜色。
+
+### 迭代记录
+
+#### Pass 1
+
+- 桌面工作台与试排闭环已经成立，但移动 topbar 图标、准备摘要、试排地图图例、路线 footer 和卡片按钮样式仍与 source 有可见差距。
+- 样式表保留重复历史覆盖块，导致相同组件在不同断点出现不必要差异。
+
+#### Fix
+
+- 收敛为 560/900/1180 三组 viewport 断点与 620/860 两组容器查询；删除本次工作区涉及的重复覆盖块。
+- 修正桌面面包屑、试排按钮层级、地图 footer、移动图例、紧凑路线 sheet、顶部图标和移动摘要文案。
+- 微信与支付宝轻量小程序同步迁移为底部三入口，并保留 safe-area 与未决策 badge。
+
+#### Pass 2
+
+- 四张 source/implementation 并排对照未发现新的 P0/P1/P2 可见缺陷。
+- 真实浏览器完成“打开住宿环节 → 选择替代 → 等待路线重算 → 查看差值 → 保持当前”的桌面与移动路径；移动 sheet 展开后显示 6 个多点站序。
+- 全新浏览器标签页只有 Vite connected 与 React DevTools 信息，无应用 console error。
+- `npm run check` 通过：133/133 tests、strict TypeScript、Web production build、微信/支付宝小程序合同。
+
+### 保留风险
+
+- Windows 125%/150% 缩放、Capacitor 真机、微信/支付宝真机和宽折叠屏仍属于设备级验收，不由浏览器响应式截图替代。
+- 当前路线预览使用真实 Provider，完整重算可能需要数十秒；界面会立即显示“重算中”并禁用确认，不把等待冒充完成。
+- 开发环境使用 OSM 底图；生产中国境内导航仍按既有合同切换高德，设施存在也不等于实时可用。
+
+### 2026-08-27 地图缩放交互补充
+
+- Web/桌面端在检测到鼠标或触控板等精细指针时启用 Leaflet `scrollWheelZoom`；移动端显式启用 `touchZoom`，继续支持单指拖动。
+- `+ / −`、双击和键盘缩放能力继续保留，不把手势作为唯一入口。
+- 1440px 本地页面确认精细指针检测为 `true`，地图容器已同时装载 `leaflet-touch-drag` 与 `leaflet-touch-zoom`；`npm run web:build` 通过。
+- 双指捏合仍需在 iOS/Android、微信与支付宝真机完成最终手势验收，浏览器响应式视口不能替代多点触控硬件。
+
+final result: passed

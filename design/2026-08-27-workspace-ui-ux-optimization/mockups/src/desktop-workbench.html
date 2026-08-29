@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  :root {
+    --ink:#17191c; --ink-soft:#38434b; --muted:#53616b; --quiet:#64727b;
+    --line:#dfe4e7; --line-strong:#cbd3d8; --canvas:#f6f8f9; --surface:#fff; --surface-subtle:#f0f4f5;
+    --coral:#ff5a4f; --coral-action:#c9443b; --coral-soft:#fff0ed;
+    --blue:#2166bd; --blue-soft:#edf4fb; --green:#24754b; --green-soft:#e8f6ec;
+    --amber:#84531d; --amber-soft:#fff7ef;
+  }
+  html,body { width:1440px; height:900px; overflow:hidden; }
+  body { font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif; color:var(--ink); background:var(--canvas); display:flex; flex-direction:column; }
+  svg.ic { width:20px; height:20px; stroke:currentColor; fill:none; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; flex:none; }
+
+  /* ===== Topbar ===== */
+  .topbar { height:56px; background:var(--surface); border-bottom:1px solid var(--line); display:flex; align-items:center; padding:0 16px; gap:12px; flex:none; }
+  .tb-btn { height:36px; display:flex; align-items:center; gap:8px; padding:0 12px; border:1px solid var(--line); border-radius:10px; background:var(--surface); font-size:13px; color:var(--ink-soft); }
+  .brand { display:flex; align-items:center; gap:8px; font-size:17px; font-weight:700; color:var(--ink); }
+  .brand svg { width:22px; height:22px; }
+  .summary-pill { display:flex; align-items:center; gap:6px; height:36px; padding:0 14px; background:var(--surface-subtle); border:1px solid var(--line); border-radius:999px; font-size:13px; font-weight:500; color:var(--ink-soft); }
+  .summary-pill svg { width:15px; height:15px; }
+  .tb-right { margin-left:auto; display:flex; align-items:center; gap:12px; }
+  .lang { height:36px; display:flex; align-items:center; gap:6px; padding:0 12px; border:1px solid var(--line); border-radius:10px; font-size:13px; color:var(--ink-soft); background:var(--surface); }
+  .lang svg { width:16px; height:16px; }
+  .account { display:flex; align-items:center; gap:8px; height:36px; padding:0 12px; border-radius:10px; border:1px solid var(--line); font-size:13px; color:var(--ink-soft); background:var(--surface); }
+  .account svg { width:18px; height:18px; }
+
+  .main { flex:1; display:flex; min-height:0; }
+
+  /* ===== Chat column ===== */
+  .chat { width:380px; flex:none; background:var(--surface); border-right:1px solid var(--line); display:flex; flex-direction:column; }
+  .chat-head { height:48px; display:flex; align-items:center; padding:0 16px; font-size:15px; font-weight:650; border-bottom:1px solid var(--line); flex:none; }
+  .chat-head .sub { margin-left:auto; font-size:12px; color:var(--quiet); font-weight:400; }
+  .msgs { flex:1; padding:16px; display:flex; flex-direction:column; gap:14px; min-height:0; }
+  .msg { max-width:88%; padding:10px 14px; border-radius:14px; font-size:14px; line-height:1.55; }
+  .msg .ts { display:block; font-size:11px; color:var(--quiet); margin-top:6px; }
+  .msg.user { align-self:flex-end; background:var(--ink); color:#fff; border-bottom-right-radius:4px; }
+  .msg.user .ts { color:rgba(255,255,255,.55); }
+  .msg.agent { align-self:flex-start; background:var(--surface); border:1px solid var(--line); border-bottom-left-radius:4px; color:var(--ink); }
+  .quick { padding:0 16px 12px; display:flex; gap:8px; flex-wrap:wrap; }
+  .qchip { height:32px; padding:0 14px; display:flex; align-items:center; border:1px solid var(--line-strong); border-radius:999px; font-size:13px; color:var(--ink-soft); background:var(--surface); }
+  .composer { border-top:1px solid var(--line); padding:12px 16px 14px; flex:none; }
+  .composer label { display:block; font-size:13px; font-weight:650; margin-bottom:8px; }
+  .composer .box { border:1px solid var(--line-strong); border-radius:10px; padding:10px 12px; font-size:14px; color:var(--quiet); min-height:44px; background:var(--surface); }
+  .composer .row { display:flex; align-items:center; gap:8px; margin-top:10px; }
+  .cbtn { width:40px; height:40px; border:1px solid var(--line); border-radius:10px; display:flex; align-items:center; justify-content:center; color:var(--ink-soft); background:var(--surface); }
+  .cbtn svg { width:18px; height:18px; }
+  .send { margin-left:auto; width:40px; height:40px; border-radius:10px; background:var(--coral-action); color:#fff; display:flex; align-items:center; justify-content:center; }
+  .send svg { width:18px; height:18px; }
+  .composer .hint { font-size:11px; color:var(--quiet); margin-top:8px; }
+
+  /* ===== Decision column ===== */
+  .decision { width:440px; flex:none; background:var(--surface); border-right:1px solid var(--line); display:flex; flex-direction:column; min-height:0; }
+  .d-head { padding:16px 20px 8px; flex:none; }
+  .d-head h1 { font-size:24px; font-weight:700; }
+  .d-head p { font-size:13px; color:var(--muted); margin-top:2px; }
+  .ready { margin:0 20px; background:var(--amber-soft); border:1px solid #f0dfc8; border-radius:10px; padding:8px 14px; display:flex; align-items:center; gap:10px; color:var(--amber); flex:none; }
+  .ready svg { width:18px; height:18px; }
+  .ready .t { font-size:13px; font-weight:650; }
+  .ready .s { font-size:12px; opacity:.85; margin-top:1px; }
+  .ready .chev { margin-left:auto; }
+  .chips { display:flex; gap:8px; padding:10px 20px; flex:none; flex-wrap:wrap; }
+  .chip { display:flex; align-items:center; gap:6px; height:30px; padding:0 12px; background:var(--surface-subtle); border:1px solid var(--line); border-radius:999px; font-size:12px; font-weight:500; color:var(--ink-soft); }
+  .chip svg { width:14px; height:14px; }
+  .segs { flex:1; padding:0 20px 10px; display:flex; flex-direction:column; gap:10px; min-height:0; }
+  .seg { border:1px solid var(--line); border-radius:14px; padding:10px 14px; background:var(--surface); }
+  .seg .r1 { display:flex; align-items:center; gap:10px; }
+  .dicon { width:32px; height:32px; border-radius:50%; background:var(--surface-subtle); display:flex; align-items:center; justify-content:center; color:var(--ink-soft); flex:none; }
+  .seg .type { font-size:13px; font-weight:650; color:var(--ink-soft); }
+  .badge { margin-left:auto; font-size:11px; font-weight:500; padding:3px 10px; border-radius:999px; flex:none; }
+  .badge.green { background:var(--green-soft); color:var(--green); }
+  .badge.grey { background:var(--surface-subtle); color:var(--muted); }
+  .badge.amber { background:var(--amber-soft); color:var(--amber); }
+  .seg .name { font-size:17px; font-weight:650; margin-top:6px; }
+  .seg .meta { font-size:13px; color:var(--muted); margin-top:2px; }
+  .seg .sum { display:flex; align-items:center; gap:6px; font-size:13px; color:var(--ink-soft); margin-top:6px; padding-top:6px; border-top:1px solid var(--line); }
+  .seg .sum .more { color:var(--blue); font-weight:500; }
+  .seg .sum .chev { margin-left:auto; color:var(--quiet); display:flex; }
+  .d-foot { flex:none; border-top:1px solid var(--line); background:var(--surface); padding:12px 20px; display:flex; align-items:center; gap:12px; }
+  .d-foot .t { font-size:13px; font-weight:650; }
+  .d-foot .s { font-size:12px; color:var(--muted); margin-top:2px; }
+  .d-foot .ghost { margin-left:auto; height:36px; display:flex; align-items:center; padding:0 14px; border:1px solid var(--line-strong); border-radius:10px; font-size:13px; color:var(--ink-soft); }
+
+  /* ===== Map area ===== */
+  .maparea { flex:1; padding:16px; display:flex; flex-direction:column; gap:8px; min-width:0; }
+  .map { flex:1; position:relative; border:1px solid var(--line); border-radius:14px; overflow:hidden; background:#eef1f3; }
+  .map .grid { position:absolute; inset:0; background-image:linear-gradient(#e5e8eb 1px,transparent 1px),linear-gradient(90deg,#e5e8eb 1px,transparent 1px); background-size:58px 58px; }
+  .map .roads { position:absolute; inset:0; }
+  .map svg.routes { position:absolute; inset:0; }
+  .focus-btn { position:absolute; top:16px; right:16px; height:40px; display:flex; align-items:center; gap:8px; padding:0 14px; background:var(--surface); border:1px solid var(--line); border-radius:10px; font-size:13px; font-weight:500; color:var(--ink-soft); }
+  .focus-btn svg { width:16px; height:16px; }
+  .zoom { position:absolute; right:16px; bottom:56px; display:flex; flex-direction:column; }
+  .zoom .z { width:44px; height:44px; background:var(--surface); border:1px solid var(--line); display:flex; align-items:center; justify-content:center; color:var(--ink-soft); }
+  .zoom .z:first-child { border-radius:10px 10px 0 0; }
+  .zoom .z:last-child { border-top:none; border-radius:0 0 10px 10px; }
+  .osm { position:absolute; left:12px; bottom:10px; font-size:11px; color:var(--quiet); background:rgba(255,255,255,.85); padding:2px 8px; border-radius:6px; }
+  .strip { flex:none; height:40px; background:var(--surface); border:1px solid var(--line); border-radius:10px; display:flex; align-items:center; justify-content:center; gap:8px; font-size:13px; color:var(--ink-soft); }
+  .strip svg { width:14px; height:14px; color:var(--quiet); }
+</style>
+</head>
+<body>
+
+<!-- ================= Topbar ================= -->
+<header class="topbar">
+  <div class="tb-btn">
+    <svg class="ic" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+    我的行程
+  </div>
+  <div class="brand">
+    <svg viewBox="0 0 24 24" fill="#ff5a4f"><path d="M12 22s-7.5-6.2-7.5-11.5a7.5 7.5 0 1 1 15 0C19.5 15.8 12 22 12 22z"/><circle cx="12" cy="10.5" r="2.8" fill="#fff"/></svg>
+    Travel Agent
+  </div>
+  <div class="summary-pill">
+    <svg class="ic" viewBox="0 0 24 24"><path d="M12 21s-6-4.6-6-9.5a6 6 0 1 1 12 0C18 16.4 12 21 12 21z"/><circle cx="12" cy="11.5" r="2"/></svg>
+    上海 · 8/27–8/29 · 3 人
+  </div>
+  <div class="tb-right">
+    <div class="lang">
+      <svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 4 5.7 4 9s-1.5 6.4-4 9c-2.5-2.6-4-5.7-4-9s1.5-6.4 4-9z"/></svg>
+      中文
+    </div>
+    <div class="account">
+      <svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c1.6-3.4 4.6-5 8-5s6.4 1.6 8 5"/></svg>
+      登录
+    </div>
+  </div>
+</header>
+
+<div class="main">
+
+  <!-- ================= Chat column ================= -->
+  <aside class="chat">
+    <div class="chat-head">和旅行助手对话 <span class="sub">从一句话开始</span></div>
+    <div class="msgs">
+      <div class="msg user">我们 8/27 下午两点到浦东，两大一小加我妈，想去上海市历史博物馆，晚上吃点本帮菜。<span class="ts">14:02</span></div>
+      <div class="msg agent">收到。先把抵达、住宿锚点和第一晚安排搭好：酒店选人民广场附近，博物馆和本帮菜都在步行圈内，三天的小雨也计入安排。<span class="ts">14:02 · 旅行助手</span></div>
+      <div class="msg user">我妈腿脚不太好，每天少走点路。<span class="ts">14:04</span></div>
+      <div class="msg agent">已把每日步行上限设为 600m，之后所有候选都会按这条校验。也可以直接点下面的偏好继续调整：<span class="ts">14:04 · 旅行助手</span></div>
+    </div>
+    <div class="quick">
+      <div class="qchip">少走路</div>
+      <div class="qchip">位置优先</div>
+      <div class="qchip">控制预算</div>
+    </div>
+    <div class="composer">
+      <label>说说这趟旅行</label>
+      <div class="box">例如：第二天下午想加个轻松的安排…</div>
+      <div class="row">
+        <div class="cbtn"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M4.5 17.5l4.5-4.5 3 3 3.5-3.5 4 4"/></svg></div>
+        <div class="cbtn"><svg class="ic" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 6 .4l3-3a4 4 0 0 0-5.6-5.6L12 7"/><path d="M14 10a4 4 0 0 0-6-.4l-3 3a4 4 0 0 0 5.6 5.6L12 17"/></svg></div>
+        <div class="cbtn"><svg class="ic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></div>
+        <div class="send"><svg class="ic" viewBox="0 0 24 24"><path d="M4 12l16-7-5 16-4.5-6.5L4 12z"/><path d="M10.5 14.5L20 5"/></svg></div>
+      </div>
+      <div class="hint">Enter 发送 · Shift + Enter 换行 ｜ 语音先转成文字，由你确认后再发送</div>
+    </div>
+  </aside>
+
+  <!-- ================= Decision column ================= -->
+  <section class="decision">
+    <div class="d-head">
+      <h1>整趟安排</h1>
+      <p>先看整趟，再进入一个环节比较替代方案</p>
+    </div>
+    <div class="ready">
+      <svg class="ic" viewBox="0 0 24 24"><path d="M12 4L2.8 20h18.4L12 4z"/><path d="M12 10v4M12 17h.01"/></svg>
+      <div>
+        <div class="t">出发前还差 2 项</div>
+        <div class="s">博物馆预约 · 接机车确认</div>
+      </div>
+      <svg class="ic chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+    </div>
+    <div class="chips">
+      <div class="chip"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M7 15h4"/></svg>预算 ¥8,000</div>
+      <div class="chip"><svg class="ic" viewBox="0 0 24 24"><path d="M7 15a5 5 0 1 1 .8-9.9A6 6 0 0 1 19.5 8 4 4 0 0 1 19 15H7z"/><path d="M8 18l-1 2M12.5 18l-1 2M17 18l-1 2"/></svg>小雨 3 天</div>
+      <div class="chip"><svg class="ic" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c1-2.8 3-4 5.5-4s4.5 1.2 5.5 4"/><circle cx="17" cy="9" r="2.4"/><path d="M16 14.6c2.2.2 3.7 1.3 4.5 3.4"/></svg>3 人 · 含长辈</div>
+    </div>
+    <div class="segs">
+      <!-- 抵达 -->
+      <div class="seg">
+        <div class="r1">
+          <div class="dicon"><svg class="ic" viewBox="0 0 24 24"><path d="M3 16.5h18M5 16.5l6.5-2 6.5-6.8c.8-.8.2-2.2-1-2.2l-2.2.1-3.2 3.4-4.1-1.2-1.6.4 2.9 3.1-3.8 1.2z"/></svg></div>
+          <span class="type">抵达</span>
+          <span class="badge green">已确认</span>
+        </div>
+        <div class="name">浦东机场 T2 到达</div>
+        <div class="meta">第 1 天 · 8/27 14:00 落地</div>
+        <div class="sum"><span>接机打车约 45 分钟到酒店 · ¥120 起</span><svg class="ic chev" viewBox="0 0 24 24" style="width:16px;height:16px"><path d="M9 6l6 6-6 6"/></svg></div>
+      </div>
+      <!-- 住宿锚点 -->
+      <div class="seg">
+        <div class="r1">
+          <div class="dicon"><svg class="ic" viewBox="0 0 24 24"><path d="M3 18v-8M3 13h18v5M3 16h18M7 13v-2.5A1.5 1.5 0 0 1 8.5 9h4A2.5 2.5 0 0 1 15 11.5V13M21 18v2M3 18v2"/></svg></div>
+          <span class="type">住宿锚点</span>
+          <span class="badge green">已确认</span>
+        </div>
+        <div class="name">全季酒店（人民广场店）</div>
+        <div class="meta">8/27–8/29 · 2 晚 · 大床房</div>
+        <div class="sum"><span>¥564 · 评分 4.5 · 离地铁 400m</span><svg class="ic chev" viewBox="0 0 24 24" style="width:16px;height:16px"><path d="M9 6l6 6-6 6"/></svg></div>
+      </div>
+      <!-- 餐饮 -->
+      <div class="seg">
+        <div class="r1">
+          <div class="dicon"><svg class="ic" viewBox="0 0 24 24"><path d="M6 3v7a2 2 0 0 0 2 2v9M8 3v5M4 3v5M10 3v7a2 2 0 0 1-2 2"/><path d="M17 3c-1.8 1.2-3 3.8-3 7v3h3v8M17 3v18"/></svg></div>
+          <span class="type">餐饮</span>
+          <span class="badge grey">待确认</span>
+        </div>
+        <div class="name">上海 12 弄 · 本帮菜</div>
+        <div class="meta">第 1 天 18:00–19:30 · 建议</div>
+        <div class="sum"><span>¥168 起 · 评分 4.5 · <span class="more">另有 2 个替代</span></span><svg class="ic chev" viewBox="0 0 24 24" style="width:16px;height:16px"><path d="M9 6l6 6-6 6"/></svg></div>
+      </div>
+      <!-- 游玩 -->
+      <div class="seg">
+        <div class="r1">
+          <div class="dicon"><svg class="ic" viewBox="0 0 24 24"><path d="M12 21s-6-4.6-6-9.5a6 6 0 1 1 12 0C18 16.4 12 21 12 21z"/><circle cx="12" cy="11.5" r="2"/></svg></div>
+          <span class="type">游玩</span>
+          <span class="badge amber">需备选</span>
+        </div>
+        <div class="name">上海市历史博物馆</div>
+        <div class="meta">第 2 天 09:30–11:30 · 需预约</div>
+        <div class="sum"><span>免费 · 周一闭馆 · <span class="more">另有 2 个替代</span></span><svg class="ic chev" viewBox="0 0 24 24" style="width:16px;height:16px"><path d="M9 6l6 6-6 6"/></svg></div>
+      </div>
+    </div>
+    <div class="d-foot">
+      <div>
+        <div class="t">整趟预算 ¥564 / ¥8,000</div>
+        <div class="s">已确认 2/4 项</div>
+      </div>
+      <div class="ghost">查看完整行程单</div>
+    </div>
+  </section>
+
+  <!-- ================= Map area ================= -->
+  <section class="maparea">
+    <div class="map">
+      <div class="grid"></div>
+      <svg class="routes" width="586" height="763" viewBox="0 0 586 763" preserveAspectRatio="none" style="width:100%;height:100%">
+        <!-- blocks (roads) -->
+        <g stroke="#dde2e6" stroke-width="10" opacity="0.9">
+          <path d="M0 220 H586" fill="none"/><path d="M0 470 H586" fill="none"/>
+          <path d="M180 0 V763" fill="none"/><path d="M400 0 V763" fill="none"/>
+        </g>
+        <!-- comparison dashed grey -->
+        <polyline points="478,150 336,420 176,560 352,606" fill="none" stroke="#9aa7b0" stroke-width="3" stroke-dasharray="8 8" stroke-linecap="round"/>
+        <!-- main route -->
+        <polyline points="478,150 300,404 176,560 352,606" fill="none" stroke="#2166bd" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+        <!-- numbered markers -->
+        <g font-family="-apple-system,'PingFang SC',sans-serif" font-size="13" font-weight="700" text-anchor="middle">
+          <circle cx="478" cy="150" r="14" fill="#fff" stroke="#2166bd" stroke-width="2.5"/><text x="478" y="155" fill="#2166bd">1</text>
+          <circle cx="300" cy="404" r="14" fill="#fff" stroke="#2166bd" stroke-width="2.5"/><text x="300" y="409" fill="#2166bd">2</text>
+          <circle cx="176" cy="560" r="14" fill="#fff" stroke="#2166bd" stroke-width="2.5"/><text x="176" y="565" fill="#2166bd">3</text>
+          <circle cx="352" cy="606" r="14" fill="#fff" stroke="#2166bd" stroke-width="2.5"/><text x="352" y="611" fill="#2166bd">4</text>
+        </g>
+        <!-- place labels -->
+        <g font-family="-apple-system,'PingFang SC',sans-serif" font-size="12" fill="#53616b">
+          <text x="478" y="180" text-anchor="middle">浦东机场 T2</text>
+          <text x="300" y="434" text-anchor="middle">全季酒店</text>
+          <text x="176" y="590" text-anchor="middle">历史博物馆</text>
+          <text x="352" y="636" text-anchor="middle">上海 12 弄</text>
+        </g>
+      </svg>
+      <div class="focus-btn">
+        <svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
+        专注地图
+      </div>
+      <div class="zoom">
+        <div class="z"><svg class="ic" viewBox="0 0 24 24" style="width:18px;height:18px"><path d="M12 5v14M5 12h14"/></svg></div>
+        <div class="z"><svg class="ic" viewBox="0 0 24 24" style="width:18px;height:18px"><path d="M5 12h14"/></svg></div>
+      </div>
+      <div class="osm">OpenStreetMap 开发底图 · 正式导航以高德为准</div>
+    </div>
+    <div class="strip">
+      5 段移动 · 138 分钟 · 步行 1,102 m · ¥240
+      <svg class="ic" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg>
+    </div>
+  </section>
+
+</div>
+</body>
+</html>

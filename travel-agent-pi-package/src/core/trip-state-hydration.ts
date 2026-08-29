@@ -1,4 +1,5 @@
 import { FOUR_DOMAINS, assertTripState, type TripState } from "../contracts/index.js";
+import { estimateTripBudget, normalizeTravelPrice } from "../runtime/trip-runtime-implementation.js";
 
 type UnknownObject = { [key: string]: unknown };
 
@@ -50,12 +51,29 @@ export function hydrateStoredTripState(value: unknown): TripState {
 
   next.nodes = optionalArray(next.nodes).map((nodeValue) => {
     const node = optionalObject(nodeValue);
-    return { ...node, media: optionalArray(node.media) };
+    const price = normalizeTravelPrice(node.price ?? node.cost, {
+      currency: optionalObject(next.brief).currency ?? "CNY",
+      checkedAt: optionalObject(node.operability).checkedAt ?? node.updatedAt ?? null,
+    });
+    return { ...node, media: optionalArray(node.media), price, cost: price.amount ?? 0 };
   });
   next.edges = optionalArray(next.edges);
   next.dirtySet = optionalArray(next.dirtySet);
   next.openDecisions = optionalArray(next.openDecisions);
-  next.pendingProposals = optionalArray(next.pendingProposals);
+  next.pendingProposals = optionalArray(next.pendingProposals).map((proposalValue) => {
+    const proposal = optionalObject(proposalValue);
+    const operations = optionalArray(proposal.operations).map((operationValue) => {
+      const operation = optionalObject(operationValue);
+      if (operation.kind !== "add_candidate") return operation;
+      const node = optionalObject(operation.node);
+      const price = normalizeTravelPrice(node.price ?? node.cost, {
+        currency: optionalObject(next.brief).currency ?? "CNY",
+        checkedAt: optionalObject(node.operability).checkedAt ?? null,
+      });
+      return { ...operation, node: { ...node, price, cost: price.amount ?? 0 } };
+    });
+    return { ...proposal, operations };
+  });
   next.proposalHistory = optionalArray(next.proposalHistory);
   next.feedbackLedger = optionalArray(next.feedbackLedger);
   next.fulfillmentLedger = optionalArray(next.fulfillmentLedger);
@@ -90,5 +108,6 @@ export function hydrateStoredTripState(value: unknown): TripState {
     },
     updatedAt: readiness.updatedAt ?? null,
   };
+  next.budgetLedger = estimateTripBudget(next);
   return assertTripState(next);
 }

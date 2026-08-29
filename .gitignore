@@ -8,6 +8,8 @@ design/implementation-mobile-route-393x852.png
 design/map-pulse-comparison.png
 design/reference/map-pulse-mobile-393x852.png
 runtime-runs/
+.pi-subagents/
+travel-agent-pi-package/.pi-subagents/
 runtime-data/
 rwa-docs/*
 !rwa-docs/README.md

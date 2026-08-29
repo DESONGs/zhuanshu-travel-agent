@@ -5,18 +5,20 @@ import http from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
+import { TravelConversationAgent } from "../src/agent/travel-conversation-agent.mjs";
 import { TravelService } from "../src/api/travel-service.mjs";
 import { createHttpApp } from "../src/http/app.mjs";
 import { FileConversationRepository } from "../src/persistence/conversation-repository.mjs";
 import { InMemorySessionStore } from "../src/http/session.mjs";
 import { TripStore } from "../travel-agent-pi-package/src/core/index.ts";
 
-async function httpFixture({ conversationAgent } = {}) {
+async function httpFixture({ conversationAgent, service: suppliedService, conversationRepository: suppliedConversationRepository } = {}) {
   const rootDir = await mkdtemp(join(tmpdir(), "travel-http-"));
   const store = new TripStore({ rootDir });
   store.mode = "file";
-  const service = new TravelService({ store, clock: () => new Date("2026-08-24T12:00:00.000Z") });
-  const conversationRepository = new FileConversationRepository({ rootDir: join(rootDir, "conversations") });
+  const service = suppliedService ?? new TravelService({ store, clock: () => new Date("2026-08-24T12:00:00.000Z") });
+  const conversationRepository = suppliedConversationRepository ?? new FileConversationRepository({ rootDir: join(rootDir, "conversations") });
   const app = createHttpApp({ travelService: service, conversationRepository, conversationAgent, sessionStore: new InMemorySessionStore({ clock: () => new Date("2026-08-24T12:00:00.000Z") }), developmentAuthEnabled: true });
   const server = http.createServer(app);
   server.listen(0, "127.0.0.1");
@@ -28,7 +30,7 @@ async function httpFixture({ conversationAgent } = {}) {
     const value = response.status === 204 ? null : await response.json();
     return { response, value };
   };
-  return { request, close: () => new Promise((resolveClose) => server.close(resolveClose)) };
+  return { request, service, close: () => new Promise((resolveClose) => server.close(resolveClose)) };
 }
 
 function transitProposal(tripId) {
@@ -71,6 +73,30 @@ function transitProposal(tripId) {
       },
     }],
   };
+}
+
+function httpNaturalProvider() {
+  const checkedAt = "2026-08-26T11:00:00.000Z";
+  const candidate = (domain, candidateId, title, location, operability = {}) => ({ candidateId, domain, title, summary: `${title} · ${checkedAt} 核验`, checkedAt, location, operability: { provider: "http_fixture", ...operability } });
+  return {
+    status: "configured",
+    research: async ({ domains }) => ({ status: "completed", provider: "http_fixture", providerLabel: "HTTP Fixture", checkedAt, byDomain: { play: domains.includes("play") ? [candidate("play", "play_http", "上海市历史博物馆", { coordinates: { longitude: 121.47, latitude: 31.235 } })] : [], food: domains.includes("food") ? [candidate("food", "food_http", "本帮菜馆", { coordinates: { longitude: 121.48, latitude: 31.236 } })] : [], stay: domains.includes("stay") ? [candidate("stay", "stay_http", "全季酒店（上海人民广场南京路步行街店）", { address: "福建中路225号" }, { inventoryVerified: true })] : [], transport: domains.includes("transport") ? [candidate("transport", "transport_http_inventory", "动态航班库存对照", null, { mobilityRole: "intercity_inventory", transportType: "FLIGHT" })] : [] }, partial: false, weather: { status: "SOURCE_UNAVAILABLE" }, caveats: [], fabricatedResults: false }),
+    planMobility: async ({ selectedNodes }) => {
+      const arrival = selectedNodes.find((node) => node.operability?.mobilityRole === "user_confirmed_arrival");
+      const stay = selectedNodes.find((node) => node.domain === "stay");
+      return { schemaVersion: "trip-mobility-v1", status: "completed", destination: "上海", source: "amap_routes_v5", checkedAt, freshUntil: "2026-08-26T14:00:00.000Z", coverage: { routedNodeIds: [arrival.nodeId, stay.nodeId], unresolvedNodeIds: [], unscheduled: false }, legs: [{ legId: "http_arrival_stay", origin: { nodeId: arrival.nodeId, label: "浦东机场 T2", coordinates: { longitude: 121.8079, latitude: 31.1528 } }, destination: { nodeId: stay.nodeId, label: stay.title, coordinates: { longitude: 121.4804, latitude: 31.2382 } }, recommendedMode: "taxi", rationale: "公交步行 1128 米，超过当前 600 米目标；公交需换乘 2 次，超过当前 1 次目标。打车约 52 分钟、步行 0 米、换乘 0 次，因此优先打车。电梯与连续无台阶状态仍待核验；该未知项不是本次推荐打车的直接触发条件。", recommendationAudit: { thresholds: { walkingMeters: 600, transfers: 1, walkingSource: "traveler_explicit", transferSource: "reduced_mobility_default" }, transit: { totalMinutes: 163, walkingMeters: 1128, transfers: 2, estimatedFareCny: 26, walkingExceeded: true, transfersExceeded: true, hasStairs: false, hasEscalator: true, stepFreeContinuity: "not_verified" }, taxi: { totalMinutes: 52, walkingMeters: 0, transfers: 0, estimatedFareCny: 151 }, triggers: ["transit_walking_exceeds_target", "transit_transfers_exceed_target"], accessibilityEvidence: { status: "not_verified", directTrigger: false } }, alternatives: [{ mode: "transit", totalMinutes: 163, walkingMeters: 1128, transfers: 2, estimatedFareCny: 26, scheduleBasis: "scheduled_service", realTimeArrival: false, navigationUrl: "https://uri.amap.com/navigation?mode=bus", polyline: [], steps: [] }, { mode: "taxi", totalMinutes: 52, walkingMeters: 0, transfers: 0, estimatedFareCny: 151, scheduleBasis: "query_time_estimate", realTimeArrival: false, navigationUrl: "https://uri.amap.com/navigation?mode=car", polyline: [], steps: [] }] }], travelerFit: { constrainedTravelerIds: ["traveler_2"], maxContinuousWalkMeters: 600, planningWalkingTarget: 600, planningTransferTarget: 1, walkingTargetSource: "traveler_explicit", transferTargetSource: "reduced_mobility_default", avoidStairs: true, accessibilityEvidence: "unverified" }, reason: null, caveats: [], sourceDocumentation: "https://lbs.amap.com/api/webservice/guide/api/newroute", fabricatedResults: false };
+    },
+  };
+}
+
+function httpLatestToolJson(context) {
+  for (const message of [...context.messages].reverse()) {
+    for (const item of Array.isArray(message.content) ? message.content : []) {
+      if (typeof item?.text !== "string" || !item.text.trim().startsWith("{")) continue;
+      try { return JSON.parse(item.text); } catch { /* continue */ }
+    }
+  }
+  return null;
 }
 
 test("HTTP API authenticates development sessions, enforces trip membership, and serves accepted transit details", async () => {
@@ -150,6 +176,111 @@ test("HTTP conversation entrypoint preserves the user request but never fabricat
     const denied = await request(`/api/conversations/${conversation.value.conversationId}`, { token: other.value.accessToken });
     assert.equal(denied.response.status, 403);
     assert.equal(denied.value.code, "conversation_access_denied");
+  } finally {
+    await close();
+  }
+});
+
+test("conversation management soft-deletes and restores a conversation without deleting its linked trip", async () => {
+  const { request, close } = await httpFixture();
+  try {
+    const session = await request("/api/auth/session", { method: "POST", body: { provider: "email_otp", identity: "conversation-manager@example.com" } });
+    const token = session.value.accessToken;
+    const trip = await request("/api/trips", { method: "POST", token, body: { tripId: "trip_conversation_management", brief: { destination: "上海" }, travelers: [{ travelerId: "traveler_1" }] } });
+    assert.equal(trip.response.status, 201);
+    const first = await request("/api/conversations", { method: "POST", token, body: { tripId: trip.value.tripId } });
+    const second = await request("/api/conversations", { method: "POST", token, body: {} });
+    const before = await request("/api/conversations", { token });
+    assert.equal(before.value.conversations.length, 2);
+
+    const removed = await request(`/api/conversations/${first.value.conversationId}`, { method: "DELETE", token });
+    assert.equal(removed.response.status, 200);
+    assert.equal(removed.value.status, "deleted");
+    assert.equal(removed.value.tripPreserved, true);
+    assert.ok(removed.value.conversation.deletedAt);
+    const hidden = await request(`/api/conversations/${first.value.conversationId}`, { token });
+    assert.equal(hidden.response.status, 404);
+    const active = await request("/api/conversations", { token });
+    assert.deepEqual(active.value.conversations.map((item) => item.conversationId), [second.value.conversationId]);
+    const withDeleted = await request("/api/conversations?includeDeleted=true", { token });
+    assert.equal(withDeleted.value.conversations.length, 2);
+    assert.equal(withDeleted.value.conversations.find((item) => item.conversationId === first.value.conversationId).deletedAt != null, true);
+    const preservedTrip = await request(`/api/trips/${trip.value.tripId}/control`, { token });
+    assert.equal(preservedTrip.response.status, 200);
+
+    const restored = await request(`/api/conversations/${first.value.conversationId}/restore`, { method: "POST", token });
+    assert.equal(restored.response.status, 200);
+    assert.equal(restored.value.status, "restored");
+    assert.equal(restored.value.conversation.deletedAt, null);
+    const after = await request("/api/conversations", { token });
+    assert.equal(after.value.conversations.length, 2);
+  } finally {
+    await close();
+  }
+});
+
+test("HTTP natural conversation keeps stay-only confirmation, TripState and route explanation consistent", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "travel-http-natural-confirm-"));
+  const tripStore = new TripStore({ rootDir: join(rootDir, "trips") });
+  tripStore.mode = "file";
+  const clock = () => new Date("2026-08-26T11:00:00.000Z");
+  const service = new TravelService({ store: tripStore, clock, researchProvider: httpNaturalProvider() });
+  const conversationRepository = new FileConversationRepository({ rootDir: join(rootDir, "conversations") });
+  const faux = fauxProvider({ provider: "http-fixture-pi", models: [{ id: "fixture-parent" }] });
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const conversationAgent = new TravelConversationAgent({ travelService: service, conversationRepository, modelRuntime: { models, model: faux.getModel("fixture-parent") }, clock });
+  const { request, close } = await httpFixture({ service, conversationRepository, conversationAgent });
+  try {
+    const session = await request("/api/auth/session", { method: "POST", body: { provider: "email_otp", identity: "natural-confirm@example.com" } });
+    const token = session.value.accessToken;
+    const conversation = await request("/api/conversations", { method: "POST", token, body: { modelId: "deepseek-v4-flash" } });
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall("save_trip_understanding", { destination: "上海", dates: "2026-08-27 至 2026-08-29", origin: "广州", arrivalAirport: "浦东机场", arrivalTerminal: "T2", arrivalTime: "14:00", travelerCount: 3, lodgingPreference: "人民广场或南京东路", totalBudget: 8000, travelerProfiles: [{ displayName: "你" }, { displayName: "父亲", relationship: "父亲", careNeeds: { mobility: { maxContinuousWalkMeters: 600, avoidStairs: true } } }, { displayName: "母亲" }] }), { stopReason: "toolUse" }),
+      fauxAssistantMessage(fauxToolCall("research_trip_options", { domains: ["play", "food", "stay", "transport"], question: "先给候选，不替我确认" }), { stopReason: "toolUse" }),
+      fauxAssistantMessage("候选已出现，尚未确认。"),
+    ]);
+    const first = await request(`/api/conversations/${conversation.value.conversationId}/messages`, { method: "POST", token, body: { text: "8月27日至29日和父母从广州飞上海，14:00到浦东T2；父亲步行不超过600米并避开楼梯；先给候选，不替我确认。" } });
+    assert.equal(first.value.status, "completed");
+    const tripId = first.value.tripId;
+
+    faux.setResponses([fauxAssistantMessage(fauxToolCall("confirm_user_arrival", { airport: "浦东机场", terminal: "T2", time: "14:00", intercityBooked: true, explicitUserConfirmation: true }), { stopReason: "toolUse" }), fauxAssistantMessage("已记录。")]);
+    await request(`/api/conversations/${conversation.value.conversationId}/messages`, { method: "POST", token, body: { text: "机票已经买好，以14:00浦东T2为事实，不选库存航班。" } });
+
+    const beforePreview = await request(`/api/trips/${tripId}/plan`, { token });
+    const previewSelections = Object.fromEntries(["stay", "play", "food"].map((domain) => [domain, beforePreview.value.pendingProposals[0].byDomain[domain][0].nodeId]));
+    const routePreview = await request(`/api/trips/${tripId}/mobility/preview`, { method: "POST", token, body: { baseRevision: beforePreview.value.revision, selections: previewSelections } });
+    assert.equal(routePreview.response.status, 200);
+    assert.equal(routePreview.value.committed, false);
+    assert.equal(routePreview.value.impact.stopCount, 4);
+    const afterPreview = await request(`/api/trips/${tripId}/plan`, { token });
+    assert.equal(afterPreview.value.byDomain.stay.some((node) => node.selected), false, "HTTP route preview must not commit a tentative hotel");
+    assert.equal(afterPreview.value.mobility, null, "HTTP route preview must not persist route observations");
+
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall("get_trip_plan_view", {}), { stopReason: "toolUse" }),
+      (context) => {
+        const plan = httpLatestToolJson(context);
+        return fauxAssistantMessage(fauxToolCall("confirm_trip_selection", { domain: "stay", nodeId: plan.pendingProposals[0].domains.stay.options[0].nodeId, explicitUserConfirmation: true }), { stopReason: "toolUse" });
+      },
+      fauxAssistantMessage("住宿已经锁定。"),
+    ]);
+    const confirmed = await request(`/api/conversations/${conversation.value.conversationId}/messages`, { method: "POST", token, body: { text: "选择全季酒店（上海人民广场南京路步行街店）为住宿锚点，只确认住宿，吃玩暂不确认；立即核验机场到酒店。" } });
+    assert.equal(confirmed.response.status, 200);
+    assert.match(confirmed.value.conversation.messages.at(-1).text, /已只确认住宿/);
+    assert.match(confirmed.value.conversation.messages.at(-1).text, /1128 米/);
+
+    const plan = await request(`/api/trips/${tripId}/plan`, { token });
+    assert.equal(plan.value.byDomain.stay.filter((node) => node.selected).length, 1);
+    assert.equal(plan.value.byDomain.play.filter((node) => node.selected).length, 0);
+    assert.equal(plan.value.byDomain.food.filter((node) => node.selected).length, 0);
+    assert.equal(plan.value.pendingProposals[0].byDomain.play.length, 1);
+    assert.equal(plan.value.pendingProposals[0].byDomain.food.length, 1);
+    assert.equal(plan.value.pendingProposals[0].byDomain.stay.length, 0);
+    assert.equal(plan.value.mobility.legs[0].origin.label, "浦东机场 T2");
+    assert.equal(plan.value.mobility.legs[0].destination.nodeId, plan.value.byDomain.stay.find((node) => node.selected).nodeId);
+    const control = await request(`/api/trips/${tripId}/control`, { token });
+    assert.deepEqual(control.value.openDecisions.map((decision) => decision.domain).sort(), ["food", "play"]);
   } finally {
     await close();
   }

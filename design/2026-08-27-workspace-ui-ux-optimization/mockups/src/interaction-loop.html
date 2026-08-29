@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  :root {
+    --ink:#17191c; --ink-soft:#38434b; --muted:#53616b; --quiet:#64727b;
+    --line:#dfe4e7; --line-strong:#cbd3d8; --surface:#fff; --surface-subtle:#f0f4f5;
+    --coral:#ff5a4f; --coral-action:#c9443b; --coral-soft:#fff0ed;
+    --blue:#2166bd; --blue-soft:#edf4fb; --green:#24754b; --green-soft:#e8f6ec;
+  }
+  html,body { width:1440px; height:420px; overflow:hidden; }
+  body { font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif; color:var(--ink); background:var(--surface); position:relative; }
+  svg.ic { width:20px; height:20px; stroke:currentColor; fill:none; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+
+  .head { position:absolute; top:28px; left:40px; }
+  .head h1 { font-size:20px; font-weight:700; }
+  .head p { font-size:13px; color:var(--muted); margin-top:4px; }
+
+  .flow { position:absolute; top:104px; left:40px; right:40px; display:flex; align-items:flex-start; }
+  .node { width:248px; flex:none; }
+  .card { height:120px; border:1px solid var(--line); border-radius:14px; background:var(--surface); padding:12px 14px; display:flex; flex-direction:column; }
+  .card .icrow { display:flex; align-items:center; gap:8px; }
+  .card .nicon { width:28px; height:28px; border-radius:8px; background:var(--surface-subtle); display:flex; align-items:center; justify-content:center; color:var(--ink-soft); }
+  .card .nicon svg { width:16px; height:16px; }
+  .card .step { font-size:11px; font-weight:650; color:var(--quiet); }
+  .card .tt { font-size:15px; font-weight:650; margin-top:6px; }
+  .card .ds { font-size:12px; color:var(--muted); margin-top:3px; line-height:1.4; }
+  .node .note { font-size:11px; color:var(--quiet); margin-top:8px; text-align:center; }
+  .node.key .card { border:1.5px solid var(--coral); }
+  .node.key .nicon { background:var(--coral-soft); color:var(--coral-action); }
+  .arrow { flex:1; display:flex; align-items:center; justify-content:center; height:120px; color:var(--quiet); }
+  .arrow svg { width:26px; height:26px; }
+
+  .ret { position:absolute; left:0; top:268px; width:1440px; }
+</style>
+</head>
+<body>
+
+<div class="head">
+  <h1>核心交互闭环</h1>
+  <p>看候选 → 试排 → 看影响 → 确认：确认前不写入 TripState，已确认行程始终可见</p>
+</div>
+
+<div class="flow">
+  <div class="node">
+    <div class="card">
+      <div class="icrow">
+        <span class="nicon"><svg class="ic" viewBox="0 0 24 24"><path d="M4 6l1.5 1.5L8 5M4 12l1.5 1.5L8 11M4 18l1.5 1.5L8 17M11 6h9M11 12h9M11 18h9"/></svg></span>
+        <span class="step">① 概览</span>
+      </div>
+      <div class="tt">整趟安排概览</div>
+      <div class="ds">看整趟环节与状态</div>
+    </div>
+    <div class="note">行式环节卡 · 状态徽章 + 取舍摘要</div>
+  </div>
+  <div class="arrow"><svg class="ic" viewBox="0 0 24 24"><path d="M4 12h15M13 6l6 6-6 6"/></svg></div>
+  <div class="node">
+    <div class="card">
+      <div class="icrow">
+        <span class="nicon"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="5" width="8" height="14" rx="2"/><rect x="13" y="5" width="8" height="14" rx="2"/></svg></span>
+        <span class="step">② 比较</span>
+      </div>
+      <div class="tt">进入环节比较</div>
+      <div class="ds">当前方案 vs 候选 · 差异高亮</div>
+    </div>
+    <div class="note">候选不覆盖当前方案 · 不可比项诚实标注</div>
+  </div>
+  <div class="arrow"><svg class="ic" viewBox="0 0 24 24"><path d="M4 12h15M13 6l6 6-6 6"/></svg></div>
+  <div class="node key">
+    <div class="card">
+      <div class="icrow">
+        <span class="nicon"><svg class="ic" viewBox="0 0 24 24"><path d="M9 4h11M9 4v16M9 4L4 7v16l5-3M9 20h11V7M9 20l6-3M20 7l-5-3M15 4v13"/></svg></span>
+        <span class="step">③ 试排</span>
+      </div>
+      <div class="tt">试排（不落盘）</div>
+      <div class="ds">地图实时重算多点路线</div>
+    </div>
+    <div class="note">确认前不改动行程 · 当前路线保留对照</div>
+  </div>
+  <div class="arrow"><svg class="ic" viewBox="0 0 24 24"><path d="M4 12h15M13 6l6 6-6 6"/></svg></div>
+  <div class="node">
+    <div class="card">
+      <div class="icrow">
+        <span class="nicon"><svg class="ic" viewBox="0 0 24 24"><path d="M4 19V9M10 19V5M16 19v-8M22 19H2"/></svg></span>
+        <span class="step">④ 聚合</span>
+      </div>
+      <div class="tt">影响条聚合</div>
+      <div class="ds">Δ 时间 / 步行 / 费用 · 体力校验</div>
+    </div>
+    <div class="note">影响条与确认栏相邻同屏</div>
+  </div>
+  <div class="arrow"><svg class="ic" viewBox="0 0 24 24"><path d="M4 12h15M13 6l6 6-6 6"/></svg></div>
+  <div class="node">
+    <div class="card">
+      <div class="icrow">
+        <span class="nicon"><svg class="ic" viewBox="0 0 24 24"><path d="M4 12l5 5L20 6"/></svg></span>
+        <span class="step">⑤ 确认</span>
+      </div>
+      <div class="tt">用户确认</div>
+      <div class="ds">才写入 TripState</div>
+    </div>
+    <div class="note">revision + write contract 提交流程</div>
+  </div>
+</div>
+
+<svg class="ret" width="1440" height="152" viewBox="0 0 1440 152">
+  <defs>
+    <marker id="ah" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+      <path d="M0 0 L8 4 L0 8" fill="none" stroke="#64727b" stroke-width="1.5"/>
+    </marker>
+  </defs>
+  <!-- from node5 bottom center (x=1300) down, left to node1 center (x=164), up -->
+  <path d="M1276 24 L1276 78 L164 78 L164 30" fill="none" stroke="#64727b" stroke-width="1.5" stroke-dasharray="6 5" marker-end="url(#ah)"/>
+  <rect x="572" y="64" width="220" height="28" fill="#fff"/>
+  <text x="682" y="83" text-anchor="middle" font-family="-apple-system,'PingFang SC',sans-serif" font-size="12" fill="#53616b">保持当前 = 无写入</text>
+</svg>
+
+</body>
+</html>

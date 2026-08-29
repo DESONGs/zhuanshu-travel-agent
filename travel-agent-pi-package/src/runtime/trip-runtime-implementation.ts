@@ -6,6 +6,8 @@ type DynamicValue = any;
 type DynamicRecord = Record<string, DynamicValue>;
 
 export const FOUR_DOMAINS = ["play", "food", "stay", "transport"] as const;
+const BUDGET_DOMAINS = ["stay", "transport", "food", "play", "other"] as const;
+const PRICE_QUALITIES = new Set(["firm", "reference", "estimate", "unknown"]);
 
 export const SOCIAL_ERROR_CODES = Object.freeze([
   "AUTH_REQUIRED",
@@ -115,7 +117,154 @@ function immutablePatchTarget(node: DynamicRecord | undefined): boolean {
   return node?.lock?.kind === "booked" || node?.lock?.kind === "hard" || node?.lock?.kind === "user";
 }
 
+export function normalizeTravelPrice(value: DynamicValue, defaults: DynamicRecord = {}): DynamicRecord {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const structured = Object.keys(source).length > 0;
+  const rawAmount = structured ? source.amount : value;
+  const numericAmount = rawAmount === null || rawAmount === undefined || rawAmount === "" ? null : Number(rawAmount);
+  const amount = typeof numericAmount === "number" && Number.isFinite(numericAmount) && (structured ? numericAmount >= 0 : numericAmount > 0)
+    ? numericAmount
+    : null;
+  const requestedQuality = String(source.quality ?? defaults.quality ?? "reference");
+  const quality = amount == null
+    ? "unknown"
+    : PRICE_QUALITIES.has(requestedQuality) && requestedQuality !== "unknown" ? requestedQuality : "reference";
+  const basis = source.basis ?? defaults.basis ?? null;
+  const checkedAt = source.checkedAt ?? defaults.checkedAt ?? null;
+  return {
+    amount,
+    currency: String(source.currency ?? defaults.currency ?? "CNY").slice(0, 8) || "CNY",
+    quality,
+    ...(basis == null ? {} : { basis: String(basis).slice(0, 240) }),
+    ...(checkedAt == null ? {} : { checkedAt: String(checkedAt).slice(0, 40) }),
+  };
+}
+
+export function travelPriceAmount(value: DynamicValue): number | null {
+  const price = normalizeTravelPrice(value);
+  return price.amount == null ? null : Number(price.amount);
+}
+
+function emptyBudgetBucket(): DynamicRecord {
+  return { committed: 0, estimated: 0, quality: "unknown", basis: [], unknownCount: 0 };
+}
+
+function tripDurationDays(brief: DynamicRecord = {}): number {
+  if (Number.isInteger(brief.durationDays) && brief.durationDays > 0) return Math.min(60, brief.durationDays);
+  const matches = String(brief.dates ?? "").match(/20\d{2}-\d{2}-\d{2}/g) ?? [];
+  if (matches.length >= 2) {
+    const start = Date.parse(`${matches[0]}T00:00:00Z`);
+    const end = Date.parse(`${matches[1]}T00:00:00Z`);
+    if (Number.isFinite(start) && Number.isFinite(end) && end >= start) return Math.min(60, Math.round((end - start) / 86_400_000) + 1);
+  }
+  return 1;
+}
+
+function hasExplicitTripDuration(brief: DynamicRecord = {}): boolean {
+  return (Number.isInteger(brief.durationDays) && brief.durationDays > 0)
+    || (String(brief.dates ?? "").match(/20\d{2}-\d{2}-\d{2}/g)?.length ?? 0) >= 2;
+}
+
+function pricedTripTotal(item: DynamicRecord, state: DynamicRecord): DynamicRecord {
+  const domain = requireDomain(item.domain);
+  const price = normalizeTravelPrice(item.price ?? item.cost, {
+    currency: state.brief?.currency ?? state.budgetLedger?.currency ?? "CNY",
+    checkedAt: item.operability?.checkedAt ?? null,
+  });
+  if (price.amount == null) return { amount: null, quality: "unknown", basis: price.basis ?? "价格待核验" };
+  const partySize = Math.max(1, asArray(state.travelers).length);
+  const days = tripDurationDays(state.brief);
+  const durationKnown = hasExplicitTripDuration(state.brief);
+  const nights = Math.max(1, days - 1);
+  const rooms = Math.max(1, Math.ceil(partySize / 2));
+  const declaredBasis = String(price.basis ?? "");
+  let multiplier = 1;
+  let basis = declaredBasis || "单项价格";
+  if (!/trip_total|整趟合计/i.test(declaredBasis)) {
+    if (domain === "stay") {
+      multiplier = nights * rooms;
+      basis = `${nights} 晚 × ${rooms} 间房`;
+    } else if (domain === "transport") {
+      multiplier = partySize;
+      basis = `${partySize} 人 × 单程票价`;
+    } else if (domain === "food") {
+      multiplier = partySize * (durationKnown ? days * 2 : 1);
+      basis = durationKnown ? `${partySize} 人 × ${days} 天 × 每天 2 餐` : `${partySize} 人 × 当前餐饮选择`;
+    } else if (domain === "play") {
+      multiplier = partySize * (durationKnown ? days : 1);
+      basis = durationKnown ? `${partySize} 人 × ${days} 天 × 每天 1 项付费体验` : `${partySize} 人 × 当前体验选择`;
+    }
+  }
+  return {
+    amount: Math.round(price.amount * multiplier * 100) / 100,
+    quality: multiplier === 1 ? price.quality : "estimate",
+    basis,
+  };
+}
+
+function median(values: number[]): number | null {
+  const sorted = values.filter((value) => Number.isFinite(value) && value >= 0).sort((left, right) => left - right);
+  if (!sorted.length) return null;
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle]! : (sorted[middle - 1]! + sorted[middle]!) / 2;
+}
+
+export function estimateTripBudget(state: DynamicRecord): DynamicRecord {
+  const currency = String(state.brief?.currency ?? state.budgetLedger?.currency ?? "CNY");
+  const domains = Object.fromEntries(BUDGET_DOMAINS.map((domain) => [domain, emptyBudgetBucket()])) as Record<(typeof BUDGET_DOMAINS)[number], DynamicRecord>;
+  const proposalCandidates = asArray(state.pendingProposals).flatMap((proposal) => asArray(proposal.operations))
+    .filter((operation) => operation.kind === "add_candidate" && operation.node && FOUR_DOMAINS.includes(operation.node.domain));
+  for (const domain of FOUR_DOMAINS) {
+    const bucket = domains[domain];
+    const selected = asArray(state.nodes).filter((node) => node.domain === domain && node.selected === true);
+    const selectedTotals = selected.map((node) => pricedTripTotal(node, state));
+    const knownSelected = selectedTotals.filter((item) => item.amount != null);
+    bucket.committed = Math.round(knownSelected.reduce((sum, item) => sum + item.amount, 0) * 100) / 100;
+    bucket.unknownCount = selectedTotals.filter((item) => item.amount == null).length;
+    if (knownSelected.length) {
+      bucket.estimated = bucket.committed;
+      bucket.quality = knownSelected.some((item) => item.quality === "estimate") ? "estimate"
+        : knownSelected.some((item) => item.quality === "reference") ? "reference" : "firm";
+      bucket.basis = unique(knownSelected.map((item) => item.basis).filter(Boolean));
+      continue;
+    }
+    const candidateTotals = proposalCandidates
+      .filter((operation) => operation.node.domain === domain)
+      .map((operation) => pricedTripTotal(operation.node, state));
+    const knownCandidates = candidateTotals.filter((item) => item.amount != null);
+    const estimated = median(knownCandidates.map((item) => item.amount).filter((amount): amount is number => amount != null));
+    if (estimated != null) {
+      bucket.estimated = Math.round(estimated * 100) / 100;
+      bucket.quality = knownCandidates.length === 1 && knownCandidates[0]?.quality !== "estimate" ? knownCandidates[0]!.quality : "estimate";
+      bucket.basis = unique(knownCandidates.map((item) => item.basis).filter(Boolean));
+      bucket.unknownCount = candidateTotals.length - knownCandidates.length;
+    } else {
+      bucket.unknownCount = Math.max(1, bucket.unknownCount);
+    }
+  }
+  const committed = Math.round(FOUR_DOMAINS.reduce((sum, domain) => sum + domains[domain].committed, 0) * 100) / 100;
+  const estimated = Math.round(BUDGET_DOMAINS.reduce((sum, domain) => sum + Math.max(domains[domain].committed, domains[domain].estimated), 0) * 100) / 100;
+  const totalBudget = state.brief?.totalBudget ?? state.budgetLedger?.totalBudget ?? null;
+  return {
+    currency,
+    totalBudget,
+    domains,
+    committed,
+    estimated,
+    exceedsBudget: totalBudget != null && estimated > totalBudget,
+  };
+}
+
+function refreshBudgetLedger(state: DynamicRecord): void {
+  state.budgetLedger = estimateTripBudget(state);
+}
+
 function createDecisionNodeRecord(input: DynamicRecord, timestamp: string): DynamicRecord {
+  const price = normalizeTravelPrice(input.price ?? input.cost, {
+    currency: input.currency ?? "CNY",
+    quality: input.priceQuality ?? "reference",
+    checkedAt: input.operability?.checkedAt ?? timestamp,
+  });
   return {
     nodeId: requireId(input.nodeId, "node_id"),
     domain: requireDomain(input.domain),
@@ -141,7 +290,8 @@ function createDecisionNodeRecord(input: DynamicRecord, timestamp: string): Dyna
       title: String(item?.title ?? "").slice(0, 200),
       source: String(item?.source ?? "provider").slice(0, 120),
     })).filter((item) => item.url),
-    cost: Number(input.cost ?? 0),
+    price,
+    cost: price.amount ?? 0,
     version: 1,
     updatedAt: timestamp,
   };
@@ -258,7 +408,7 @@ export function createTripControlState({ tripId = `trip_${randomUUID().slice(0, 
   requireId(tripId, "trip_id");
   const createdAt = now(clock);
   const normalizedBrief = normalizedBriefUpdate({}, brief, createdAt);
-  return {
+  const state = {
     schemaVersion: "trip-control-state-v1",
     tripId,
     revision: 0,
@@ -277,7 +427,14 @@ export function createTripControlState({ tripId = `trip_${randomUUID().slice(0, 
       selectedNodeIds: [],
     })),
     dirtySet: [],
-    budgetLedger: { currency: normalizedBrief.currency ?? "CNY", totalBudget: normalizedBrief.totalBudget ?? null, committed: 0, estimated: 0 },
+    budgetLedger: {
+      currency: normalizedBrief.currency ?? "CNY",
+      totalBudget: normalizedBrief.totalBudget ?? null,
+      domains: Object.fromEntries(BUDGET_DOMAINS.map((domain) => [domain, emptyBudgetBucket()])),
+      committed: 0,
+      estimated: 0,
+      exceedsBudget: false,
+    },
     environment: { weather: null, mobility: null, updatedAt: null },
     readiness: {
       schemaVersion: "trip-readiness-state-v1",
@@ -300,6 +457,8 @@ export function createTripControlState({ tripId = `trip_${randomUUID().slice(0, 
     createdAt,
     updatedAt: createdAt,
   };
+  refreshBudgetLedger(state);
+  return state;
 }
 
 const READINESS_SIGNAL_IDS = Object.freeze([
@@ -413,6 +572,7 @@ export function applyWeatherObservation(state: DynamicRecord, observation: Dynam
     next.proposalHistory.push(...next.pendingProposals.map((proposal: DynamicRecord) => ({ proposalId: proposal.proposalId, status: "superseded_by_weather_change", decidedAt: timestamp, revision: state.revision })));
     next.pendingProposals = [];
   }
+  refreshBudgetLedger(next);
   next.revision = state.revision + 1;
   next.updatedAt = timestamp;
   if (next.nodes.length) {
@@ -478,6 +638,7 @@ export function applyMobilityObservation(state: DynamicRecord, observation: Dyna
   next.updatedAt = timestamp;
   if (!changed) return next;
   next.revision = state.revision + 1;
+  next.pendingProposals = next.pendingProposals.map((proposal: DynamicRecord) => ({ ...proposal, baseRevision: next.revision }));
   next.changeJournal.push({
     changeId: `change_${next.revision}_${randomUUID().slice(0, 8)}`,
     baseRevision: state.revision,
@@ -491,8 +652,77 @@ export function applyMobilityObservation(state: DynamicRecord, observation: Dyna
 }
 
 const BRIEF_TEXT_FIELDS = Object.freeze([
-  "destination", "dates", "origin", "arrivalMode", "partyProfile", "pace", "lodgingPreference", "currency",
+  "destination", "dates", "origin", "arrivalMode", "arrivalAirport", "arrivalTerminal", "arrivalTime",
+  "partyProfile", "pace", "lodgingPreference", "currency",
 ]);
+
+function proposalEvidenceForOperations(proposal: DynamicRecord, operations: DynamicRecord[]): DynamicRecord | undefined {
+  if (!proposal.evidenceBundle) return undefined;
+  const nodeIds = new Set(operations.map((operation) => operation.nodeId));
+  const sourceIds = new Set(operations.flatMap((operation) => asArray(operation.node?.sourceRefs)));
+  const claims = asArray(proposal.evidenceBundle.claims).filter((claim) => nodeIds.has(claim.nodeId));
+  const entityIds = new Set(claims.map((claim) => claim.entityId));
+  return {
+    contentItems: asArray(proposal.evidenceBundle.contentItems).filter((item) => sourceIds.has(item.contentItemId)),
+    entities: asArray(proposal.evidenceBundle.entities).filter((entity) => entityIds.has(entity.entityId)),
+    claims,
+  };
+}
+
+function researchProposalWithOperations(proposal: DynamicRecord, operations: DynamicRecord[], baseRevision: number, caveat?: string): DynamicRecord {
+  const writeSet = unique<string>(operations.map((operation) => String(operation.nodeId)));
+  const next: DynamicRecord = {
+    ...clone(proposal),
+    baseRevision,
+    partial: true,
+    caveats: unique<string>([...asArray(proposal.caveats).map(String), ...(caveat ? [caveat] : [])]),
+    writeSet,
+    writeContract: { allowedNodeIds: writeSet },
+    readSet: [],
+    operations: clone(operations),
+  };
+  const evidenceBundle = proposalEvidenceForOperations(proposal, operations);
+  if (evidenceBundle) next.evidenceBundle = evidenceBundle;
+  return next;
+}
+
+function briefChangeDomains(previous: DynamicRecord, current: DynamicRecord, travelerScopeChanged: boolean): Set<string> {
+  if (travelerScopeChanged) return new Set(FOUR_DOMAINS);
+  const changed = new Set([...Object.keys(previous ?? {}), ...Object.keys(current ?? {})].filter((key) => JSON.stringify(previous?.[key]) !== JSON.stringify(current?.[key])));
+  if (["destination", "dates", "durationDays", "partyProfile", "pace", "currency", "totalBudget"].some((key) => changed.has(key))) return new Set(FOUR_DOMAINS);
+  const affected = new Set<string>();
+  if (["origin", "arrivalMode", "arrivalAirport", "arrivalTerminal", "arrivalTime", "arrivalConfirmed", "intercityBooked"].some((key) => changed.has(key))) affected.add("transport");
+  if (changed.has("lodgingPreference")) {
+    affected.add("stay");
+    affected.add("food");
+  }
+  if (changed.has("foodPreferences")) affected.add("food");
+  return affected;
+}
+
+function retainPendingOutsideDomains(state: DynamicRecord, affectedDomains: Set<string>, nextRevision: number, timestamp: string): void {
+  if (!state.pendingProposals.length || !affectedDomains.size) return;
+  const retained = [];
+  for (const proposal of state.pendingProposals) {
+    const operations = asArray(proposal.operations);
+    const researchOnly = String(proposal.proposalId).startsWith("proposal_research_")
+      && operations.every((operation) => operation.kind === "add_candidate" && FOUR_DOMAINS.includes(operation.node?.domain));
+    if (!researchOnly) {
+      state.proposalHistory.push({ proposalId: proposal.proposalId, status: "superseded_by_scope_change", decidedAt: timestamp, revision: nextRevision });
+      continue;
+    }
+    const remaining = operations.filter((operation) => !affectedDomains.has(operation.node.domain));
+    if (!remaining.length) {
+      state.proposalHistory.push({ proposalId: proposal.proposalId, status: "superseded_by_scope_change", affectedDomains: [...affectedDomains], decidedAt: timestamp, revision: nextRevision });
+      continue;
+    }
+    if (remaining.length !== operations.length) {
+      state.proposalHistory.push({ proposalId: proposal.proposalId, status: "partially_superseded_by_scope_change", affectedDomains: [...affectedDomains], decidedAt: timestamp, revision: nextRevision });
+    }
+    retained.push(researchProposalWithOperations(proposal, remaining, nextRevision, "旅行范围有局部变化；未受影响领域的候选已保留，受影响领域需要重新核验。"));
+  }
+  state.pendingProposals = retained;
+}
 
 function normalizedBriefUpdate(current: DynamicRecord, changes: DynamicRecord, referenceTimestamp = new Date().toISOString()): DynamicRecord {
   const next = clone(current ?? {});
@@ -516,6 +746,8 @@ function normalizedBriefUpdate(current: DynamicRecord, changes: DynamicRecord, r
     if (!Number.isFinite(totalBudget) || totalBudget < 0) throw new Error("invalid_total_budget");
     next.totalBudget = totalBudget;
   }
+  if (changes.arrivalConfirmed !== undefined) next.arrivalConfirmed = changes.arrivalConfirmed === true;
+  if (changes.intercityBooked !== undefined) next.intercityBooked = changes.intercityBooked === true;
   if (changes.foodPreferences !== undefined) {
     if (!Array.isArray(changes.foodPreferences)) throw new Error("invalid_food_preferences");
     next.foodPreferences = unique(changes.foodPreferences.map((item) => String(item ?? "").trim().slice(0, 120)).filter(Boolean)).slice(0, 12);
@@ -526,6 +758,7 @@ function normalizedBriefUpdate(current: DynamicRecord, changes: DynamicRecord, r
 export function updateTripControlScope(state: DynamicRecord, input: DynamicRecord = {}, { clock }: DynamicRecord = {}): DynamicRecord {
   const timestamp = now(clock);
   const next = clone(state);
+  const previousBriefRecord = clone(next.brief ?? {});
   const previousDestination = next.brief?.destination ?? null;
   const previousDates = next.brief?.dates ?? null;
   const previousBrief = JSON.stringify(next.brief ?? {});
@@ -533,6 +766,8 @@ export function updateTripControlScope(state: DynamicRecord, input: DynamicRecor
   next.brief = normalizedBriefUpdate(next.brief, input.brief ?? input, timestamp);
   const environmentScopeChanged = previousDestination !== (next.brief?.destination ?? null)
     || previousDates !== (next.brief?.dates ?? null);
+  const arrivalScopeChanged = ["origin", "arrivalMode", "arrivalAirport", "arrivalTerminal", "arrivalTime", "arrivalConfirmed", "intercityBooked"]
+    .some((field) => JSON.stringify(previousBriefRecord?.[field]) !== JSON.stringify(next.brief?.[field]));
 
   const travelerProfiles = asArray(input.travelerProfiles);
   const requestedCount = input.travelerCount === undefined ? Math.max(1, next.travelers.length, travelerProfiles.length) : Number(input.travelerCount);
@@ -562,22 +797,14 @@ export function updateTripControlScope(state: DynamicRecord, input: DynamicRecor
     || travelerScopeChanged;
   if (!changed) return next;
 
-  if (next.pendingProposals.length) {
-    next.proposalHistory.push(...next.pendingProposals.map((proposal: DynamicRecord) => ({
-      proposalId: proposal.proposalId,
-      status: "superseded_by_scope_change",
-      decidedAt: timestamp,
-      revision: state.revision,
-    })));
-    next.pendingProposals = [];
-  }
-  next.budgetLedger.currency = next.brief.currency ?? next.budgetLedger.currency;
-  next.budgetLedger.totalBudget = next.brief.totalBudget ?? null;
-  const mobilityScopeChanged = environmentScopeChanged || travelerScopeChanged;
+  const nextRevision = state.revision + 1;
+  retainPendingOutsideDomains(next, briefChangeDomains(previousBriefRecord, next.brief, travelerScopeChanged), nextRevision, timestamp);
+  refreshBudgetLedger(next);
+  const mobilityScopeChanged = environmentScopeChanged || arrivalScopeChanged || travelerScopeChanged;
   if (environmentScopeChanged || mobilityScopeChanged) next.environment = { ...(next.environment ?? {}), updatedAt: timestamp };
   if (environmentScopeChanged) Object.assign(next.environment, { weather: null, weatherInvalidatedAt: timestamp, weatherInvalidatedBy: "trip_scope_change" });
   if (mobilityScopeChanged) Object.assign(next.environment, { mobility: null, mobilityInvalidatedAt: timestamp, mobilityInvalidatedBy: travelerScopeChanged && !environmentScopeChanged ? "traveler_needs_change" : "trip_scope_change" });
-  next.revision = state.revision + 1;
+  next.revision = nextRevision;
   next.updatedAt = timestamp;
   if (next.nodes.length) {
     const dirty = enqueueAffectedTaskChains(next, next.nodes.map((node: DynamicRecord) => node.nodeId), { clock: () => new Date(timestamp) });
@@ -610,6 +837,7 @@ export function addDecisionNode(state: DynamicRecord, input: DynamicRecord, { cl
       type: "impacts",
     });
   }
+  refreshBudgetLedger(next);
   return next;
 }
 
@@ -856,12 +1084,19 @@ function applyOperation(next: DynamicRecord, operation: DynamicRecord, timestamp
     }
   } else if (operation.kind === "update") {
     const allowedChanges = [
-      "title", "summary", "offerRef", "claimRefs", "sourceRefs", "sourceStatus", "time", "location", "cost",
+      "title", "summary", "offerRef", "claimRefs", "sourceRefs", "sourceStatus", "time", "location", "cost", "price",
       "foreignGuestEligible", "operability", "spoilerLevel", "impactsNodeIds", "media",
     ];
     for (const [key, value] of Object.entries(operation.changes ?? {})) {
       if (!allowedChanges.includes(key)) throw new Error("unsupported_patch_change");
       node[key] = clone(value);
+    }
+    if (operation.changes?.price !== undefined || operation.changes?.cost !== undefined) {
+      node.price = normalizeTravelPrice(operation.changes?.price ?? operation.changes?.cost, {
+        currency: next.budgetLedger?.currency ?? "CNY",
+        checkedAt: operation.changes?.operability?.checkedAt ?? node.operability?.checkedAt ?? timestamp,
+      });
+      node.cost = node.price.amount ?? 0;
     }
   } else {
     throw new Error("unsupported_patch_operation");
@@ -946,10 +1181,55 @@ function applyProposalSelections(proposal: DynamicRecord, selections: DynamicRec
   return next;
 }
 
-function recalculateCommittedBudget(state: DynamicRecord): void {
-  state.budgetLedger.committed = state.nodes
-    .filter((node: DynamicRecord) => node.selected)
-    .reduce((total: number, node: DynamicRecord) => total + Number(node.cost ?? 0), 0);
+function partialSelectionProposals(state: DynamicRecord, proposal: DynamicRecord, selections: DynamicRecord): { commitProposal: DynamicRecord; residualOperations: DynamicRecord[]; acceptedDomains: string[] } {
+  const operations = asArray(proposal.operations);
+  if (!operations.length || operations.some((operation) => !["add_candidate", "select"].includes(operation.kind) || !FOUR_DOMAINS.includes(operation.node?.domain))) throw new Error("partial_selection_requires_candidate_proposal");
+  if (asArray(proposal.readSet).length) throw new Error("partial_selection_read_set_not_supported");
+  const acceptedDomains = Object.keys(selections ?? {});
+  if (!acceptedDomains.length) throw new Error("partial_selection_required");
+  const commitOperations = [];
+  const replacementReadSet = [];
+  const replacementAlternatives = [];
+  for (const domain of acceptedDomains) {
+    requireDomain(domain);
+    const selectedNodeId = selections[domain];
+    const match = operations.find((operation) => operation.node?.domain === domain && operation.nodeId === selectedNodeId);
+    if (!match) throw new Error("proposal_selection_not_found");
+    const selected = match.kind === "add_candidate" ? clone(match) : { kind: "select", nodeId: match.nodeId };
+    if (selected.kind === "add_candidate") {
+      selected.node.selected = true;
+      selected.node.status = "selected";
+    } else {
+      const existingCandidate = state.nodes.find((node: DynamicRecord) => node.nodeId === selected.nodeId);
+      if (!existingCandidate) throw new Error("proposal_selection_not_found");
+      replacementReadSet.push({ nodeId: existingCandidate.nodeId, version: existingCandidate.version });
+    }
+    const replaceableSelectedNodes = state.nodes.filter((node: DynamicRecord) => node.domain === domain
+      && node.selected === true
+      && node.nodeId !== selected.nodeId
+      && !immutablePatchTarget(node)
+      && node.operability?.mobilityRole !== "user_confirmed_arrival");
+    for (const current of replaceableSelectedNodes) {
+      commitOperations.push({ kind: "reject", nodeId: current.nodeId });
+      replacementReadSet.push({ nodeId: current.nodeId, version: current.version });
+      replacementAlternatives.push({ kind: "select", nodeId: current.nodeId, node: { ...clone(current), selected: false, status: "candidate" } });
+    }
+    commitOperations.push(selected);
+  }
+  const selectedNodeIds = new Set(Object.values(selections));
+  const residualOperations = [...operations.filter((operation) => !selectedNodeIds.has(operation.nodeId)), ...replacementAlternatives]
+    .filter((operation, index, items) => items.findIndex((item) => item.nodeId === operation.nodeId) === index);
+  const writeSet = unique<string>(commitOperations.map((operation) => operation.nodeId));
+  const commitProposal: DynamicRecord = {
+    ...clone(proposal),
+    writeSet,
+    writeContract: { allowedNodeIds: writeSet },
+    readSet: replacementReadSet.filter((entry, index, items) => items.findIndex((item) => item.nodeId === entry.nodeId) === index),
+    operations: commitOperations,
+  };
+  const evidenceBundle = proposalEvidenceForOperations(proposal, commitOperations);
+  if (evidenceBundle) commitProposal.evidenceBundle = evidenceBundle;
+  return { commitProposal, residualOperations, acceptedDomains };
 }
 
 export function validateTripCoherence(state: DynamicRecord): DynamicRecord {
@@ -1016,10 +1296,8 @@ export function validateTripCoherence(state: DynamicRecord): DynamicRecord {
   if (weather?.planningImpact?.severity === "high" && state.nodes.some((node: DynamicRecord) => node.selected && node.domain === "play" && node.operability?.weatherFit === "caution")) {
     operabilityGaps.push({ domain: "play", code: "weather_mitigation_required" });
   }
-  const selectedCost = state.nodes
-    .filter((node: DynamicRecord) => node.selected)
-    .reduce((total: number, node: DynamicRecord) => total + Number(node.cost ?? 0), 0);
-  const exceedsBudget = state.budgetLedger.totalBudget != null && selectedCost > state.budgetLedger.totalBudget;
+  const budget = estimateTripBudget(state);
+  const exceedsBudget = budget.exceedsBudget;
   return {
     schemaVersion: "travel-qa-v1",
     status: missingDomains.length || hardConstraintViolations.length || operabilityGaps.length || exceedsBudget ? "needs_fix" : "pass",
@@ -1028,7 +1306,7 @@ export function validateTripCoherence(state: DynamicRecord): DynamicRecord {
     operabilityGaps,
     mobility: mobility ? { status: mobility.status, checkedAt: mobility.checkedAt ?? null, legCount: mobility.legs?.length ?? 0 } : { status: "not_checked", checkedAt: null, legCount: 0 },
     weather: weather ? { status: "verified", coverage: weather.coverage, severity: weather.planningImpact?.severity ?? "none", checkedAt: weather.checkedAt } : { status: "not_checked" },
-    budget: { ...state.budgetLedger, committed: selectedCost, exceedsBudget },
+    budget,
   };
 }
 
@@ -1054,12 +1332,19 @@ export function commitTripPatch(state: DynamicRecord, proposal: DynamicRecord, {
       reason: "selected_places_changed",
       legs: [],
       coverage: { routedNodeIds: [], unresolvedNodeIds: changedNodeIds, unscheduled: true },
-      invalidatedAt: timestamp,
     };
+    next.environment.mobilityInvalidatedAt = timestamp;
+    next.environment.mobilityInvalidatedBy = "selected_places_changed";
   }
-  recalculateCommittedBudget(next);
+  refreshBudgetLedger(next);
   const dirty = enqueueAffectedTaskChains(next, changedNodeIds, { clock: () => new Date(timestamp) });
   const candidate: DynamicRecord = { ...dirty, revision: state.revision + 1, updatedAt: timestamp };
+  candidate.pendingProposals = candidate.pendingProposals.map((pending: DynamicRecord) => {
+    if (pending.proposalId === proposal.proposalId) return pending;
+    const conflicts = asArray(pending.readSet).some((entry) => changedNodeIds.includes(entry.nodeId))
+      || asArray(pending.writeSet).some((nodeId) => changedNodeIds.includes(nodeId));
+    return conflicts ? pending : { ...pending, baseRevision: candidate.revision };
+  });
   const qa = validateTripCoherence(candidate);
   candidate.changeJournal.push({
     changeId: `change_${candidate.revision}_${randomUUID().slice(0, 8)}`,
@@ -1083,26 +1368,55 @@ export function stageTripPatch(state: DynamicRecord, proposal: DynamicRecord, { 
     return { schemaVersion: "trip-proposal-result-v1", status: "rejected", validation: { ok: false, reason: "proposal_already_exists" }, state };
   }
   const next = clone(state);
-  next.pendingProposals.push({ ...clone(proposal), stagedAt: now(clock) });
-  return { schemaVersion: "trip-proposal-result-v1", status: "proposed", proposal, state: next };
+  const stagedProposal = clone(proposal);
+  for (const operation of asArray(stagedProposal.operations)) {
+    if (operation.kind !== "add_candidate" || !operation.node) continue;
+    operation.node.price = normalizeTravelPrice(operation.node.price ?? operation.node.cost, {
+      currency: next.brief?.currency ?? next.budgetLedger?.currency ?? "CNY",
+      checkedAt: operation.node.operability?.checkedAt ?? null,
+    });
+    operation.node.cost = operation.node.price.amount ?? 0;
+  }
+  stagedProposal.stagedAt = now(clock);
+  next.pendingProposals.push(stagedProposal);
+  refreshBudgetLedger(next);
+  return { schemaVersion: "trip-proposal-result-v1", status: "proposed", proposal: stagedProposal, state: next };
 }
 
-export function acceptStagedTripPatch(state: DynamicRecord, proposalId: string, { clock, selections }: DynamicRecord = {}): DynamicRecord {
+export function acceptStagedTripPatch(state: DynamicRecord, proposalId: string, { clock, selections, partial = false }: DynamicRecord = {}): DynamicRecord {
   requireId(proposalId, "proposal_id");
   const proposal = state.pendingProposals.find((item: DynamicRecord) => item.proposalId === proposalId);
   if (!proposal) {
     return { schemaVersion: "trip-commit-result-v1", status: "rejected", validation: { ok: false, reason: "proposal_not_found" }, state };
   }
   let proposalToCommit;
+  let partialResult: { commitProposal: DynamicRecord; residualOperations: DynamicRecord[]; acceptedDomains: string[] } | null = null;
   try {
-    proposalToCommit = applyProposalSelections(proposal, selections);
+    if (partial === true) {
+      partialResult = partialSelectionProposals(state, proposal, selections ?? {});
+      proposalToCommit = partialResult.commitProposal;
+    } else {
+      proposalToCommit = applyProposalSelections(proposal, selections);
+    }
   } catch (error: unknown) {
     return { schemaVersion: "trip-commit-result-v1", status: "rejected", validation: { ok: false, reason: error instanceof Error ? error.message : "invalid_proposal_selection" }, state };
   }
   const result = commitTripPatch(state, proposalToCommit, { clock });
   if (result.status !== "committed") return result;
-  result.state.pendingProposals = result.state.pendingProposals.filter((item: DynamicRecord) => item.proposalId !== proposalId);
-  result.state.proposalHistory.push({ proposalId, status: "accepted", decidedAt: now(clock), revision: result.state.revision });
+  if (partialResult) {
+    result.state.pendingProposals = result.state.pendingProposals.flatMap((item: DynamicRecord) => {
+      if (item.proposalId !== proposalId) return [{ ...item, baseRevision: result.state.revision }];
+      if (!partialResult?.residualOperations.length) return [];
+      return [researchProposalWithOperations(item, partialResult.residualOperations, result.state.revision, "部分候选已确认；其他领域仍等待你的选择。")];
+    });
+    result.state.proposalHistory.push({ proposalId, status: "partially_accepted", acceptedDomains: partialResult.acceptedDomains, decidedAt: now(clock), revision: result.state.revision });
+  } else {
+    result.state.pendingProposals = result.state.pendingProposals
+      .filter((item: DynamicRecord) => item.proposalId !== proposalId)
+      .map((item: DynamicRecord) => ({ ...item, baseRevision: result.state.revision }));
+    result.state.proposalHistory.push({ proposalId, status: "accepted", decidedAt: now(clock), revision: result.state.revision });
+  }
+  refreshBudgetLedger(result.state);
   return result;
 }
 
@@ -1114,7 +1428,24 @@ export function rejectStagedTripPatch(state: DynamicRecord, proposalId: string, 
   const next = clone(state);
   next.pendingProposals = next.pendingProposals.filter((item: DynamicRecord) => item.proposalId !== proposalId);
   next.proposalHistory.push({ proposalId, status: "rejected", decidedAt: now(clock), revision: next.revision });
+  refreshBudgetLedger(next);
   return { schemaVersion: "trip-proposal-result-v1", status: "rejected_by_user", state: next };
+}
+
+export function supersedeStagedTripPatch(state: DynamicRecord, proposalId: string, reason: string, { clock }: DynamicRecord = {}): DynamicRecord {
+  requireId(proposalId, "proposal_id");
+  if (!state.pendingProposals.some((item: DynamicRecord) => item.proposalId === proposalId)) return state;
+  const next = clone(state);
+  next.pendingProposals = next.pendingProposals.filter((item: DynamicRecord) => item.proposalId !== proposalId);
+  next.proposalHistory.push({
+    proposalId,
+    status: "superseded_by_research_criteria",
+    reason: String(reason || "research_criteria_changed").slice(0, 120),
+    decidedAt: now(clock),
+    revision: next.revision,
+  });
+  refreshBudgetLedger(next);
+  return next;
 }
 
 export function recordBookingConfirmation(state: DynamicRecord, input: DynamicRecord, { clock }: DynamicRecord = {}): DynamicRecord {

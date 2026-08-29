@@ -6,6 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { TravelService } from "../src/api/travel-service.mjs";
 import { AmapTravelResearchProvider, createAmapTravelResearchProvider, signedAmapParameters } from "../src/providers/amap-travel-research.mjs";
+import { buildTravelResearchCriteria } from "../src/providers/research-criteria.mjs";
 import { TripStore } from "../travel-agent-pi-package/src/core/index.ts";
 
 const POIS = {
@@ -70,6 +71,7 @@ test("AMap provider runs one bounded four-domain pass and never includes its key
   assert.equal(result.status, "completed");
   assert.deepEqual(Object.keys(result.byDomain).sort(), ["food", "play", "stay", "transport"]);
   assert.equal(result.byDomain.food.length, 2);
+  assert.equal(result.byDomain.food[0].price.quality, "reference");
   assert.equal(result.weather.status, "completed");
   assert.equal(result.weather.coverage, "dates_unknown");
   assert.equal(JSON.stringify(result).includes("amap-test-key"), false);
@@ -82,6 +84,55 @@ test("AMap provider runs one bounded four-domain pass and never includes its key
   const map = await provider.renderStaticMap({ points: [{ coordinates: { longitude: 100.17, latitude: 25.69 } }] });
   assert.equal(map.contentType, "image/png");
   assert.equal(map.body.length, 4);
+});
+
+test("AMap uses named places and target areas instead of repeating the same broad request", async () => {
+  const queries = [];
+  const provider = new AmapTravelResearchProvider({
+    apiKey: "amap-test-key",
+    fetchImpl: async (url) => {
+      const parsed = new URL(url);
+      const keyword = parsed.searchParams.get("keywords");
+      queries.push(keyword);
+      const isStay = parsed.searchParams.get("types") === "100000";
+      const poi = isStay
+        ? { id: `stay_${queries.length}`, name: `${keyword}候选`, type: "住宿服务;宾馆酒店", typecode: "100100", location: "121.480000,31.240000", cityname: "上海市", adname: "黄浦区", address: `${keyword}附近` }
+        : { id: `play_${queries.length}`, name: keyword, type: "风景名胜;人文景观", typecode: "110200", location: "121.490000,31.245000", cityname: "上海市", adname: "黄浦区", address: `${keyword}地址` };
+      return new Response(JSON.stringify({ status: "1", info: "OK", infocode: "10000", pois: [poi] }), { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+  const criteria = buildTravelResearchCriteria({
+    brief: { destination: "上海", lodgingPreference: "人民广场或南京东路" },
+    domains: ["play", "stay"],
+    criteria: { byDomain: { play: { namedEntities: ["外滩", "上海博物馆"] } } },
+  });
+
+  const result = await provider.research({ brief: { destination: "上海" }, domains: ["play", "stay"], criteria, includeWeather: false });
+
+  assert.deepEqual(queries, ["外滩", "上海博物馆", "人民广场 酒店", "南京东路 酒店"]);
+  assert.deepEqual(result.byDomain.play.map((item) => item.title), ["外滩", "上海博物馆"]);
+  assert.equal(result.byDomain.stay.every((item) => item.operability.researchMatch.broadFallback === false), true);
+});
+
+test("AMap keeps successful named-place results when a sibling query fails", async () => {
+  const provider = new AmapTravelResearchProvider({
+    apiKey: "amap-test-key",
+    rateLimitRetryMs: 0,
+    fetchImpl: async (url) => {
+      const parsed = new URL(url);
+      const keyword = parsed.searchParams.get("keywords");
+      if (keyword === "历史博物馆") return new Response(JSON.stringify({ status: "0", info: "SERVICE_NOT_AVAILABLE", infocode: "10016" }), { headers: { "content-type": "application/json" } });
+      return new Response(JSON.stringify({ status: "1", info: "OK", infocode: "10000", pois: [{ id: "bund", name: "外滩", type: "风景名胜", typecode: "110200", location: "121.490000,31.245000", cityname: "上海市", adname: "黄浦区", address: "中山东一路" }] }), { headers: { "content-type": "application/json" } });
+    },
+  });
+  const criteria = buildTravelResearchCriteria({ brief: { destination: "上海" }, domains: ["play"], criteria: { byDomain: { play: { namedEntities: ["外滩", "历史博物馆"] } } } });
+
+  const result = await provider.research({ brief: { destination: "上海" }, domains: ["play"], criteria, includeWeather: false });
+
+  assert.equal(result.status, "completed");
+  assert.deepEqual(result.byDomain.play.map((item) => item.title), ["外滩"]);
+  assert.equal(result.partial, true);
+  assert.equal(result.errors[0].domain, "play");
 });
 
 test("AMap classifies CUQPS limit responses as retryable rate limiting", async () => {
@@ -221,6 +272,7 @@ test("provider-backed research stages selectable linked candidates and promotes 
   assert.equal(map.body.length, 4);
 
   const proposal = before.pendingProposals[0];
+  assert.equal(proposal.byDomain.transport.length, 0, "AMap station POIs must not substitute for intercity inventory");
   const selections = Object.fromEntries(Object.entries(proposal.byDomain).filter(([, items]) => items.length).map(([domain, items]) => [domain, items.at(-1).nodeId]));
   const accepted = await service.acceptTripChange({ tripId: "trip_amap", proposalId: proposal.proposalId, selections });
   assert.equal(accepted.status, "committed");
@@ -229,8 +281,8 @@ test("provider-backed research stages selectable linked candidates and promotes 
   assert.equal(after.byDomain.food.find((node) => node.selected).nodeId, selections.food);
   const persisted = await store.get("trip_amap");
   assert.deepEqual(after.qa.operabilityGaps, [{ domain: "transport", code: "city_mobility_unverified" }]);
-  assert.equal(persisted.evidence.claims.length, 7);
-  assert.equal(persisted.evidence.contentItems.length, 7);
+  assert.equal(persisted.evidence.claims.length, 6);
+  assert.equal(persisted.evidence.contentItems.length, 6);
   assert.equal(persisted.evidence.claims.every((claim) => persisted.nodes.some((node) => node.nodeId === claim.nodeId)), true);
 });
 

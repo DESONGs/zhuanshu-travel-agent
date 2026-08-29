@@ -158,6 +158,10 @@ export function validateTripCoherence(state: TripState): TripQa {
   return assertSchema(TripQaSchema, runtime.validateTripCoherence(state), "invalid_trip_qa");
 }
 
+export function estimateTripBudget(state: TripState): TripState["budgetLedger"] {
+  return assertSchema(TripStateSchema.properties.budgetLedger, runtime.estimateTripBudget(state), "invalid_trip_budget");
+}
+
 export function commitTripPatch(state: TripState, proposal: TripPatchProposal, options: RuntimeOptions = {}): TripCommitResult {
   return assertSchema(TripCommitResultSchema, runtime.commitTripPatch(state, proposal, options), "invalid_trip_commit_result");
 }
@@ -169,13 +173,17 @@ export function stageTripPatch(state: TripState, proposal: TripPatchProposal, op
 export function acceptStagedTripPatch(
   state: TripState,
   proposalId: string,
-  options: RuntimeOptions & { selections?: Partial<Record<(typeof FOUR_DOMAINS)[number], string>> } = {},
+  options: RuntimeOptions & { selections?: Partial<Record<(typeof FOUR_DOMAINS)[number], string>>; partial?: boolean } = {},
 ): TripCommitResult {
   return assertSchema(TripCommitResultSchema, runtime.acceptStagedTripPatch(state, proposalId, options), "invalid_trip_commit_result");
 }
 
 export function rejectStagedTripPatch(state: TripState, proposalId: string, options: RuntimeOptions = {}): TripProposalResult {
   return assertSchema(TripProposalResultSchema, runtime.rejectStagedTripPatch(state, proposalId, options), "invalid_trip_proposal_result");
+}
+
+export function supersedeStagedTripPatch(state: TripState, proposalId: string, reason: string, options: RuntimeOptions = {}): TripState {
+  return assertTripState(runtime.supersedeStagedTripPatch(state, proposalId, reason, options));
 }
 
 export function recordBookingConfirmation(state: TripState, input: BookingConfirmationInput, options: RuntimeOptions = {}): TripCommitResult {

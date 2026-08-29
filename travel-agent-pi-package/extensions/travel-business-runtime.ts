@@ -1,9 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type, type Static, type TSchema } from "typebox";
-import { TravelService } from "../../src/api/travel-service.mjs";
-import { TripBriefSchema, TripPatchProposalSchema, TravelerSchema } from "../src/contracts/index.js";
-
-const service = new TravelService();
+import { createTravelService } from "../../src/api/create-travel-service.mjs";
+import { ResearchCriteriaInputSchema, TripBriefSchema, TripPatchProposalSchema, TravelerSchema } from "../src/contracts/index.js";
 
 const travelerProfileParameters = Type.Object({
   travelerId: Type.Optional(Type.String()),
@@ -70,7 +68,7 @@ function register<const Parameters extends TSchema>(pi: ExtensionAPI, config: {
   });
 }
 
-export default function (pi: ExtensionAPI) {
+export function registerTravelBusinessRuntime(pi: ExtensionAPI, { service = createTravelService(process.env) } = {}) {
   register(pi, {
     name: "create_trip", label: "Create Trip", description: "Create the persistent shared state for one complete Travel V1 trip.",
     parameters: Type.Object({ tripId: Type.Optional(Type.String()), brief: Type.Optional(TripBriefSchema), travelers: Type.Optional(Type.Array(Type.Partial(TravelerSchema))) }),
@@ -102,7 +100,14 @@ export default function (pi: ExtensionAPI) {
   });
   register(pi, {
     name: "research_trip_options", label: "Research Trip Options", description: "Request provider-backed research; reports provider_unavailable until an audited provider is enabled.",
-    parameters: Type.Object({ tripId: Type.String(), capability: Type.Optional(Type.String()), query: Type.Optional(Type.String()) }),
+    parameters: Type.Object({
+      tripId: Type.String(),
+      capability: Type.Optional(Type.String()),
+      query: Type.Optional(Type.String()),
+      question: Type.Optional(Type.String({ maxLength: 800 })),
+      domains: Type.Optional(Type.Array(Type.Union([Type.Literal("play"), Type.Literal("food"), Type.Literal("stay"), Type.Literal("transport")]), { minItems: 1, maxItems: 4 })),
+      criteria: Type.Optional(ResearchCriteriaInputSchema),
+    }),
     run: (params) => service.researchTripOptions(params),
   });
   register(pi, {
@@ -111,7 +116,14 @@ export default function (pi: ExtensionAPI) {
   });
   register(pi, {
     name: "accept_trip_change", label: "Accept Trip Change", description: "Parent-only atomic commit of one staged proposal.",
-    parameters: Type.Object({ tripId: Type.String(), proposalId: Type.String() }), run: (params) => service.acceptTripChange(params),
+    parameters: Type.Object({
+      tripId: Type.String(),
+      proposalId: Type.String(),
+      selections: Type.Optional(Type.Object({
+        play: Type.Optional(Type.String()), food: Type.Optional(Type.String()), stay: Type.Optional(Type.String()), transport: Type.Optional(Type.String()),
+      }, { additionalProperties: false })),
+      partial: Type.Optional(Type.Boolean()),
+    }), run: (params) => service.acceptTripChange(params),
   });
   register(pi, {
     name: "reject_trip_change", label: "Reject Trip Change", description: "Reject one staged proposal without changing the accepted plan.",
@@ -148,4 +160,8 @@ export default function (pi: ExtensionAPI) {
     }),
     run: (params) => service.submitTripFeedback(params),
   });
+}
+
+export default function (pi: ExtensionAPI) {
+  registerTravelBusinessRuntime(pi);
 }

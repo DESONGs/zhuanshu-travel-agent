@@ -97,6 +97,7 @@ export function providerStatusSummary(env = process.env) {
       deepseek: configured(env.DEEPSEEK_API_KEY) ? liveState(env, "TRAVEL_AGENT_DEEPSEEK_SMOKE_STATUS", "credential_configured_pending_smoke") : "blocked",
       deepseekVision: configured(env.DEEPSEEK_API_KEY) ? liveState(env, "TRAVEL_AGENT_DEEPSEEK_VISION_SMOKE_STATUS", "credential_configured_pending_smoke") : "blocked",
       kimiVision: configured(env.MOONSHOT_API_KEY) ? liveState(env, "TRAVEL_AGENT_KIMI_SMOKE_STATUS", "credential_configured_pending_smoke") : "blocked",
+      kimiChild: configured(env.MOONSHOT_API_KEY) && env.TRAVEL_AGENT_KIMI_CHILD_SMOKE_STATUS === "passed_live_smoke" ? "available_child_fallback" : "fallback_unavailable",
     },
     data: {
       amapOfficialMcp: configured(env.AMAP_API_KEY) ? liveState(env, "TRAVEL_AGENT_AMAP_SMOKE_STATUS", "credential_configured_pending_smoke") : "blocked",

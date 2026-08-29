@@ -5,11 +5,11 @@
 | 任务 | 首选模型 | 何时调用 | 当前证据 |
 | --- | --- | --- | --- |
 | 意图理解、追问、约束推理、取舍解释、受限工具调用 | 默认 DeepSeek `deepseek-v4-flash`；用户可切 `deepseek-v4-pro` 或 Kimi `kimi-k3` | 用户按对话选择父 Agent 模型，选择持久化并从下一轮生效 | V4 Flash 完成两轮工具调用黄金路径；V4 Pro 与 K3 分别完成真实旅行草案创建。 |
-| 有界子任务与内容提炼 | Kimi `kimi-k2.6` | Pi sub-agent 没有显式覆盖模型时 | `.pi/settings.json` 的 `subagents.defaultModel` 已固定为 `moonshotai-cn/kimi-k2.6`。 |
+| 有界子任务与内容提炼 | Kimi `kimi-k2.6` | Pi sub-agent 没有显式覆盖模型时 | 锁定 Pi 0.84.1 的只读 consumer Child已通过；2026-08-28 最新 Web fan-out 双 lane 结构化 smoke 也完整通过，当前可进入受控 fallback。 |
 | 用户主动上传图片后的旅行理解与计划构建 | 首选 DeepSeek `deepseek-v4-flash-vision-exp`；Kimi 中国区 `kimi-k2.6` 为可配置对照/回退 | 图片与用户文字进入同一轮 Parent Agent；模型可看图、推理并调用既有旅行工具，但不能直接提交方案 | Web 已支持图片预览后与问题一起发送；Pi 0.84.1 通过受控 Provider catalog 补入实验视觉模型。当前 DeepSeek Key 已通过真实图片 smoke，并在真实浏览器同轮完成图片理解、保存旅行要求、联动研究和方案地图；Kimi 旧 Key 也保留真实图片 smoke。 |
-| POI、照片、地址、评分/参考消费、静态地图与地图唤端 | 高德 Web 服务 2.0；必要时降级官方基础 POI / Static Map / URI API | 一次四域检索返回地点资料，模型只解释 | Key 有效且曾返回真实 POI 与照片；低于 0.455 QPS 的 v3/v5/天气矩阵均在参数校验前返回 `10044`。用户确认额度正常，当前保持账号网关阻断状态，不能误报为 QPS 或已证实的额度耗尽。 |
+| POI、照片、地址、评分/参考消费、静态地图与地图唤端 | 高德 Web 服务 2.0；必要时降级官方基础 POI / Static Map / URI API | 一次四域检索返回地点资料，模型只解释 | 2026-08-26 当前账号的 POI v5/v3、地理编码、天气与静态地图均真实成功，状态为 `passed_live_smoke`。历史 `10044` 已被最新证据覆盖，不再是当前阻塞。 |
 | 旅行日期天气 | 高德天气；开发环境回退 Open-Meteo | 最终候选成立前核验，跨吃住行玩约束方案 | 代码已接入共享状态、候选评估、局部重排和前端；Open-Meteo 免费端点仅用于非商业开发，生产需高德完整 smoke 或付费 Key。 |
-| 城市路线与非实时设施参考 | 高德路径规划 2.0 + Static Map paths + URI API；POI `navi/indoor` | 用户确认地点后由 Runtime 强制核验 | 代码已贯穿 Runtime、QA、地图和前端，保留入口/出口/室内图与 `walk_type` 直梯、扶梯、阶梯、斜坡；全部标记非实时。高德账号 `10044` 未解除前保持 blocked，恢复后需完整 route smoke。 |
+| 城市路线与非实时设施参考 | 高德路径规划 2.0 + Static Map paths + URI API；POI `navi/indoor` | 用户确认地点后由 Runtime 强制核验 | 公交、驾车、步行、折线地图与导航已通过当前账号真实 smoke，并贯穿 Runtime、QA、地图和前端。入口/出口/室内图与 `walk_type` 设施仍只表示地图记录或路线参考，全部标记非实时。 |
 | 实时到站与设施运行状态 | 授权实时公交、地铁或设施来源 | 选定公共交通方案后下钻 | 尚未接线；计划路线、地图设施记录、首末班、实时到站和当前运行状态必须分别表达。 |
 | 小红书/抖音发现 | Travel Agent Plugin 中的组合/获取/消化/去同源 Skills；独立只读 social Worker | search/read/share-url 三个能力 | Skills 与安全合同已完成；待专用账号、固定 SHA Worker 审计和隔离 smoke。 |
 | 铁路、航班、酒店与景点库存 | 飞猪 FlyAI；途牛官方 MCP 为第二来源 | 一次联动研究中的商业库存候选、价格提示与供应方跳转 | 两者均已用当前 Key 完成真实只读 smoke；途牛酒店、火车、航班各返回 6 条，飞猪景点/酒店/交通各返回 6 条。 |
@@ -45,7 +45,7 @@ DeepSeek V4 Flash 与 Pro 继续承担普通文字轮；Flash 速度与成本更
 
 ## 当前状态与下一步
 
-普通 DeepSeek 文字路线、DeepSeek Vision 与 Kimi 视觉路线、飞猪和途牛库存已经完成无敏感真实调用。V4 Flash 完成“首次描述 → 增量理解 → 四域联动研究 → 候选提案 → 用户选择提交”的两轮工具轨迹；DeepSeek Vision 又完成“图片 + 自然语言 → 保存旅行要求 → 联动研究 → 方案候选与地图”的真实浏览器轨迹，原图未进入会话持久化。高德 Key 已确认有效，但控制台只有少量成功调用时出现 `10044`；低速矩阵证明它不是 `10021` QPS 超限，也不是 POI 2.0 参数或单接口问题。用户确认额度正常，因此当前结论是高德账号网关状态与控制台不一致，需要平台工单核查，不能写成额度耗尽或“稍后重试”。天气控制链已实现，Open-Meteo 已通过带真实 16 天预报的 `passed_noncommercial_development_smoke`；生产仍保持授权门。
+普通 DeepSeek 文字路线、DeepSeek Vision、Kimi 视觉路线以及高德、飞猪、途牛均完成无敏感真实调用。Kimi 直接 Pi Child 与最新双 lane 结构化 fallback smoke 均已通过；DeepSeek 最新三 lane 也完整通过。2026-08-26 最新诊断中，高德 POI v5/v3、地理编码、天气、公交、驾车、步行和静态地图成功，本轮自然确认缺陷不是高德错误。航班、票价、余位和酒店 Offer 属于动态库存，只能展示本次 `checkedAt` 快照；例如相邻两次 live fusion 的班次与价格已经变化。Provider smoke 与直接 Service 组合不能替代 Parent Agent 验收；指定的“已购票 → stay-only → 接驳”路径已另以 Safari、真实 HTTP 与 TripState 复测通过。
 
 高德服务组、POI v3/v5 字段差异、IP 诊断、动态地图与路线采用顺序见[高德数据能力全景与 Travel Agent 采用报告](../research/2026-08-16-amap-data-capability-landscape.md)。城市移动的旅行者路径、代码审计、Mobility Gate 与对抗验收见[高德城市移动与产品代码审计](../research/2026-08-16-amap-city-mobility-product-and-code-audit.md)。
 

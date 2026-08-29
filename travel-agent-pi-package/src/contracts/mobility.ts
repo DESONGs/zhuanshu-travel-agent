@@ -172,10 +172,52 @@ function leg(input: unknown, index: number) {
   if (!alternatives.length) return fail(`legs.${index}.alternatives`);
   const recommendedMode = text(value.recommendedMode, `legs.${index}.recommendedMode`, { max: 20 });
   if (!MODES.has(recommendedMode) || !alternatives.some((item) => item.mode === recommendedMode)) return fail(`legs.${index}.recommendedMode`);
+  const audit = optionalObject(value.recommendationAudit);
+  const thresholds = optionalObject(audit?.thresholds);
+  const transitAudit = optionalObject(audit?.transit);
+  const taxiAudit = optionalObject(audit?.taxi);
+  const walkAudit = optionalObject(audit?.walk);
+  const accessibilityEvidence = optionalObject(audit?.accessibilityEvidence);
+  const recommendationAudit = audit ? {
+    thresholds: {
+      walkingMeters: nonNegativeNumber(thresholds?.walkingMeters, `legs.${index}.recommendationAudit.thresholds.walkingMeters`, { optional: true }),
+      transfers: nonNegativeNumber(thresholds?.transfers, `legs.${index}.recommendationAudit.thresholds.transfers`, { optional: true }),
+      walkingSource: text(thresholds?.walkingSource, `legs.${index}.recommendationAudit.thresholds.walkingSource`, { optional: true, max: 80 }),
+      transferSource: text(thresholds?.transferSource, `legs.${index}.recommendationAudit.thresholds.transferSource`, { optional: true, max: 80 }),
+    },
+    transit: transitAudit ? {
+      totalMinutes: nonNegativeNumber(transitAudit.totalMinutes, `legs.${index}.recommendationAudit.transit.totalMinutes`, { optional: true }),
+      walkingMeters: nonNegativeNumber(transitAudit.walkingMeters, `legs.${index}.recommendationAudit.transit.walkingMeters`, { optional: true }),
+      transfers: nonNegativeNumber(transitAudit.transfers, `legs.${index}.recommendationAudit.transit.transfers`, { optional: true }),
+      estimatedFareCny: nonNegativeNumber(transitAudit.estimatedFareCny, `legs.${index}.recommendationAudit.transit.estimatedFareCny`, { optional: true }),
+      walkingExceeded: transitAudit.walkingExceeded === true,
+      transfersExceeded: transitAudit.transfersExceeded === true,
+      hasStairs: transitAudit.hasStairs === true,
+      hasElevator: transitAudit.hasElevator === true,
+      hasEscalator: transitAudit.hasEscalator === true,
+      hasRamp: transitAudit.hasRamp === true,
+      stepFreeContinuity: text(transitAudit.stepFreeContinuity, `legs.${index}.recommendationAudit.transit.stepFreeContinuity`, { optional: true, max: 80 }),
+    } : null,
+    taxi: taxiAudit ? {
+      totalMinutes: nonNegativeNumber(taxiAudit.totalMinutes, `legs.${index}.recommendationAudit.taxi.totalMinutes`, { optional: true }),
+      walkingMeters: nonNegativeNumber(taxiAudit.walkingMeters, `legs.${index}.recommendationAudit.taxi.walkingMeters`, { optional: true }),
+      transfers: nonNegativeNumber(taxiAudit.transfers, `legs.${index}.recommendationAudit.taxi.transfers`, { optional: true }),
+      estimatedFareCny: nonNegativeNumber(taxiAudit.estimatedFareCny, `legs.${index}.recommendationAudit.taxi.estimatedFareCny`, { optional: true }),
+    } : null,
+    walk: walkAudit ? {
+      totalMinutes: nonNegativeNumber(walkAudit.totalMinutes, `legs.${index}.recommendationAudit.walk.totalMinutes`, { optional: true }),
+      distanceMeters: nonNegativeNumber(walkAudit.distanceMeters, `legs.${index}.recommendationAudit.walk.distanceMeters`, { optional: true }),
+    } : null,
+    triggers: Array.isArray(audit.triggers) ? audit.triggers.map(String).slice(0, 8) : [],
+    accessibilityEvidence: {
+      status: text(accessibilityEvidence?.status, `legs.${index}.recommendationAudit.accessibilityEvidence.status`, { optional: true, max: 80 }),
+      directTrigger: accessibilityEvidence?.directTrigger === true,
+    },
+  } : null;
   return {
     legId: text(value.legId, `legs.${index}.legId`, { max: 128 }), origin: place(value.origin, `legs.${index}.origin`),
     destination: place(value.destination, `legs.${index}.destination`), recommendedMode,
-    rationale: text(value.rationale, `legs.${index}.rationale`, { max: 400 }), alternatives,
+    rationale: text(value.rationale, `legs.${index}.rationale`, { max: 800 }), alternatives, recommendationAudit,
   };
 }
 
@@ -188,6 +230,10 @@ function travelerFit(input: unknown) {
     constrainedTravelerIds: Array.isArray(value.constrainedTravelerIds) ? [...new Set(value.constrainedTravelerIds.map(String))].slice(0, 12) : [],
     maxContinuousWalkMeters: nonNegativeNumber(value.maxContinuousWalkMeters, "travelerFit.maxContinuousWalkMeters", { optional: true }),
     maxTransfers: nonNegativeNumber(value.maxTransfers, "travelerFit.maxTransfers", { optional: true }),
+    planningWalkingTarget: nonNegativeNumber(value.planningWalkingTarget, "travelerFit.planningWalkingTarget", { optional: true }),
+    planningTransferTarget: nonNegativeNumber(value.planningTransferTarget, "travelerFit.planningTransferTarget", { optional: true }),
+    walkingTargetSource: text(value.walkingTargetSource, "travelerFit.walkingTargetSource", { optional: true, max: 80 }),
+    transferTargetSource: text(value.transferTargetSource, "travelerFit.transferTargetSource", { optional: true, max: 80 }),
     stepFreeRequired: value.stepFreeRequired === true, avoidStairs: value.avoidStairs === true, accessibilityEvidence: evidence,
   };
 }

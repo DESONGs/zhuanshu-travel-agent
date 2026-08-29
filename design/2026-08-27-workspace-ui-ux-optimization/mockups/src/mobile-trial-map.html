@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  :root {
+    --ink:#17191c; --ink-soft:#38434b; --muted:#53616b; --quiet:#64727b;
+    --line:#dfe4e7; --line-strong:#cbd3d8; --canvas:#f6f8f9; --surface:#fff; --surface-subtle:#f0f4f5;
+    --coral:#ff5a4f; --coral-action:#c9443b; --coral-soft:#fff0ed;
+    --blue:#2166bd; --blue-soft:#edf4fb; --green:#24754b; --green-soft:#e8f6ec;
+    --amber:#84531d; --amber-soft:#fff7ef;
+  }
+  html,body { width:393px; height:852px; overflow:hidden; }
+  body { font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif; color:var(--ink); background:var(--canvas); display:flex; flex-direction:column; }
+  svg.ic { width:20px; height:20px; stroke:currentColor; fill:none; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; flex:none; }
+
+  .topbar { height:48px; flex:none; background:var(--surface); border-bottom:1px solid var(--line); display:flex; align-items:center; padding:0 14px; gap:8px; }
+  .topbar .bicon { width:20px; height:20px; flex:none; }
+  .topbar .sum { font-size:13px; font-weight:650; color:var(--ink); white-space:nowrap; }
+  .topbar .trials { margin-left:auto; display:flex; align-items:center; gap:6px; height:30px; padding:0 10px; background:var(--coral-soft); border:1px solid #ffd4cf; border-radius:999px; font-size:11px; font-weight:650; color:var(--coral-action); }
+  .topbar .trials .dot { width:6px; height:6px; border-radius:50%; background:var(--coral); }
+
+  /* Map ~45% */
+  .map { flex:none; height:384px; position:relative; background:#eef1f3; border-bottom:1px solid var(--line); overflow:hidden; }
+  .map .grid { position:absolute; inset:0; background-image:linear-gradient(#e5e8eb 1px,transparent 1px),linear-gradient(90deg,#e5e8eb 1px,transparent 1px); background-size:48px 48px; }
+  .map svg.routes { position:absolute; inset:0; }
+  .legend { position:absolute; top:10px; left:10px; background:var(--surface); border:1px solid var(--line); border-radius:8px; padding:6px 10px; font-size:11px; color:var(--ink-soft); display:flex; flex-direction:column; gap:4px; }
+  .legend .li { display:flex; align-items:center; gap:6px; }
+  .legend .sw { width:18px; height:0; border-top:3px solid var(--blue); border-radius:2px; }
+  .legend .sw.cur { border-top-color:#8fa3bd; }
+  .zoom { position:absolute; right:10px; bottom:10px; display:flex; flex-direction:column; }
+  .zoom .z { width:44px; height:44px; background:var(--surface); border:1px solid var(--line); display:flex; align-items:center; justify-content:center; color:var(--ink-soft); }
+  .zoom .z:first-child { border-radius:10px 10px 0 0; }
+  .zoom .z:last-child { border-top:none; border-radius:0 0 10px 10px; }
+  .osm { position:absolute; left:10px; bottom:10px; font-size:11px; color:var(--quiet); background:rgba(255,255,255,.85); padding:2px 6px; border-radius:6px; }
+
+  /* Route sheet (collapsed-half) */
+  .sheet { flex:1; background:var(--surface); border-top:1px solid var(--line); border-radius:14px 14px 0 0; margin-top:-12px; position:relative; display:flex; flex-direction:column; box-shadow:0 8px 24px rgba(23,25,28,.12); min-height:0; }
+  .grip { flex:none; padding:8px 0 4px; display:flex; justify-content:center; }
+  .grip span { width:36px; height:4px; border-radius:999px; background:var(--line-strong); }
+  .impact { margin:4px 12px 0; background:var(--blue-soft); border:1px solid #d4e4f4; border-radius:10px; min-height:40px; display:flex; align-items:center; gap:6px; padding:6px 12px; font-size:12px; flex-wrap:wrap; }
+  .impact .lb { font-weight:650; color:var(--blue); }
+  .impact .up { color:var(--amber); font-weight:500; }
+  .impact .down { color:var(--green); font-weight:500; }
+  .impact .na { color:var(--muted); }
+  .impact .ok { color:var(--green); font-weight:650; display:flex; align-items:center; gap:3px; }
+  .impact .ok svg { width:13px; height:13px; }
+  .stops { flex:1; padding:8px 12px; display:flex; flex-direction:column; min-height:0; }
+  .stop { display:flex; align-items:center; gap:10px; min-height:56px; border-bottom:1px solid var(--line); }
+  .stop:last-child { border-bottom:none; }
+  .num { width:26px; height:26px; border-radius:50%; background:var(--surface); border:2px solid var(--coral); color:var(--coral-action); font-size:12px; font-weight:700; display:flex; align-items:center; justify-content:center; flex:none; }
+  .stop .mid { flex:1; min-width:0; }
+  .stop .nm { font-size:14px; font-weight:650; }
+  .stop .md { font-size:12px; color:var(--muted); margin-top:2px; display:flex; align-items:center; gap:5px; }
+  .stop .md .tchip { background:var(--blue-soft); color:var(--blue); font-size:11px; font-weight:500; padding:2px 8px; border-radius:999px; }
+  .stop .time { font-size:12px; color:var(--quiet); flex:none; }
+
+  /* Confirm bar above tab bar */
+  .confirm { flex:none; height:56px; background:var(--surface); border-top:1px solid var(--line); display:flex; align-items:center; gap:10px; padding:0 14px; }
+  .btn-keep { flex:1; height:44px; display:flex; align-items:center; justify-content:center; border:1px solid var(--line-strong); border-radius:10px; font-size:15px; color:var(--ink-soft); background:var(--surface); }
+  .btn-adopt { flex:1; height:44px; display:flex; align-items:center; justify-content:center; border-radius:10px; font-size:15px; font-weight:650; color:#fff; background:var(--coral-action); }
+
+  .tabbar { flex:none; background:var(--surface); border-top:1px solid var(--line); }
+  .tabs { height:56px; display:flex; }
+  .tab { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; color:var(--muted); font-size:11px; font-weight:500; position:relative; }
+  .tab svg { width:22px; height:22px; }
+  .tab.on { color:var(--coral-action); font-weight:650; }
+  .tab .bdg { position:absolute; top:6px; left:calc(50% + 8px); min-width:16px; height:16px; padding:0 4px; border-radius:999px; background:var(--coral); color:#fff; font-size:10px; font-weight:650; display:flex; align-items:center; justify-content:center; }
+  .home { height:34px; display:flex; align-items:center; justify-content:center; }
+  .home .bar { width:134px; height:5px; border-radius:999px; background:var(--ink); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <svg class="bicon" viewBox="0 0 24 24" fill="#ff5a4f"><path d="M12 22s-7.5-6.2-7.5-11.5a7.5 7.5 0 1 1 15 0C19.5 15.8 12 22 12 22z"/><circle cx="12" cy="10.5" r="2.8" fill="#fff"/></svg>
+  <span class="sum">上海 · 8/27–29 · 3 人</span>
+  <div class="trials"><span class="dot"></span>试排中 · 未确认</div>
+</header>
+
+<div class="map">
+  <div class="grid"></div>
+  <svg class="routes" width="393" height="384" viewBox="0 0 393 384" preserveAspectRatio="none" style="width:100%;height:100%">
+    <g stroke="#dde2e6" stroke-width="8" opacity="0.9">
+      <path d="M0 130 H393" fill="none"/><path d="M0 280 H393" fill="none"/>
+      <path d="M120 0 V384" fill="none"/><path d="M280 0 V384" fill="none"/>
+    </g>
+    <!-- 当前路线 灰蓝 -->
+    <polyline points="330,60 236,220 118,308 236,344" fill="none" stroke="#8fa3bd" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- 试排路线 亮蓝 -->
+    <polyline points="330,60 172,190 118,308 236,344" fill="none" stroke="#2166bd" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+    <g font-family="-apple-system,'PingFang SC',sans-serif" font-size="11" font-weight="700" text-anchor="middle">
+      <circle cx="330" cy="60" r="12" fill="#fff" stroke="#2166bd" stroke-width="2.5"/><text x="330" y="64" fill="#2166bd">1</text>
+      <circle cx="172" cy="190" r="12" fill="#fff" stroke="#ff5a4f" stroke-width="2.5"/><text x="172" y="194" fill="#c9443b">2</text>
+      <circle cx="236" cy="220" r="10" fill="#fff" stroke="#8fa3bd" stroke-width="2" stroke-dasharray="3 3"/><text x="236" y="224" fill="#8fa3bd" font-size="10">2</text>
+      <circle cx="118" cy="308" r="12" fill="#fff" stroke="#2166bd" stroke-width="2.5"/><text x="118" y="312" fill="#2166bd">3</text>
+      <circle cx="236" cy="344" r="12" fill="#fff" stroke="#2166bd" stroke-width="2.5"/><text x="236" y="348" fill="#2166bd">4</text>
+    </g>
+    <g font-family="-apple-system,'PingFang SC',sans-serif" font-size="10" fill="#53616b">
+      <text x="330" y="84" text-anchor="middle">浦东机场 T2</text>
+      <text x="158" y="176" text-anchor="end" fill="#c9443b" font-weight="650">漫心酒店 · 试排</text>
+      <text x="248" y="242" text-anchor="middle" fill="#8fa3bd">全季 · 当前</text>
+      <text x="118" y="332" text-anchor="middle">历史博物馆</text>
+      <text x="236" y="368" text-anchor="middle">上海 12 弄</text>
+    </g>
+  </svg>
+  <div class="legend">
+    <div class="li"><span class="sw"></span>试排路线</div>
+    <div class="li"><span class="sw cur"></span>当前路线</div>
+  </div>
+  <div class="zoom">
+    <div class="z"><svg class="ic" viewBox="0 0 24 24" style="width:18px;height:18px"><path d="M12 5v14M5 12h14"/></svg></div>
+    <div class="z"><svg class="ic" viewBox="0 0 24 24" style="width:18px;height:18px"><path d="M5 12h14"/></svg></div>
+  </div>
+  <div class="osm">OpenStreetMap 开发底图 · 正式导航以高德为准</div>
+</div>
+
+<div class="sheet">
+  <div class="grip"><span></span></div>
+  <div class="impact">
+    <span class="lb">试排影响</span>
+    <span class="up">Δ +12 分钟</span><span class="na">·</span>
+    <span class="down">Δ −320 m</span><span class="na">·</span>
+    <span class="up">Δ +¥124</span><span class="na">·</span>
+    <span class="ok">体力 ✓</span>
+  </div>
+  <div class="stops">
+    <div class="stop">
+      <span class="num">4</span>
+      <div class="mid">
+        <div class="nm">全季酒店（人民广场店）</div>
+        <div class="md"><span class="tchip">公交 20 分钟</span>步行 521 m</div>
+      </div>
+      <span class="time">09:00</span>
+    </div>
+    <div class="stop">
+      <span class="num">5</span>
+      <div class="mid">
+        <div class="nm">上海市历史博物馆</div>
+        <div class="md"><span class="tchip">打车 7 分钟</span>约 2.1 km</div>
+      </div>
+      <span class="time">09:30</span>
+    </div>
+  </div>
+</div>
+
+<div class="confirm">
+  <span class="btn-keep">保持当前</span>
+  <span class="btn-adopt">采用此方案</span>
+</div>
+
+<nav class="tabbar">
+  <div class="tabs">
+    <div class="tab">
+      <svg class="ic" viewBox="0 0 24 24"><path d="M12 3a9 9 0 0 0-7.8 13.5L3 21l4.7-1.2A9 9 0 1 0 12 3z"/><path d="M8.5 11h.01M12 11h.01M15.5 11h.01"/></svg>
+      对话
+    </div>
+    <div class="tab">
+      <svg class="ic" viewBox="0 0 24 24"><path d="M4 6l1.5 1.5L8 5M4 12l1.5 1.5L8 11M4 18l1.5 1.5L8 17M11 6h9M11 12h9M11 18h9"/></svg>
+      行程
+      <span class="bdg">2</span>
+    </div>
+    <div class="tab on">
+      <svg class="ic" viewBox="0 0 24 24"><path d="M9 4h11M9 4v16M9 4L4 7v16l5-3M9 20h11V7M9 20l6-3M20 7l-5-3M15 4v13"/></svg>
+      地图
+    </div>
+  </div>
+  <div class="home"><span class="bar"></span></div>
+</nav>
+
+</body>
+</html>

@@ -2,12 +2,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import * as z from "zod/v4";
-import { TravelService } from "../api/travel-service.mjs";
-import { createTravelResearchProvider } from "../providers/travel-research-provider.mjs";
+import { createTravelService } from "../api/create-travel-service.mjs";
 import { loadTravelRuntimeEnv } from "../http/runtime-env.mjs";
 
 const runtimeEnv = await loadTravelRuntimeEnv();
-const service = new TravelService({ researchProvider: createTravelResearchProvider(runtimeEnv) });
+const service = createTravelService(runtimeEnv);
 const server = new McpServer({
   name: "travel-agent-v1",
   version: "0.1.0",
@@ -33,6 +32,20 @@ const travelerProfile = z.object({
     sensory: z.object({ avoidCrowds: nullableBoolean, avoidStrongSensoryStimuli: nullableBoolean }).optional(),
     food: z.object({ exclusions: z.array(z.string().max(80)).max(12).optional() }).optional(),
   }).optional(),
+});
+const researchDomainCriteria = z.object({
+  keywords: z.array(z.string().min(1).max(120)).max(12).optional(),
+  namedEntities: z.array(z.string().min(1).max(120)).max(12).optional(),
+  targetAreas: z.array(z.string().min(1).max(120)).max(12).optional(),
+  anchorCoordinates: z.array(z.object({ label: z.string().min(1).max(120).optional(), longitude: z.number().min(-180).max(180), latitude: z.number().min(-90).max(90) })).max(6).optional(),
+  hardConstraints: z.array(z.string().min(1).max(120)).max(12).optional(),
+  preferenceHints: z.array(z.string().min(1).max(120)).max(12).optional(),
+});
+const researchCriteria = z.object({
+  byDomain: z.object({ play: researchDomainCriteria.optional(), food: researchDomainCriteria.optional(), stay: researchDomainCriteria.optional(), transport: researchDomainCriteria.optional() }).optional(),
+  intercityIntent: z.enum(["flight", "train", "flexible", "none"]).optional(),
+  localMobilityIntent: z.array(z.enum(["transit", "taxi", "walk", "accessible_transit", "flexible"])).max(5).optional(),
+  arrival: z.object({ airport: z.string().max(120).optional(), terminal: z.string().max(40).optional(), time: z.string().max(40).optional() }).optional(),
 });
 
 function toolResult(value) {
@@ -101,7 +114,7 @@ register("get_open_decisions", {
 
 register("research_trip_options", {
   description: "Run one bounded linked research pass and stage a source-backed four-domain proposal for user confirmation.",
-  inputSchema: { tripId: id, capability: z.string().max(100).optional(), domains: z.array(z.enum(["play", "food", "stay", "transport"])).min(1).max(4).optional(), question: z.string().max(800).optional() },
+  inputSchema: { tripId: id, capability: z.string().max(100).optional(), domains: z.array(z.enum(["play", "food", "stay", "transport"])).min(1).max(4).optional(), question: z.string().max(800).optional(), criteria: researchCriteria.optional() },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
 }, (input) => service.researchTripOptions(input));
 
@@ -113,7 +126,7 @@ register("propose_trip_change", {
 
 register("accept_trip_change", {
   description: "Accept and atomically commit one staged TripPatchProposal as the parent Travel Agent.",
-  inputSchema: { tripId: id, proposalId: id, selections: z.record(z.enum(["play", "food", "stay", "transport"]), id).optional() },
+  inputSchema: { tripId: id, proposalId: id, selections: z.record(z.enum(["play", "food", "stay", "transport"]), id).optional(), partial: z.boolean().optional() },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
 }, (input) => service.acceptTripChange(input));
 

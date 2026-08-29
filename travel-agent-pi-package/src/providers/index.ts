@@ -6,6 +6,7 @@ import {
   type ProviderResult as ProviderResultType,
   type Traveler,
   type TripBrief,
+  type TravelResearchCriteria,
   type TravelDomain,
 } from "../contracts/index.js";
 export type { ProviderResult } from "../contracts/index.js";
@@ -16,6 +17,7 @@ export interface TravelResearchInput {
   travelers: Traveler[];
   domains: TravelDomain[];
   question?: string;
+  criteria?: TravelResearchCriteria;
   existingWeather?: object | null;
 }
 

@@ -8,6 +8,7 @@ import {
   buildTravelContextPack,
   commitTripPatch,
   createTripControlState,
+  estimateTripBudget,
   recordOfferSnapshot,
   updateTripControlScope,
   updateTripReadiness,
@@ -31,6 +32,44 @@ test("updates only explicitly understood trip facts and keeps omitted facts", ()
   assert.equal(updated.travelers.length, 3);
   assert.equal(updated.revision, 1);
   assert.equal(state.brief.origin, undefined);
+});
+
+test("keeps source price quality while deterministically estimating the whole-trip budget", () => {
+  let state = createTripControlState({
+    tripId: "trip_budget_v2",
+    brief: { dates: "2026-09-01 至 2026-09-03", totalBudget: 8_000, currency: "CNY" },
+    travelers: [{ travelerId: "traveler_1" }, { travelerId: "traveler_2" }, { travelerId: "traveler_3" }],
+    clock,
+  });
+  state = addDecisionNode(state, {
+    nodeId: "stay_offer",
+    domain: "stay",
+    selected: true,
+    price: { amount: 500, currency: "CNY", quality: "firm", basis: "per_night_room", checkedAt: "2026-08-29T08:00:00.000Z" },
+  }, { clock });
+  state.pendingProposals.push({
+    schemaVersion: "trip-patch-proposal-v1",
+    proposalId: "proposal_food_budget",
+    tripId: state.tripId,
+    baseRevision: state.revision,
+    writeSet: ["food_reference"],
+    writeContract: { allowedNodeIds: ["food_reference"] },
+    readSet: [],
+    operations: [{
+      kind: "add_candidate",
+      nodeId: "food_reference",
+      node: { nodeId: "food_reference", domain: "food", price: { amount: 80, currency: "CNY", quality: "reference", basis: "per_person_reference" } },
+    }],
+  });
+
+  const budget = estimateTripBudget(state);
+  assert.equal(budget.domains.stay.committed, 2_000, "two nights and two rooms are explicit in the estimate basis");
+  assert.equal(budget.domains.stay.quality, "estimate", "multiplying a firm nightly quote must remain visibly estimated");
+  assert.equal(budget.domains.food.estimated, 1_440);
+  assert.match(budget.domains.food.basis[0], /3 人 × 3 天/);
+  assert.equal(budget.domains.transport.quality, "unknown");
+  assert.equal(budget.estimated, 3_440);
+  assert.equal(budget.exceedsBudget, false);
 });
 
 test("updates preparation signals without invalidating a pending travel decision", () => {

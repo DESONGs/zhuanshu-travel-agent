@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { CompositeTravelResearchProvider } from "../src/providers/travel-research-provider.mjs";
+import { buildTravelResearchCriteria } from "../src/providers/research-criteria.mjs";
 
 function result(provider, byDomain, documentation) {
   return { status: "completed", provider, providerLabel: provider, destination: "大理", checkedAt: "2026-08-15T08:00:00.000Z", byDomain, partial: false, caveats: [`${provider}-caveat`], sourceDocumentation: documentation };
@@ -113,4 +114,108 @@ test("composite research merges the same flight across providers without losing 
     { provider: "tuniu_official_mcp", totalFare: 1040 },
   ]);
   assert.equal(output.byDomain.transport[0].additionalEvidence.length, 1);
+});
+
+test("AMap stations cannot displace a requested intercity flight returned by a later provider", async () => {
+  const stations = Array.from({ length: 8 }, (_, index) => ({
+    domain: "transport",
+    title: `上海交通设施 ${index + 1}`,
+    cost: 0,
+    operability: { provider: "amap_web_service", mobilityRole: "transport_facility_poi", type: "交通设施服务;火车站" },
+  }));
+  const flight = {
+    domain: "transport",
+    title: "CZ3525 广州白云国际机场 → 上海浦东国际机场",
+    cost: 780,
+    operability: {
+      provider: "tuniu_official_mcp",
+      mobilityRole: "intercity_inventory",
+      transportType: "FLIGHT",
+      serviceNumber: "CZ3525",
+      departureAt: "2026-08-27 11:30",
+      arrivalAt: "2026-08-27 14:00",
+      arrivalPlace: { kind: "airport", city: "上海", label: "上海浦东国际机场", terminal: "T2" },
+      fareOffers: [{ provider: "tuniu_official_mcp", totalFare: 780 }],
+    },
+  };
+  const criteria = buildTravelResearchCriteria({
+    brief: { destination: "上海", origin: "广州", dates: "2026-08-27 至 2026-08-29", arrivalMode: "飞机", arrivalAirport: "浦东机场", arrivalTerminal: "T2" },
+    domains: ["transport"],
+  });
+  const output = await new CompositeTravelResearchProvider({ providers: [
+    { status: "configured", research: async () => result("amap", { play: [], food: [], stay: [], transport: stations }, "https://lbs.amap.com/") },
+    { status: "configured", research: async () => result("tuniu", { play: [], food: [], stay: [], transport: [flight] }, "https://open.tuniu.com/mcp/docs/") },
+  ] }).research({ domains: ["transport"], criteria });
+
+  assert.equal(output.byDomain.transport.length, 1);
+  assert.equal(output.byDomain.transport[0].operability.transportType, "FLIGHT");
+  assert.equal(output.byDomain.transport[0].operability.arrivalRouteAnchor, undefined, "an unconfirmed desired arrival must not override the actual inventory arrival");
+  assert.equal(output.byDomain.transport[0].operability.arrivalPlace.label, "上海浦东国际机场");
+});
+
+test("criteria fusion filters hotel entities from food and unrelated areas or attractions", async () => {
+  const criteria = buildTravelResearchCriteria({
+    brief: { destination: "上海", lodgingPreference: "人民广场或南京东路", foodPreferences: ["本帮菜", "不太大众的小店"] },
+    domains: ["play", "food", "stay"],
+    criteria: { byDomain: { play: { namedEntities: ["外滩", "博物馆"] } } },
+  });
+  const mapHotel = { domain: "stay", title: "南京东路旅行酒店", location: { address: "南京东路 100 号", coordinates: { longitude: 121.48, latitude: 31.24 } }, operability: { provider: "amap_web_service", type: "住宿服务;宾馆酒店", inventoryVerified: false } };
+  const otaHotel = { domain: "stay", title: "南京东路旅行酒店", location: { address: "南京东路 100 号" }, cost: 680, operability: { provider: "tuniu_official_mcp", inventoryVerified: true, roomName: "高级双床房", meal: "双早", refundPolicy: "入住前一天可退" } };
+  const output = await new CompositeTravelResearchProvider({ providers: [
+    { status: "configured", research: async () => result("amap", {
+      play: [{ domain: "play", title: "外滩", operability: { provider: "amap_web_service", type: "风景名胜" } }, { domain: "play", title: "上海市历史博物馆", operability: { provider: "amap_web_service", type: "科教文化服务;博物馆" } }, { domain: "play", title: "复旦大学", operability: { provider: "amap_web_service", type: "科教文化服务;学校" } }],
+      food: [{ domain: "food", title: "和平饭店", operability: { provider: "amap_web_service", type: "住宿服务;宾馆酒店", typeCode: "100100" } }, { domain: "food", title: "老上海本帮菜馆", location: { address: "人民广场附近" }, operability: { provider: "amap_web_service", type: "餐饮服务;中餐厅", typeCode: "050100" } }],
+      stay: [mapHotel, { domain: "stay", title: "松江远郊酒店", location: { address: "松江区" }, operability: { provider: "amap_web_service", type: "住宿服务;宾馆酒店" } }],
+      transport: [],
+    }, "https://lbs.amap.com/") },
+    { status: "configured", research: async () => result("tuniu", { play: [], food: [], stay: [otaHotel], transport: [] }, "https://open.tuniu.com/mcp/docs/") },
+  ] }).research({ domains: ["play", "food", "stay"], criteria });
+
+  assert.deepEqual(output.byDomain.play.map((item) => item.title), ["外滩", "上海市历史博物馆"]);
+  assert.deepEqual(output.byDomain.food.map((item) => item.title), ["老上海本帮菜馆"]);
+  assert.deepEqual(output.byDomain.stay.map((item) => item.title), ["南京东路旅行酒店"]);
+  assert.equal(output.byDomain.stay[0].operability.inventoryVerified, true);
+  assert.equal(output.byDomain.stay[0].operability.roomName, "高级双床房");
+  assert.ok(Number.isFinite(output.byDomain.stay[0].location.coordinates.longitude));
+  assert.equal(output.caveats.some((item) => item.includes("不能单独证明") && item.includes("真实到访反馈")), true);
+});
+
+test("transport source status distinguishes verified empty, unavailable and rate limited", async () => {
+  const empty = await new CompositeTravelResearchProvider({ providers: [
+    { status: "configured", research: async () => result("ota_empty", { play: [], food: [], stay: [], transport: [] }, "https://example.com/empty") },
+  ] }).research({ domains: ["transport"] });
+  assert.equal(empty.domainStatuses.transport.status, "empty_verified");
+  assert.equal(empty.domainStatuses.transport.providers[0].status, "empty_verified");
+
+  const unavailable = await new CompositeTravelResearchProvider({ providers: [
+    { status: "configured", research: async () => ({ status: "SOURCE_UNAVAILABLE", provider: "ota_unavailable", fabricatedResults: false }) },
+  ] }).research({ domains: ["transport"] });
+  assert.equal(unavailable.domainStatuses.transport.status, "provider_unavailable");
+  assert.equal(unavailable.domainStatuses.transport.providers[0].status, "provider_unavailable");
+
+  const limited = await new CompositeTravelResearchProvider({ providers: [
+    { status: "configured", research: async () => ({ status: "RATE_LIMITED", provider: "ota_limited", fabricatedResults: false }) },
+  ] }).research({ domains: ["transport"] });
+  assert.equal(limited.domainStatuses.transport.status, "rate_limited");
+  assert.equal(limited.domainStatuses.transport.providers[0].status, "rate_limited");
+});
+
+test("AMap transport facilities never turn verified-empty intercity inventory into a completed source", async () => {
+  const output = await new CompositeTravelResearchProvider({ providers: [
+    { status: "configured", research: async () => result("amap_web_service", { play: [], food: [], stay: [], transport: [{ domain: "transport", title: "上海站", operability: { provider: "amap_web_service", mobilityRole: "transport_facility_poi" } }] }, "https://lbs.amap.com/") },
+    { status: "configured", research: async () => result("tuniu_official_mcp", { play: [], food: [], stay: [], transport: [] }, "https://open.tuniu.com/mcp/docs/") },
+  ] }).research({ domains: ["transport"], criteria: { intercityIntent: "flight" } });
+
+  assert.equal(output.status, "EMPTY_VERIFIED");
+  assert.equal(output.domainStatuses.transport.status, "empty_verified");
+  assert.deepEqual(output.domainStatuses.transport.providers.map((row) => row.provider), ["tuniu_official_mcp"]);
+});
+
+test("a Provider partial response stays partial instead of being collapsed into unavailable", async () => {
+  const output = await new CompositeTravelResearchProvider({ providers: [
+    { status: "configured", research: async () => ({ ...result("ota_partial", { play: [], food: [], stay: [], transport: [] }, "https://example.com/partial"), status: "partial", partial: true }) },
+  ] }).research({ domains: ["transport"] });
+
+  assert.equal(output.domainStatuses.transport.status, "partial");
+  assert.equal(output.domainStatuses.transport.providers[0].status, "partial");
 });

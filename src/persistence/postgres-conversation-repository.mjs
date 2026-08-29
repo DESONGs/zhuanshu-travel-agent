@@ -40,9 +40,9 @@ export class PostgresConversationRepository {
     return result.rowCount ? validateConversation(result.rows[0].record_json, conversationId) : null;
   }
 
-  async listByUser(userId) {
+  async listByUser(userId, { includeDeleted = false } = {}) {
     const result = await this.pool.query("SELECT record_json FROM travel_conversations WHERE user_id = $1 ORDER BY updated_at DESC", [userId]);
-    return result.rows.map((row) => validateConversation(row.record_json));
+    return result.rows.map((row) => validateConversation(row.record_json)).filter((record) => includeDeleted || record.deletedAt === null);
   }
 
   async save(record, { expectedStorageVersion } = {}) {
@@ -64,7 +64,7 @@ export class PostgresConversationRepository {
 
   async transferUserOwnership(fromUserId, toUserId) {
     if (fromUserId === toUserId) return { transferredConversations: 0 };
-    const records = await this.listByUser(fromUserId);
+    const records = await this.listByUser(fromUserId, { includeDeleted: true });
     let transferredConversations = 0;
     for (const record of records) {
       await this.save({ ...record, userId: toUserId, accessMode: "account", guestExpiresAt: null }, { expectedStorageVersion: record.storageVersion });

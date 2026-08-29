@@ -61,7 +61,10 @@ function travelDates(value) {
   };
 }
 
-function intercityModes(brief = {}, question = "") {
+function intercityModes(brief = {}, question = "", criteria = null) {
+  if (criteria?.intercityIntent === "flight") return ["flight"];
+  if (criteria?.intercityIntent === "train") return ["train"];
+  if (criteria?.intercityIntent === "none") return [];
   const explicit = text(question, 800);
   const saved = text(brief.arrivalMode, 120);
   const flightPattern = /飞机|航班|机票|flight|\bair\b/i;
@@ -109,6 +112,13 @@ function candidateBase({ domain, providerRef, title, summary, checkedAt, media =
     media,
     location,
     cost,
+    price: {
+      amount: cost > 0 ? cost : null,
+      currency: "CNY",
+      quality: cost > 0 ? "reference" : "unknown",
+      basis: domain === "stay" ? "per_night_room" : domain === "transport" ? "per_person_one_way" : "per_person",
+      checkedAt,
+    },
     operability: {
       provider: FLYAI_PROVIDER,
       providerRef,
@@ -316,7 +326,7 @@ export class FlyaiTravelResearchProvider {
     }
   }
 
-  async research({ brief = {}, domains = [], question = "" } = {}) {
+  async research({ brief = {}, domains = [], question = "", criteria = null } = {}) {
     if (!this.enabled) return { schemaVersion: "travel-provider-result-v1", status: "provider_unavailable", provider: FLYAI_PROVIDER, fabricatedResults: false };
     const destination = text(brief.destination, 120);
     if (!destination) throw Object.assign(new Error("destination_required"), { code: "destination_required" });
@@ -332,7 +342,7 @@ export class FlyaiTravelResearchProvider {
     if (requested.includes("play")) tasks.push({ domain: "play", command: "search-poi", args: ["--city-name", destination], normalize: normalizePoi });
     const origin = text(brief.origin, 120);
     if (requested.includes("transport") && origin && dates.start) {
-      for (const mode of intercityModes(brief, question)) {
+      for (const mode of intercityModes(brief, question, criteria)) {
         tasks.push({ domain: "transport", command: mode === "flight" ? "search-flight" : "search-train", args: ["--origin", origin, "--destination", destination, "--dep-date", dates.start], normalize: (item, checkedAt) => normalizeTransport(item, checkedAt, { origin, destination }) });
       }
     }

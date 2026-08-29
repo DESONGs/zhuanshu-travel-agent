@@ -42,6 +42,8 @@ export function validateConversation(record, expectedConversationId = record?.co
   record.modelId ??= DEFAULT_USER_MODEL_ID;
   if (!userModelOption(record.modelId)) throw repositoryError("invalid_conversation_model");
   if (!Number.isInteger(record.storageVersion) || record.storageVersion < 0) throw repositoryError("invalid_conversation_storage_version");
+  record.deletedAt ??= null;
+  if (record.deletedAt !== null && (typeof record.deletedAt !== "string" || Number.isNaN(new Date(record.deletedAt).getTime()))) throw repositoryError("invalid_conversation_deleted_at");
   if (!Array.isArray(record.messages) || record.messages.length > 80) throw repositoryError("invalid_conversation_messages");
   for (const message of record.messages) {
     requireSafeId(message?.messageId, "conversation_message_id");
@@ -65,6 +67,7 @@ export function createConversationRecord({ conversationId = `conversation_${rand
     messages: [],
     accessMode: guest ? "guest" : "account",
     guestExpiresAt: guest ? new Date(new Date(timestamp).getTime() + GUEST_DATA_TTL_MS).toISOString() : null,
+    deletedAt: null,
     createdAt: timestamp,
     updatedAt: timestamp,
   });
@@ -140,7 +143,7 @@ export class FileConversationRepository {
     }
   }
 
-  async listByUser(userId) {
+  async listByUser(userId, { includeDeleted = false } = {}) {
     requireSafeId(userId, "conversation_user_id");
     await this.initialize();
     const entries = await readdir(this.rootDir, { withFileTypes: true });
@@ -149,7 +152,7 @@ export class FileConversationRepository {
       .map((entry) => idFromStorageKey(entry.name.slice(0, -5)))
       .filter((conversationId) => conversationId !== null))];
     const records = await Promise.all(conversationIds.map((conversationId) => this.get(conversationId)));
-    return records.filter((record) => record?.userId === userId).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+    return records.filter((record) => record?.userId === userId && (includeDeleted || record.deletedAt === null)).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }
 
   async save(record, { expectedStorageVersion } = {}) {
@@ -182,7 +185,7 @@ export class FileConversationRepository {
     requireSafeId(fromUserId, "conversation_user_id");
     requireSafeId(toUserId, "conversation_user_id");
     if (fromUserId === toUserId) return { transferredConversations: 0 };
-    const records = await this.listByUser(fromUserId);
+    const records = await this.listByUser(fromUserId, { includeDeleted: true });
     let transferredConversations = 0;
     for (const record of records) {
       await this.save({ ...record, userId: toUserId, accessMode: "account", guestExpiresAt: null }, { expectedStorageVersion: record.storageVersion });

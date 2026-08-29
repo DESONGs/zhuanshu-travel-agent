@@ -63,7 +63,10 @@ test("golden path persists a staged four-domain proposal and commits only after 
 
   const proposed = await service.proposeTripChange({ tripId: "trip_golden", proposal: fourDomainProposal("trip_golden") });
   assert.equal(proposed.status, "proposed");
-  assert.equal((await service.getTripPlanView("trip_golden")).byDomain.play.length, 0, "staging must not alter the accepted plan");
+  const stagedView = await service.getTripPlanView("trip_golden");
+  assert.equal(stagedView.byDomain.play.length, 0, "staging must not alter the accepted plan");
+  assert.equal(stagedView.pendingProposals[0].byDomain.stay[0].price.quality, "reference", "legacy numeric cost must be visibly migrated instead of losing price provenance");
+  assert.equal(stagedView.budget.estimated, 2_100);
 
   const accepted = await service.acceptTripChange({ tripId: "trip_golden", proposalId: "proposal_initial_plan" });
   assert.equal(accepted.status, "committed");
@@ -204,6 +207,218 @@ test("a pending proposal is not reused for a missing domain or a narrower follow
   assert.equal(second.proposal.byDomain.food.length, 1);
 });
 
+test("changed research criteria supersede the affected candidate while identical criteria reuse it", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "travel-research-fingerprint-"));
+  const checkedAt = "2026-08-26T08:00:00.000Z";
+  const calls = [];
+  const provider = {
+    status: "configured",
+    async research({ criteria }) {
+      const area = criteria.byDomain.stay.targetAreas[0];
+      calls.push({ area, fingerprint: criteria.domainFingerprints.stay });
+      const suffix = String(calls.length);
+      const sourceId = `fixture:stay_${suffix}`;
+      const entityId = `entity_stay_${suffix}`;
+      const claimId = `claim_stay_${suffix}`;
+      const stay = {
+        candidateId: `stay_${suffix}`,
+        domain: "stay",
+        title: `${area}旅行酒店`,
+        summary: `${area}真实候选`,
+        location: { address: `${area}附近` },
+        sourceId,
+        entityId,
+        claimId,
+        checkedAt,
+        operability: { provider: "provider_fixture", inventoryVerified: true, roomName: "双床房" },
+        source: { sourceId, provider: "provider_fixture", sourceType: "official_provider", providerPoiId: `stay_${suffix}`, checkedAt, documentationUrl: "https://example.com/provider", independenceGroup: sourceId, commercialBias: "unknown" },
+        entity: { entityId, kind: "place", canonicalName: `${area}旅行酒店`, providerRefs: [sourceId] },
+        claim: { claimId, entityId, statement: "住宿候选存在", sourceRefs: [sourceId] },
+      };
+      return { status: "completed", provider: "provider_fixture", providerLabel: "Fixture", checkedAt, byDomain: { play: [], food: [], stay: [stay], transport: [] }, partial: true, weather: { status: "SOURCE_UNAVAILABLE" }, caveats: [], fabricatedResults: false };
+    },
+  };
+  const service = new TravelService({ store: new TripStore({ rootDir }), clock, researchProvider: provider });
+  await service.createTrip({ tripId: "trip_fingerprint", brief: { destination: "上海", dates: "2026-08-27 至 2026-08-29" } });
+
+  const first = await service.researchTripOptions({ tripId: "trip_fingerprint", domains: ["stay"], criteria: { byDomain: { stay: { targetAreas: ["人民广场"] } } }, question: "住人民广场" });
+  const second = await service.researchTripOptions({ tripId: "trip_fingerprint", domains: ["stay"], criteria: { byDomain: { stay: { targetAreas: ["南京东路"] } } }, question: "改住南京东路" });
+  const third = await service.researchTripOptions({ tripId: "trip_fingerprint", domains: ["stay"], criteria: { byDomain: { stay: { targetAreas: ["南京东路"] } } }, question: "还是南京东路" });
+
+  assert.equal(first.status, "proposed");
+  assert.equal(second.status, "proposed");
+  assert.equal(third.reusedPendingProposal, true);
+  assert.equal(calls.length, 2);
+  const plan = await service.getTripPlanView("trip_fingerprint");
+  assert.deepEqual(plan.pendingProposals[0].byDomain.stay.map((item) => item.title), ["南京东路旅行酒店"]);
+  assert.equal(plan.pendingProposals[0].byDomain.stay[0].operability.planningWindow.label, "第 1 天 16:00–18:00 · 抵达后入住");
+  const stored = JSON.parse(await readFile(join(rootDir, "trip_fingerprint.json"), "utf8"));
+  assert.equal(stored.pendingProposals.length, 1);
+  assert.equal(stored.proposalHistory.at(-1).status, "superseded_by_research_criteria");
+  assert.equal(stored.pendingProposals[0].researchCriteria.byDomain.stay.targetAreas[0], "南京东路");
+});
+
+test("a failed targeted refresh removes stale matches but keeps unaffected domain candidates", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "travel-research-partial-refresh-"));
+  const checkedAt = "2026-08-26T08:00:00.000Z";
+  const makeCandidate = (domain) => {
+    const sourceId = `fixture:${domain}`;
+    const entityId = `entity_${domain}`;
+    const claimId = `claim_${domain}`;
+    return {
+      candidateId: `${domain}_candidate`, domain, title: domain === "stay" ? "人民广场酒店" : "本帮菜馆", summary: "已核验候选", checkedAt, sourceId, entityId, claimId,
+      location: { address: domain === "stay" ? "人民广场附近" : "南京东路附近" },
+      operability: { provider: "provider_fixture", ...(domain === "stay" ? { inventoryVerified: true } : {}) },
+      source: { sourceId, provider: "provider_fixture", sourceType: "official_provider", providerPoiId: domain, checkedAt, documentationUrl: "https://example.com/provider", independenceGroup: sourceId, commercialBias: "unknown" },
+      entity: { entityId, kind: "place", canonicalName: domain, providerRefs: [sourceId] },
+      claim: { claimId, entityId, statement: "候选存在", sourceRefs: [sourceId] },
+    };
+  };
+  let fail = false;
+  const provider = {
+    status: "configured",
+    research: async () => fail
+      ? ({ status: "EMPTY_VERIFIED", provider: "provider_fixture", fabricatedResults: false })
+      : ({ status: "completed", provider: "provider_fixture", providerLabel: "Fixture", checkedAt, byDomain: { play: [], food: [makeCandidate("food")], stay: [makeCandidate("stay")], transport: [] }, partial: true, weather: { status: "SOURCE_UNAVAILABLE" }, caveats: [], fabricatedResults: false }),
+  };
+  const service = new TravelService({ store: new TripStore({ rootDir }), clock, researchProvider: provider });
+  await service.createTrip({ tripId: "trip_partial_refresh", brief: { destination: "上海", dates: "2026-08-27 至 2026-08-29" } });
+  await service.researchTripOptions({ tripId: "trip_partial_refresh", domains: ["stay", "food"], criteria: { byDomain: { stay: { targetAreas: ["人民广场"] } } } });
+  fail = true;
+
+  const refreshed = await service.researchTripOptions({ tripId: "trip_partial_refresh", domains: ["stay"], criteria: { byDomain: { stay: { targetAreas: ["南京东路"] } } } });
+  const plan = await service.getTripPlanView("trip_partial_refresh");
+
+  assert.equal(refreshed.status, "EMPTY_VERIFIED");
+  assert.equal(refreshed.staleProposalRemoved, true);
+  assert.equal(plan.pendingProposals.length, 1);
+  assert.equal(plan.pendingProposals[0].byDomain.stay.length, 0);
+  assert.equal(plan.pendingProposals[0].byDomain.food[0].title, "本帮菜馆");
+});
+
+test("user-confirmed arrival plus a stay-only acceptance preserves other choices and enables the airport transfer", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "travel-partial-stay-arrival-"));
+  const checkedAt = "2026-08-26T10:00:00.000Z";
+  const candidate = (domain, id, title, extra = {}) => {
+    const sourceId = `fixture:${id}`;
+    const entityId = `entity_${id}`;
+    const claimId = `claim_${id}`;
+    return {
+      candidateId: id, domain, title, summary: `${title} 已核验`, checkedAt, sourceId, entityId, claimId,
+      location: extra.location ?? null,
+      operability: { provider: "provider_fixture", ...(extra.operability ?? {}) },
+      source: { sourceId, provider: "provider_fixture", sourceType: "official_provider", providerPoiId: id, checkedAt, documentationUrl: "https://example.com/provider", independenceGroup: sourceId, commercialBias: "unknown" },
+      entity: { entityId, kind: domain === "transport" ? "transport_offer" : "place", canonicalName: title, providerRefs: [sourceId] },
+      claim: { claimId, entityId, statement: `${title} 存在`, sourceRefs: [sourceId] },
+    };
+  };
+  const byDomain = {
+    play: [candidate("play", "play_bund", "外滩", { location: { address: "中山东一路", coordinates: { longitude: 121.49, latitude: 31.24 } } })],
+    food: [
+      candidate("food", "food_local", "本帮菜馆", { location: { address: "南京东路", coordinates: { longitude: 121.48, latitude: 31.235 } } }),
+      candidate("food", "food_alt", "另一家本帮菜", { location: { address: "人民广场", coordinates: { longitude: 121.475, latitude: 31.232 } } }),
+    ],
+    stay: [candidate("stay", "stay_ji", "全季酒店（上海人民广场南京路步行街店）", { location: { address: "福建中路225号" }, operability: { inventoryVerified: true, roomName: "双床房" } })],
+    transport: [candidate("transport", "flight_compare", "库存航班对照", { operability: { mobilityRole: "intercity_inventory", transportType: "FLIGHT", serviceNumber: "DYNAMIC", arrivalPlace: { kind: "airport", city: "上海", label: "浦东国际机场", terminal: "T2" } } })],
+  };
+  const researchProvider = {
+    status: "configured",
+    research: async () => ({ status: "completed", provider: "provider_fixture", providerLabel: "Fixture", checkedAt, byDomain, partial: false, weather: { status: "SOURCE_UNAVAILABLE" }, caveats: [], fabricatedResults: false }),
+    planMobility: async ({ selectedNodes }) => {
+      const arrival = selectedNodes.find((node) => node.operability?.mobilityRole === "user_confirmed_arrival");
+      const stay = selectedNodes.find((node) => node.domain === "stay");
+      assert.ok(arrival, "mobility must use the user-confirmed arrival rather than inventory");
+      assert.equal(stay?.title, "全季酒店（上海人民广场南京路步行街店）");
+      return {
+        schemaVersion: "trip-mobility-v1", status: "completed", destination: "上海", source: "amap_routes_v5", checkedAt, freshUntil: "2026-08-26T13:00:00.000Z",
+        coverage: { routedNodeIds: [arrival.nodeId, stay.nodeId], unresolvedNodeIds: [], unscheduled: false },
+        legs: [{
+          legId: "arrival_to_stay", origin: { nodeId: arrival.nodeId, label: "浦东机场 T2", coordinates: { longitude: 121.8079, latitude: 31.1528 } }, destination: { nodeId: stay.nodeId, label: stay.title, coordinates: { longitude: 121.4804, latitude: 31.2382 } }, recommendedMode: "taxi",
+          rationale: "公交步行 1128 米，超过当前 600 米目标；公交需换乘 2 次，超过当前 1 次目标。打车约 52 分钟、步行 0 米、换乘 0 次，因此优先打车。电梯与连续无台阶状态仍待核验；该未知项不是本次推荐打车的直接触发条件。",
+          recommendationAudit: { thresholds: { walkingMeters: 600, transfers: 1, walkingSource: "traveler_explicit", transferSource: "reduced_mobility_default" }, transit: { totalMinutes: 163, walkingMeters: 1128, transfers: 2, estimatedFareCny: 26, walkingExceeded: true, transfersExceeded: true, hasStairs: false, hasEscalator: true, stepFreeContinuity: "not_verified" }, taxi: { totalMinutes: 52, walkingMeters: 0, transfers: 0, estimatedFareCny: 151 }, triggers: ["transit_walking_exceeds_target", "transit_transfers_exceed_target"], accessibilityEvidence: { status: "not_verified", directTrigger: false } },
+          alternatives: [{ mode: "transit", totalMinutes: 163, distanceMeters: 40_000, walkingMeters: 1128, transfers: 2, estimatedFareCny: 26, scheduleBasis: "scheduled_service", realTimeArrival: false, navigationUrl: "https://uri.amap.com/navigation?mode=bus", polyline: [], steps: [], accessibilityFeatures: [], accessibilityAssessment: { hasStairs: false, hasElevator: false, hasEscalator: true, hasRamp: false, stepFreeContinuity: "not_verified", realTimeStatus: false } }, { mode: "taxi", totalMinutes: 52, distanceMeters: 47_000, walkingMeters: 0, transfers: 0, estimatedFareCny: 151, scheduleBasis: "query_time_estimate", realTimeArrival: false, navigationUrl: "https://uri.amap.com/navigation?mode=car", polyline: [], steps: [], accessibilityFeatures: [], accessibilityAssessment: { hasStairs: false, hasElevator: false, hasEscalator: false, hasRamp: false, stepFreeContinuity: "not_verified", realTimeStatus: false } }],
+        }],
+        travelerFit: { constrainedTravelerIds: ["traveler_2"], maxContinuousWalkMeters: 600, maxTransfers: null, planningWalkingTarget: 600, planningTransferTarget: 1, walkingTargetSource: "traveler_explicit", transferTargetSource: "reduced_mobility_default", avoidStairs: true, accessibilityEvidence: "unverified" },
+        reason: null, caveats: [], sourceDocumentation: "https://lbs.amap.com/api/webservice/guide/api/newroute", fabricatedResults: false,
+      };
+    },
+  };
+  const service = new TravelService({ store: new TripStore({ rootDir }), clock, researchProvider });
+  await service.createTrip({ tripId: "trip_partial_stay", brief: { destination: "上海", origin: "广州", dates: "2026-08-27 至 2026-08-29", lodgingPreference: "人民广场或南京东路", totalBudget: 8_000 }, travelers: [{ travelerId: "traveler_1", displayName: "你" }, { travelerId: "traveler_2", displayName: "父亲", careNeeds: { mobility: { maxContinuousWalkMeters: 600, avoidStairs: true } } }, { travelerId: "traveler_3", displayName: "母亲" }] });
+  await service.researchTripOptions({ tripId: "trip_partial_stay", domains: ["play", "food", "stay", "transport"], question: "先给候选，不替我确认" });
+
+  const arrival = await service.confirmUserArrival({ tripId: "trip_partial_stay", airport: "浦东机场", terminal: "T2", time: "14:00", intercityBooked: true, explicitUserConfirmation: true });
+  assert.equal(arrival.status, "committed");
+  assert.equal(arrival.arrival.airport, "上海浦东国际机场");
+  assert.match(arrival.selectedNode.title, /上海浦东国际机场 T2/);
+  let plan = await service.getTripPlanView("trip_partial_stay");
+  assert.equal(plan.byDomain.transport.filter((node) => node.selected).length, 1);
+  assert.equal(plan.byDomain.transport.find((node) => node.selected).operability.mobilityRole, "user_confirmed_arrival");
+  assert.equal(plan.pendingProposals[0].byDomain.transport.length, 0, "inventory transport must not remain a confirmation requirement");
+  assert.equal(plan.pendingProposals[0].byDomain.play.length, 1);
+  assert.equal(plan.pendingProposals[0].byDomain.food.length, 2);
+  assert.equal(plan.pendingProposals[0].byDomain.stay.length, 1);
+  await service.researchTripOptions({ tripId: "trip_partial_stay", domains: ["play", "food", "stay", "transport"], question: "重新核验尚未确认的候选" });
+  plan = await service.getTripPlanView("trip_partial_stay");
+  assert.equal(plan.pendingProposals[0].byDomain.transport.length, 0, "confirmed booked arrival must not return as another transport decision");
+  const preview = await service.previewTripMobility({ tripId: "trip_partial_stay", baseRevision: plan.revision, selections: { stay: plan.pendingProposals[0].byDomain.stay[0].nodeId, food: plan.pendingProposals[0].byDomain.food[0].nodeId, play: plan.pendingProposals[0].byDomain.play[0].nodeId } });
+  assert.equal(preview.committed, false);
+  assert.equal(preview.impact.stopCount, 4);
+  assert.deepEqual(preview.selectedNodes.map((node) => node.domain).sort(), ["food", "play", "stay", "transport"]);
+  let unchangedPlan = await service.getTripPlanView("trip_partial_stay");
+  assert.equal(unchangedPlan.byDomain.stay.some((node) => node.selected), false, "route preview must not commit tentative choices");
+  assert.equal(unchangedPlan.mobility, null, "route preview must not persist a Mobility observation");
+
+  const stayNodeId = plan.pendingProposals[0].byDomain.stay[0].nodeId;
+  const accepted = await service.acceptTripChange({ tripId: "trip_partial_stay", proposalId: plan.pendingProposals[0].proposalId, selections: { stay: stayNodeId }, partial: true });
+  assert.equal(accepted.status, "committed");
+  assert.deepEqual(accepted.openDomains.sort(), ["food", "play"]);
+  plan = await service.getTripPlanView("trip_partial_stay");
+  assert.equal(plan.byDomain.stay.find((node) => node.selected).title, "全季酒店（上海人民广场南京路步行街店）");
+  assert.equal(plan.pendingProposals[0].byDomain.stay.length, 0);
+  assert.equal(plan.pendingProposals[0].byDomain.play.length, 1);
+  assert.equal(plan.pendingProposals[0].byDomain.food.length, 2);
+
+  const mobility = await service.refreshTripMobility({ tripId: "trip_partial_stay" });
+  assert.equal(mobility.status, "completed");
+  assert.equal(mobility.mobility.legs[0].origin.label, "浦东机场 T2");
+  assert.equal(mobility.mobility.legs[0].destination.nodeId, stayNodeId);
+  plan = await service.getTripPlanView("trip_partial_stay");
+  assert.equal(plan.pendingProposals[0].baseRevision, plan.revision, "mobility updates must keep unaffected pending choices committable");
+  const correctedArrival = await service.confirmUserArrival({ tripId: "trip_partial_stay", airport: "上海浦东国际机场", terminal: "T2", time: "14:00", intercityBooked: true, explicitUserConfirmation: true });
+  assert.equal(correctedArrival.status, "committed", "updating an existing arrival must not make the strict Mobility contract invalid");
+  plan = await service.getTripPlanView("trip_partial_stay");
+  assert.equal(plan.mobility.status, "needs_context");
+  assert.equal(plan.mobility.reason, "selected_places_changed");
+  await service.refreshTripMobility({ tripId: "trip_partial_stay" });
+  plan = await service.getTripPlanView("trip_partial_stay");
+  assert.equal(plan.pendingProposals[0].baseRevision, plan.revision);
+
+  const firstFoodId = plan.pendingProposals[0].byDomain.food[0].nodeId;
+  const secondFoodId = plan.pendingProposals[0].byDomain.food[1].nodeId;
+  const firstFood = await service.acceptTripChange({ tripId: "trip_partial_stay", proposalId: plan.pendingProposals[0].proposalId, selections: { food: firstFoodId }, partial: true });
+  assert.equal(firstFood.status, "committed");
+  plan = await service.getTripPlanView("trip_partial_stay");
+  assert.equal(plan.byDomain.food.find((node) => node.selected)?.nodeId, firstFoodId);
+  assert.deepEqual(plan.pendingProposals[0].byDomain.food.map((node) => node.nodeId), [secondFoodId], "unchosen food should remain available as a quick replacement");
+  assert.equal(plan.pendingProposals[0].byDomain.play.length, 1, "an unrelated pending choice must survive a food confirmation");
+
+  const replacedFood = await service.acceptTripChange({ tripId: "trip_partial_stay", proposalId: plan.pendingProposals[0].proposalId, selections: { food: secondFoodId }, partial: true });
+  assert.equal(replacedFood.status, "committed");
+  plan = await service.getTripPlanView("trip_partial_stay");
+  assert.equal(plan.byDomain.food.find((node) => node.nodeId === firstFoodId)?.selected, false);
+  assert.equal(plan.byDomain.food.find((node) => node.nodeId === firstFoodId)?.status, "rejected");
+  assert.equal(plan.byDomain.food.find((node) => node.selected)?.nodeId, secondFoodId, "replacement should select exactly the new food option");
+  assert.equal(plan.pendingProposals[0].byDomain.food[0].nodeId, firstFoodId, "the previous choice should remain available as an undoable replacement");
+  assert.equal(plan.pendingProposals[0].byDomain.play.length, 1);
+
+  const restoredFood = await service.acceptTripChange({ tripId: "trip_partial_stay", proposalId: plan.pendingProposals[0].proposalId, selections: { food: firstFoodId }, partial: true });
+  assert.equal(restoredFood.status, "committed");
+  plan = await service.getTripPlanView("trip_partial_stay");
+  assert.equal(plan.byDomain.food.find((node) => node.selected)?.nodeId, firstFoodId);
+  assert.equal(plan.pendingProposals[0].byDomain.food[0].nodeId, secondFoodId);
+});
+
 test("intercity inventory keeps its verified schedule semantics and is not downgraded into an unverified city route", async () => {
   const rootDir = await mkdtemp(join(tmpdir(), "travel-transport-semantics-"));
   const checkedAt = "2026-08-13T12:00:00.000Z";
@@ -246,7 +461,7 @@ test("intercity inventory keeps its verified schedule semantics and is not downg
   assert.equal(stored.pendingProposals[0].evidenceBundle.claims.length, 2);
 });
 
-test("a three-card intercity proposal keeps both flight and rail when the traveler did not choose a mode", async () => {
+test("a bounded intercity comparison keeps all relevant flight and rail options when the traveler did not choose a mode", async () => {
   const rootDir = await mkdtemp(join(tmpdir(), "travel-transport-balance-"));
   const checkedAt = "2026-08-13T12:00:00.000Z";
   const makeTransport = (type, number, cost) => {
@@ -280,8 +495,34 @@ test("a three-card intercity proposal keeps both flight and rail when the travel
   const research = await service.researchTripOptions({ tripId: "trip_transport_balance", domains: ["transport"], question: "帮我安排合适的交通工具" });
 
   assert.equal(research.status, "proposed");
-  assert.equal(research.proposal.byDomain.transport.length, 3);
+  assert.equal(research.proposal.byDomain.transport.length, 5);
   assert.deepEqual([...new Set(research.proposal.byDomain.transport.map((item) => item.operability.transportType))].sort(), ["FLIGHT", "TRAIN"]);
+});
+
+test("AMap transport-facility POIs never substitute for missing flexible intercity inventory", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "travel-no-station-inventory-substitute-"));
+  const checkedAt = "2026-08-13T12:00:00.000Z";
+  const station = {
+    candidateId: "transport_dali_station",
+    domain: "transport",
+    title: "大理站(出站口)",
+    summary: "地图交通设施",
+    sourceId: "amap:dali_station",
+    claimId: "claim_dali_station",
+    entityId: "entity_dali_station",
+    checkedAt,
+    operability: { provider: "amap_web_service", mobilityRole: "transport_facility_poi", type: "交通设施服务;火车站" },
+    source: { provider: "amap_web_service", sourceType: "official_map_provider", providerPoiId: "dali_station", checkedAt, documentationUrl: "https://lbs.amap.com/", independenceGroup: "amap:dali_station", commercialBias: "provider_ranking_unknown" },
+    entity: { entityId: "entity_dali_station", kind: "transport_facility", canonicalName: "大理站", providerRefs: ["amap:dali_station"] },
+    claim: { claimId: "claim_dali_station", entityId: "entity_dali_station", statement: "车站存在", sourceRefs: ["amap:dali_station"] },
+  };
+  const service = new TravelService({ store: new TripStore({ rootDir }), clock, researchProvider: { status: "configured", research: async () => ({ status: "completed", provider: "amap_web_service", providerLabel: "高德地图", checkedAt, byDomain: { play: [], food: [], stay: [], transport: [station] }, partial: true, caveats: [], fabricatedResults: false, domainStatuses: { transport: { status: "partial", count: 0, providers: [{ provider: "amap_web_service", status: "completed_nonempty", count: 1, checkedAt }] } } }) } });
+  await service.createTrip({ tripId: "trip_no_station_substitute", brief: { destination: "大理", origin: "广州", dates: "2026-09-20 至 2026-09-24", arrivalMode: "飞机或高铁" } });
+
+  const research = await service.researchTripOptions({ tripId: "trip_no_station_substitute", domains: ["transport"], question: "飞机和高铁都可以，比较城际库存" });
+
+  assert.equal(research.status, "EMPTY_VERIFIED");
+  assert.equal((await service.getTripPlanView("trip_no_station_substitute")).pendingProposals.length, 0);
 });
 
 test("a persisted disruption requeues only the impacted stay and food neighborhood", async () => {

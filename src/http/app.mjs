@@ -2,12 +2,10 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import express from "express";
 import { assertTravelServicePort } from "../../travel-agent-pi-package/src/core/index.ts";
-import { TravelService } from "../api/travel-service.mjs";
+import { createTravelService } from "../api/create-travel-service.mjs";
 import { TravelConversationAgent } from "../agent/travel-conversation-agent.mjs";
 import { createConversationRepository } from "../persistence/conversation-repository.mjs";
 import { providerStatusSummary } from "../providers/provider-status.mjs";
-import { createTravelResearchProvider } from "../providers/travel-research-provider.mjs";
-import { createTripRepository } from "../persistence/trip-repository.mjs";
 import { authenticatedUserId, developmentUserId, guestUserId, GUEST_SESSION_TTL_MS, InMemorySessionStore, SignedSessionStore } from "./session.mjs";
 import { createAuthService, oauthNonceCookieName } from "./auth-providers.mjs";
 import { httpError, sendError } from "./http-errors.mjs";
@@ -86,10 +84,7 @@ export function createHttpApp({
   allowedOrigins = parseAllowedOrigins(process.env.TRAVEL_AGENT_CORS_ORIGINS),
   runtimeEnv = process.env,
 } = {}) {
-  travelService = assertTravelServicePort(travelService ?? new TravelService({
-    store: createTripRepository({ databaseUrl: runtimeEnv.DATABASE_URL, rootDir: runtimeEnv.TRAVEL_AGENT_DATA_DIR }),
-    researchProvider: createTravelResearchProvider(runtimeEnv),
-  }));
+  travelService = assertTravelServicePort(travelService ?? createTravelService(runtimeEnv));
   conversationRepository ??= createConversationRepository({
     databaseUrl: runtimeEnv.DATABASE_URL,
     rootDir: runtimeEnv.TRAVEL_AGENT_CONVERSATION_DATA_DIR
@@ -169,7 +164,7 @@ export function createHttpApp({
   };
 
   app.get("/api/health", asyncRoute(async (_request, response) => {
-    response.json({ status: "ok", developmentAuthEnabled, storageMode: travelService.store.mode ?? "unknown" });
+    response.json({ status: "ok", developmentAuthEnabled, storageMode: travelService.store.mode ?? "unknown", workflowExecution: travelService.workflowExecution ?? { workflowExecutionMode: "injected_service_unknown", semanticFanoutEnabled: Boolean(travelService.analysisFanout), backgroundResumeSupported: false, crossInstanceSteerSupported: false } });
   }));
   app.get("/api/auth/providers", asyncRoute(async (request, response) => {
     response.json({ ...authService.providerSummary({ origin: requestPublicOrigin(request, runtimeEnv) }), developmentAuthEnabled });
@@ -270,7 +265,7 @@ export function createHttpApp({
   }));
   app.get("/api/conversations", asyncRoute(async (request, response) => {
     const session = requireSession(request);
-    response.json(await travelConversationAgent.listConversations({ userId: session.userId }));
+    response.json(await travelConversationAgent.listConversations({ userId: session.userId, includeDeleted: request.query.includeDeleted === "true" }));
   }));
   app.post("/api/conversations", asyncRoute(async (request, response) => {
     const session = requireSession(request);
@@ -281,6 +276,20 @@ export function createHttpApp({
   app.get("/api/conversations/:conversationId", asyncRoute(async (request, response) => {
     const session = await requireConversationOwner(request, request.params.conversationId);
     response.json(await travelConversationAgent.getConversation({ conversationId: request.params.conversationId, userId: session.userId }));
+  }));
+  app.delete("/api/conversations/:conversationId", asyncRoute(async (request, response) => {
+    const session = await requireConversationOwner(request, request.params.conversationId);
+    response.json(await travelConversationAgent.deleteConversation({ conversationId: request.params.conversationId, userId: session.userId }));
+  }));
+  app.post("/api/conversations/:conversationId/restore", asyncRoute(async (request, response) => {
+    const session = requireSession(request);
+    try {
+      response.json(await travelConversationAgent.restoreConversation({ conversationId: request.params.conversationId, userId: session.userId }));
+    } catch (error) {
+      if (error?.code === "conversation_not_found") throw httpError("conversation_not_found", 404, { conversationId: request.params.conversationId });
+      if (error?.code === "conversation_access_denied") throw httpError("conversation_access_denied", 403, { conversationId: request.params.conversationId });
+      throw error;
+    }
   }));
   app.post("/api/conversations/:conversationId/messages", asyncRoute(async (request, response) => {
     const session = await requireConversationOwner(request, request.params.conversationId);
@@ -323,7 +332,7 @@ export function createHttpApp({
   }));
   app.post("/api/trips/:tripId/proposals/:proposalId/accept", asyncRoute(async (request, response) => {
     await requireTripMember(request, request.params.tripId);
-    response.json(await travelService.acceptTripChange({ tripId: request.params.tripId, proposalId: request.params.proposalId, selections: request.body?.selections }));
+    response.json(await travelService.acceptTripChange({ tripId: request.params.tripId, proposalId: request.params.proposalId, selections: request.body?.selections, partial: request.body?.partial === true }));
   }));
   app.post("/api/trips/:tripId/proposals/:proposalId/reject", asyncRoute(async (request, response) => {
     await requireTripMember(request, request.params.tripId);
@@ -332,6 +341,10 @@ export function createHttpApp({
   app.post("/api/trips/:tripId/mobility/refresh", asyncRoute(async (request, response) => {
     await requireTripMember(request, request.params.tripId);
     response.json(await travelService.refreshTripMobility({ tripId: request.params.tripId }));
+  }));
+  app.post("/api/trips/:tripId/mobility/preview", asyncRoute(async (request, response) => {
+    await requireTripMember(request, request.params.tripId);
+    response.json(await travelService.previewTripMobility({ tripId: request.params.tripId, baseRevision: request.body?.baseRevision, selections: request.body?.selections }));
   }));
   app.get("/api/trips/:tripId/transit/:nodeId", asyncRoute(async (request, response) => {
     await requireTripMember(request, request.params.tripId);

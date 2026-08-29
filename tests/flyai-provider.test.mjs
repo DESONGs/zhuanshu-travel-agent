@@ -44,6 +44,7 @@ test("FlyAI provider exposes only an allowlisted child-process environment and n
   assert.equal(result.byDomain.food.length, 0);
   assert.equal(result.byDomain.stay[0].operability.bookingUrl, "https://router.feizhu.com/hotel?id=hotel-1");
   assert.equal(result.byDomain.transport[0].cost, 420);
+  assert.equal(result.byDomain.transport[0].price.quality, "reference");
   assert.equal(JSON.stringify(result).includes("flyai-test-key"), false);
 });
 

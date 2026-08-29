@@ -32,6 +32,12 @@ function numberOrNull(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function referencePrice(value) {
+  const raw = text(value, 40).replace(/[¥￥,\s]/g, "");
+  const match = raw.match(/\d+(?:\.\d{1,2})?/);
+  return match ? Number(match[0]) : null;
+}
+
 function objectOrEmpty(value) {
   return value && !Array.isArray(value) && typeof value === "object" ? value : {};
 }
@@ -94,7 +100,7 @@ function navigationUrl(poi) {
   return `https://uri.amap.com/marker?${parameters}`;
 }
 
-function normalizePoi(poi, { domain, checkedAt, apiVersion = "v5" }) {
+function normalizePoi(poi, { domain, checkedAt, apiVersion = "v5", query = null, criteria = null }) {
   const business = Object.keys(objectOrEmpty(poi.business)).length ? objectOrEmpty(poi.business) : objectOrEmpty(poi.biz_ext);
   const indoor = objectOrEmpty(poi.indoor);
   const navi = objectOrEmpty(poi.navi);
@@ -104,6 +110,7 @@ function normalizePoi(poi, { domain, checkedAt, apiVersion = "v5" }) {
   const sourceId = `amap:${providerPoiId}`;
   const address = text(poi.address, 300);
   const type = text(poi.type, 240);
+  const typeCode = text(poi.typecode, 80) || null;
   const district = text(poi.adname, 120);
   const facts = unique([
     address,
@@ -122,6 +129,7 @@ function normalizePoi(poi, { domain, checkedAt, apiVersion = "v5" }) {
   const entrance = text(navi.entr_location, 80) || null;
   const exit = text(navi.exit_location, 80) || null;
   const indoorMap = text(indoor.indoor_map ?? poi.indoor_map, 8) === "1";
+  const cost = referencePrice(business.cost);
   const mappedFacilities = [
     ...(entrance ? [{ kind: "entrance", label: "入口位置", value: entrance }] : []),
     ...(exit ? [{ kind: "exit", label: "出口位置", value: exit }] : []),
@@ -144,6 +152,14 @@ function normalizePoi(poi, { domain, checkedAt, apiVersion = "v5" }) {
     entityId,
     checkedAt,
     media,
+    cost: cost ?? 0,
+    price: {
+      amount: cost,
+      currency: "CNY",
+      quality: cost == null ? "unknown" : "reference",
+      basis: domain === "stay" ? "per_night_room_reference" : "per_person_reference",
+      checkedAt,
+    },
     location: {
       label: address || [text(poi.cityname, 120), district].filter(Boolean).join(" ") || null,
       district: district || null,
@@ -157,6 +173,7 @@ function normalizePoi(poi, { domain, checkedAt, apiVersion = "v5" }) {
       providerPoiId,
       mobilityRole: domain === "transport" ? "transport_facility_poi" : "place",
       type: type || null,
+      typeCode,
       rating: text(business.rating, 40) || null,
       priceHint: text(business.cost, 40) || null,
       openToday: text(business.opentime_today, 160) || null,
@@ -175,6 +192,12 @@ function normalizePoi(poi, { domain, checkedAt, apiVersion = "v5" }) {
       } : {}),
       navigationUrl: navigationUrl(poi),
       researchDepth: apiVersion === "v5" ? "amap_poi_v5_enriched" : "amap_poi_v3_basic_fallback",
+      researchMatch: {
+        query: query?.keyword ?? null,
+        broadFallback: query?.broad === true,
+        matchedNamedEntities: (criteria?.namedEntities ?? []).filter((item) => `${poi.name ?? ""} ${poi.address ?? ""} ${type}`.includes(item)),
+        matchedTargetAreas: (criteria?.targetAreas ?? []).filter((item) => `${poi.name ?? ""} ${poi.address ?? ""} ${district} ${business.business_area ?? ""}`.includes(item)),
+      },
     },
     source: {
       sourceId,
@@ -204,6 +227,41 @@ function normalizePoi(poi, { domain, checkedAt, apiVersion = "v5" }) {
       observedAt: checkedAt,
     },
   };
+}
+
+function poiMatchesDomain(poi, domain) {
+  const typeCode = text(poi?.typecode, 100);
+  const type = text(poi?.type, 300);
+  const title = text(poi?.name, 200);
+  const codeMatches = {
+    play: /^(?:11|14)/,
+    food: /^05/,
+    stay: /^10/,
+    transport: /^15/,
+  }[domain]?.test(typeCode);
+  if (codeMatches) return true;
+  if (domain === "food") return /餐饮服务|中餐厅|餐厅|菜馆|小吃/u.test(`${type} ${title}`) && !/住宿服务|宾馆酒店|民宿/u.test(type);
+  if (domain === "stay") return /住宿服务|宾馆酒店|酒店|民宿/u.test(`${type} ${title}`);
+  if (domain === "play") return /风景名胜|科教文化|博物馆|美术馆|公园|景区|文化/u.test(`${type} ${title}`);
+  if (domain === "transport") return /交通设施|机场|火车站|地铁站|客运站/u.test(`${type} ${title}`) && !/停车场|停车点|停车位/u.test(`${type} ${title}`);
+  return false;
+}
+
+function domainSearchQueries(domain, criteria = {}) {
+  const named = unique(criteria.namedEntities ?? []).slice(0, 2);
+  if (named.length) return named.map((keyword) => ({ keyword, broad: false, reason: "named_entity" }));
+  const areas = unique(criteria.targetAreas ?? []).slice(0, 2);
+  if (areas.length) {
+    const preferred = domain === "stay"
+      ? "酒店"
+      : domain === "food"
+        ? ((criteria.keywords ?? []).find((item) => /本帮菜|本地菜|餐厅|小店/u.test(item)) ?? "本地餐厅").replace("上海本地菜", "本帮菜")
+        : (criteria.keywords ?? [])[0] ?? DOMAIN_SEARCH[domain].label;
+    return areas.map((area) => ({ keyword: `${area} ${preferred}`.trim(), broad: false, reason: "target_area" }));
+  }
+  const keywords = unique(criteria.keywords ?? []).filter((item) => !/不太大众|小众|轻松|方便/u.test(item)).slice(0, 2);
+  if (keywords.length) return keywords.map((keyword) => ({ keyword: keyword.replace("上海本地菜", "本帮菜"), broad: false, reason: "keyword" }));
+  return [{ keyword: null, broad: true, reason: "broad_recall" }];
 }
 
 function isoDates(value) {
@@ -524,6 +582,8 @@ function mobilityConstraintProfile(brief, travelers) {
     maxTransfers: explicitMaxTransfers,
     planningWalkingTarget: explicitMaxWalkingMeters ?? (reducedMobility ? 800 : 1_500),
     planningTransferTarget: explicitMaxTransfers ?? (reducedMobility ? 1 : 3),
+    walkingTargetSource: explicitMaxWalkingMeters != null ? "traveler_explicit" : reducedMobility ? "reduced_mobility_default" : "general_default",
+    transferTargetSource: explicitMaxTransfers != null ? "traveler_explicit" : reducedMobility ? "reduced_mobility_default" : "general_default",
     stepFreeRequired: constrained.some(({ mobility }) => mobility.stepFreeRequired === true),
     avoidStairs: constrained.some(({ mobility }) => mobility.avoidStairs === true),
   };
@@ -533,25 +593,83 @@ function chooseRouteAlternative(alternatives, constraints) {
   const byMode = Object.fromEntries(alternatives.map((item) => [item.mode, item]));
   const conflictsWithStairs = (alternative) => (constraints.stepFreeRequired || constraints.avoidStairs)
     && alternative?.accessibilityAssessment?.hasStairs === true;
+  const transit = byMode.transit ?? null;
+  const taxi = byMode.taxi ?? null;
+  const walk = byMode.walk ?? null;
+  const transitWalking = Number(transit?.walkingMeters ?? Number.POSITIVE_INFINITY);
+  const transitTransfers = Number(transit?.transfers ?? Number.POSITIVE_INFINITY);
+  const walkingExceeded = Boolean(transit) && transitWalking > constraints.planningWalkingTarget;
+  const transfersExceeded = Boolean(transit) && transitTransfers > constraints.planningTransferTarget;
+  const knownStairConflict = Boolean(transit) && conflictsWithStairs(transit);
+  const accessibilityStatus = knownStairConflict
+    ? "stairs_detected"
+    : transit?.accessibilityAssessment?.stepFreeContinuity === "verified"
+      ? "verified"
+      : "not_verified";
+  const audit = {
+    thresholds: {
+      walkingMeters: constraints.planningWalkingTarget,
+      transfers: constraints.planningTransferTarget,
+      walkingSource: constraints.walkingTargetSource,
+      transferSource: constraints.transferTargetSource,
+    },
+    transit: transit ? {
+      totalMinutes: transit.totalMinutes,
+      walkingMeters: transit.walkingMeters,
+      transfers: transit.transfers,
+      estimatedFareCny: transit.estimatedFareCny,
+      walkingExceeded,
+      transfersExceeded,
+      hasStairs: transit.accessibilityAssessment?.hasStairs === true,
+      hasElevator: transit.accessibilityAssessment?.hasElevator === true,
+      hasEscalator: transit.accessibilityAssessment?.hasEscalator === true,
+      hasRamp: transit.accessibilityAssessment?.hasRamp === true,
+      stepFreeContinuity: transit.accessibilityAssessment?.stepFreeContinuity ?? "not_verified",
+    } : null,
+    taxi: taxi ? { totalMinutes: taxi.totalMinutes, walkingMeters: taxi.walkingMeters, transfers: taxi.transfers, estimatedFareCny: taxi.estimatedFareCny } : null,
+    walk: walk ? { totalMinutes: walk.totalMinutes, distanceMeters: walk.distanceMeters } : null,
+    triggers: [
+      ...(walkingExceeded ? ["transit_walking_exceeds_target"] : []),
+      ...(transfersExceeded ? ["transit_transfers_exceed_target"] : []),
+      ...(knownStairConflict ? ["mapped_stairs_conflict"] : []),
+    ],
+    accessibilityEvidence: { status: accessibilityStatus, directTrigger: knownStairConflict },
+  };
   if (byMode.walk && !conflictsWithStairs(byMode.walk) && byMode.walk.distanceMeters <= Math.min(1_200, constraints.planningWalkingTarget)) {
-    return { mode: "walk", rationale: "距离较短，步行不需要换乘。" };
+    return { mode: "walk", rationale: `步行全程约 ${Math.round(byMode.walk.distanceMeters)} 米，不超过当前 ${Math.min(1_200, constraints.planningWalkingTarget)} 米目标，且不需要换乘。`, audit };
   }
   if (constraints.reducedMobility) {
-    if (byMode.transit && !conflictsWithStairs(byMode.transit) && Number(byMode.transit.walkingMeters ?? Infinity) <= constraints.planningWalkingTarget && Number(byMode.transit.transfers ?? Infinity) <= constraints.planningTransferTarget) {
-      return { mode: "transit", rationale: "已按少步行策略查询，步行量和换乘次数在当前约束内。" };
+    if (transit && !knownStairConflict && !walkingExceeded && !transfersExceeded) {
+      const evidence = accessibilityStatus === "verified" ? "无台阶连续性已有证据" : "无台阶连续性仍待核验";
+      return { mode: "transit", rationale: `公交地铁约 ${transit.totalMinutes} 分钟，步行 ${Math.round(transit.walkingMeters ?? 0)} 米（目标不超过 ${constraints.planningWalkingTarget} 米），换乘 ${transit.transfers ?? 0} 次（目标不超过 ${constraints.planningTransferTarget} 次）；${evidence}。`, audit };
     }
-    if (byMode.taxi) return { mode: "taxi", rationale: "公共交通的步行、换乘或台阶负担不适合当前同行人要求，优先打车衔接。" };
+    if (taxi) {
+      const triggers = [
+        ...(walkingExceeded ? [`公交步行 ${Math.round(transitWalking)} 米，超过当前 ${constraints.planningWalkingTarget} 米目标`] : []),
+        ...(transfersExceeded ? [`公交需换乘 ${transitTransfers} 次，超过当前 ${constraints.planningTransferTarget} 次目标`] : []),
+        ...(knownStairConflict ? ["路线资料明确包含楼梯，与避开楼梯要求冲突"] : []),
+        ...(!transit ? ["本次没有取得可比较的公交地铁方案"] : []),
+      ];
+      const taxiSummary = `打车约 ${taxi.totalMinutes} 分钟、步行 ${Math.round(taxi.walkingMeters ?? 0)} 米、换乘 ${taxi.transfers ?? 0} 次`;
+      const accessibility = accessibilityStatus === "not_verified"
+        ? "电梯与连续无台阶状态仍待核验；该未知项不是本次推荐打车的直接触发条件"
+        : accessibilityStatus === "stairs_detected"
+          ? "已发现楼梯冲突"
+          : "连续无台阶已有证据";
+      return { mode: "taxi", rationale: `${triggers.join("；")}。${taxiSummary}，因此优先打车。${accessibility}。`, audit };
+    }
   }
   if (byMode.transit && byMode.transit.totalMinutes <= Number(byMode.taxi?.totalMinutes ?? Infinity) + 20) {
-    return { mode: "transit", rationale: "公共交通时间可接受，且可减少市区驾车不确定性。" };
+    return { mode: "transit", rationale: `公交地铁约 ${byMode.transit.totalMinutes} 分钟、步行 ${Math.round(byMode.transit.walkingMeters ?? 0)} 米、换乘 ${byMode.transit.transfers ?? 0} 次，时间与当前目标可接受。`, audit };
   }
-  if (byMode.taxi) return { mode: "taxi", rationale: "当前路段打车预计更直接。" };
+  if (byMode.taxi) return { mode: "taxi", rationale: `打车约 ${byMode.taxi.totalMinutes} 分钟、步行 ${Math.round(byMode.taxi.walkingMeters ?? 0)} 米、换乘 ${byMode.taxi.transfers ?? 0} 次，当前预计更直接。`, audit };
   const fallback = alternatives[0];
   return {
     mode: fallback.mode,
     rationale: conflictsWithStairs(fallback)
       ? "当前仅返回了含阶梯的路线，与避开台阶要求冲突，不能作为最终可执行路线。"
       : "采用当前可核验的路线方案。",
+    audit,
   };
 }
 
@@ -623,19 +741,21 @@ export class AmapTravelResearchProvider {
     }
   }
 
-  async searchDomainVersion({ destination, domain, apiVersion }) {
+  async searchDomainVersion({ destination, domain, apiVersion, query = { keyword: null, broad: true }, criteria = {} }) {
     const search = DOMAIN_SEARCH[domain];
     if (!search) throw providerError("unsupported_research_domain", { domain });
     const isV5 = apiVersion === "v5";
     const payload = await this.requestJsonWithRetry(
       isV5 ? AMAP_PLACE_ENDPOINT : AMAP_PLACE_V3_ENDPOINT,
       isV5
-        ? { types: search.types, region: destination, city_limit: "true", show_fields: "business,navi,indoor,photos", page_size: "6", page_num: "1", output: "json" }
-        : { types: search.types, city: destination, citylimit: "true", extensions: "all", offset: "6", page: "1", output: "json" },
+        ? { ...(query.keyword ? { keywords: query.keyword } : {}), types: search.types, region: destination, city_limit: "true", show_fields: "business,navi,indoor,photos", page_size: "6", page_num: "1", output: "json" }
+        : { ...(query.keyword ? { keywords: query.keyword } : {}), types: search.types, city: destination, citylimit: "true", extensions: "all", offset: "6", page: "1", output: "json" },
       isV5 ? "amap_poi_v5" : "amap_poi_v3",
     );
     const checkedAt = new Date(this.clock?.() ?? Date.now()).toISOString();
-    return (Array.isArray(payload.pois) ? payload.pois : []).map((poi) => normalizePoi(poi, { domain, checkedAt, apiVersion }));
+    return (Array.isArray(payload.pois) ? payload.pois : [])
+      .filter((poi) => poiMatchesDomain(poi, domain))
+      .map((poi) => normalizePoi(poi, { domain, checkedAt, apiVersion, query, criteria }));
   }
 
   async searchDomain(input) {
@@ -650,8 +770,8 @@ export class AmapTravelResearchProvider {
   }
 
   async resolveMobilityStop(node, destination, destinationGeocode) {
-    const intercityArrival = node?.domain === "transport" && node?.operability?.mobilityRole === "intercity_inventory"
-      ? node.operability.arrivalPlace
+    const intercityArrival = node?.domain === "transport" && ["intercity_inventory", "user_confirmed_arrival"].includes(node?.operability?.mobilityRole)
+      ? (node.operability.arrivalRouteAnchor ?? node.operability.arrivalPlace)
       : null;
     const existing = coordinatePair(node);
     if (existing) {
@@ -684,9 +804,11 @@ export class AmapTravelResearchProvider {
     };
   }
 
-  async routeMobilityLeg({ origin, destination, brief, constraints }) {
-    const date = isoDates(brief?.dates)[0] ?? null;
-    const timeMatch = JSON.stringify(brief ?? {}).match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/);
+  async routeMobilityLeg({ origin, destination, brief, constraints, routeAt = null }) {
+    const routeDateTime = String(routeAt ?? "");
+    const date = routeDateTime.match(/\b(20\d{2}-\d{2}-\d{2})\b/)?.[1] ?? isoDates(brief?.dates)[0] ?? null;
+    const timeMatch = routeDateTime.match(/(?:T|\s|^)([01]?\d|2[0-3]):([0-5]\d)/)
+      ?? JSON.stringify(brief ?? {}).match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/);
     const routeTime = timeMatch ? `${Number(timeMatch[1])}-${timeMatch[2]}` : null;
     const common = {
       origin: coordinateString(origin.coordinates),
@@ -739,7 +861,11 @@ export class AmapTravelResearchProvider {
     const destination = text(brief.destination, 120);
     if (!destination) return { schemaVersion: "trip-mobility-v1", status: "needs_context", reason: "destination_required", source: "amap_routes_v5", fabricatedResults: false };
     if (!this.apiKey || !this.enabled) return { schemaVersion: "trip-mobility-v1", status: "provider_unavailable", destination, reason: this.apiKey ? "amap_live_smoke_required" : "AMAP_API_KEY_not_configured", source: "amap_routes_v5", sourceDocumentation: AMAP_ROUTE_DOC, fabricatedResults: false };
-    const selected = selectedNodes.filter((node) => node?.selected === true);
+    const selected = selectedNodes.filter((node) => node?.selected === true).sort((left, right) => {
+      const leftValue = left?.operability?.planningWindow?.startAt ?? left?.time ?? left?.operability?.departureAt ?? left?.operability?.arrivalAt ?? "";
+      const rightValue = right?.operability?.planningWindow?.startAt ?? right?.time ?? right?.operability?.departureAt ?? right?.operability?.arrivalAt ?? "";
+      return String(leftValue).localeCompare(String(rightValue));
+    });
     if (selected.length < 2) return { schemaVersion: "trip-mobility-v1", status: "needs_context", destination, reason: "at_least_two_selected_places_required", source: "amap_routes_v5", sourceDocumentation: AMAP_ROUTE_DOC, fabricatedResults: false };
     let destinationGeocode;
     try {
@@ -759,13 +885,31 @@ export class AmapTravelResearchProvider {
         unresolvedNodeIds.push(node.nodeId);
       }
     }
-    const intercityArrival = resolved.find(({ node }) => node.domain === "transport" && node.operability?.mobilityRole === "intercity_inventory") ?? null;
-    const transport = resolved.filter(({ node }) => node.domain === "transport" && node.operability?.mobilityRole !== "intercity_inventory");
+    const intercityArrival = resolved.find(({ node }) => node.domain === "transport" && ["intercity_inventory", "user_confirmed_arrival"].includes(node.operability?.mobilityRole)) ?? null;
+    const transport = resolved.filter(({ node }) => node.domain === "transport" && !["intercity_inventory", "user_confirmed_arrival"].includes(node.operability?.mobilityRole));
     const stay = resolved.find(({ node }) => node.domain === "stay") ?? null;
-    const activities = resolved.filter(({ node }) => ["play", "food"].includes(node.domain));
+    const activities = resolved.filter(({ node }) => ["play", "food"].includes(node.domain)).sort((left, right) => {
+      const leftValue = left.node?.operability?.planningWindow?.startAt ?? left.node?.time ?? "";
+      const rightValue = right.node?.operability?.planningWindow?.startAt ?? right.node?.time ?? "";
+      return String(leftValue).localeCompare(String(rightValue));
+    });
     const remaining = resolved.filter(({ node }) => !["stay", "play", "food", "transport"].includes(node.domain));
-    const ordered = [...(intercityArrival ? [intercityArrival] : []), ...transport.slice(0, 1), ...(stay ? [stay] : []), ...activities, ...remaining].slice(0, 6);
-    if (ordered.length >= 3 && stay && ordered.at(-1)?.node.nodeId !== stay.node.nodeId) ordered.push(stay);
+    const ordered = [];
+    const pushStop = (entry) => {
+      if (!entry) return;
+      if (ordered.at(-1)?.node.nodeId === entry.node.nodeId) return;
+      ordered.push(entry);
+    };
+    pushStop(intercityArrival);
+    pushStop(transport[0]);
+    pushStop(stay);
+    for (let index = 0; index < activities.length; index += 1) {
+      pushStop(activities[index]);
+      const currentDate = String(activities[index].node?.operability?.planningWindow?.startAt ?? activities[index].node?.time ?? "").slice(0, 10);
+      const nextDate = String(activities[index + 1]?.node?.operability?.planningWindow?.startAt ?? activities[index + 1]?.node?.time ?? "").slice(0, 10);
+      if (stay && (!activities[index + 1] || (currentDate && nextDate && currentDate !== nextDate))) pushStop(stay);
+    }
+    for (const entry of remaining) pushStop(entry);
     if (ordered.length < 2) {
       return { schemaVersion: "trip-mobility-v1", status: "needs_context", destination, reason: "selected_places_need_resolvable_coordinates", source: "amap_routes_v5", coverage: { routedNodeIds: [], unresolvedNodeIds, unscheduled: true }, sourceDocumentation: AMAP_ROUTE_DOC, fabricatedResults: false };
     }
@@ -775,16 +919,22 @@ export class AmapTravelResearchProvider {
     for (let index = 0; index < ordered.length - 1 && legs.length < 6; index += 1) {
       const origin = ordered[index].stop;
       const nextDestination = ordered[index + 1].stop;
-      const result = await this.routeMobilityLeg({ origin, destination: nextDestination, brief, constraints });
+      const originNode = ordered[index].node;
+      const destinationNode = ordered[index + 1].node;
+      const routeAt = originNode.domain === "stay"
+        ? destinationNode.operability?.planningWindow?.startAt ?? destinationNode.time
+        : originNode.operability?.planningWindow?.endAt ?? originNode.operability?.arrivalAt ?? originNode.time ?? destinationNode.operability?.planningWindow?.startAt ?? destinationNode.time;
+      const result = await this.routeMobilityLeg({ origin, destination: nextDestination, brief, constraints, routeAt });
       errors.push(...result.errors);
       if (!result.alternatives.length) continue;
-      const isArrivalTransfer = ordered[index].node.domain === "transport" && ordered[index].node.operability?.mobilityRole === "intercity_inventory";
+      const isArrivalTransfer = ordered[index].node.domain === "transport" && ["intercity_inventory", "user_confirmed_arrival"].includes(ordered[index].node.operability?.mobilityRole);
       legs.push({
         legId: `mobility_${shortHash(`${origin.nodeId}:${nextDestination.nodeId}:${index}`)}`,
         origin,
         destination: nextDestination,
         recommendedMode: result.recommendation.mode,
-        rationale: `${isArrivalTransfer ? "这是抵达后的接驳。" : ""}${result.recommendation.rationale}${constraints.stepFreeRequired || constraints.avoidStairs ? " 无障碍连续性仍需结合车站电梯与出入口资料核验。" : ""}`,
+        rationale: `${isArrivalTransfer ? "这是抵达后的接驳。" : ""}${result.recommendation.rationale}`,
+        recommendationAudit: result.recommendation.audit,
         alternatives: result.alternatives,
       });
     }
@@ -808,6 +958,10 @@ export class AmapTravelResearchProvider {
         constrainedTravelerIds: constraints.constrainedTravelerIds,
         maxContinuousWalkMeters: constraints.maxWalkingMeters,
         maxTransfers: constraints.maxTransfers,
+        planningWalkingTarget: constraints.planningWalkingTarget,
+        planningTransferTarget: constraints.planningTransferTarget,
+        walkingTargetSource: constraints.walkingTargetSource,
+        transferTargetSource: constraints.transferTargetSource,
         stepFreeRequired: constraints.stepFreeRequired,
         avoidStairs: constraints.avoidStairs,
         accessibilityEvidence: constraints.stepFreeRequired || constraints.avoidStairs
@@ -854,7 +1008,7 @@ export class AmapTravelResearchProvider {
     }
   }
 
-  async research({ brief = {}, domains = DEFAULT_DOMAINS, existingWeather = null, includeWeather = true } = {}) {
+  async research({ brief = {}, domains = DEFAULT_DOMAINS, criteria = null, existingWeather = null, includeWeather = true } = {}) {
     const destination = text(brief.destination, 120);
     if (!destination) throw providerError("destination_required");
     if (!this.apiKey) {
@@ -880,11 +1034,17 @@ export class AmapTravelResearchProvider {
     const byDomain = Object.fromEntries(requestedDomains.map((domain) => [domain, []]));
     const errors = [];
     for (const domain of requestedDomains) {
-      try {
-        byDomain[domain] = await this.searchDomain({ destination, domain });
-      } catch (error) {
-        errors.push({ code: error?.code ?? "SOURCE_UNAVAILABLE", details: error?.details ?? null });
+      const domainCriteria = criteria?.byDomain?.[domain] ?? {};
+      const searches = domainSearchQueries(domain, domainCriteria);
+      const candidates = [];
+      for (const query of searches) {
+        try {
+          candidates.push(...await this.searchDomain({ destination, domain, query, criteria: domainCriteria }));
+        } catch (error) {
+          errors.push({ code: error?.code ?? "SOURCE_UNAVAILABLE", domain, queryReason: query.reason, details: error?.details ?? null });
+        }
       }
+      byDomain[domain] = [...new Map(candidates.map((candidate) => [candidate.candidateId, candidate])).values()].slice(0, 8);
     }
     const weather = includeWeather ? (reusableWeather(existingWeather, brief, this.clock) ?? await this.getWeather({ brief })) : null;
     const resultCount = Object.values(byDomain).reduce((total, candidates) => total + candidates.length, 0);

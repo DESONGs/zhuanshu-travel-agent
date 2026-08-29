@@ -1,6 +1,6 @@
 const apiBaseUrl = String(import.meta.env.VITE_TRAVEL_API_BASE_URL ?? "").trim().replace(/\/$/, "");
 
-async function request(path, { method = "GET", body, token } = {}) {
+async function request(path, { method = "GET", body, token, signal } = {}) {
   const response = await fetch(`${apiBaseUrl}${path}`, {
     method,
     headers: {
@@ -9,6 +9,7 @@ async function request(path, { method = "GET", body, token } = {}) {
     },
     credentials: "same-origin",
     body: body ? JSON.stringify(body) : undefined,
+    signal,
   });
   if (response.status === 204) return null;
   const data = await response.json().catch(() => ({ status: "error", code: "invalid_response" }));
@@ -31,9 +32,11 @@ export const api = {
   logout: () => request("/api/session", { method: "DELETE" }),
   listTrips: () => request("/api/trips"),
   providerStatus: () => request("/api/provider-status"),
-  listConversations: () => request("/api/conversations"),
+  listConversations: (includeDeleted = false) => request(`/api/conversations${includeDeleted ? "?includeDeleted=true" : ""}`),
   createConversation: (input = {}) => request("/api/conversations", { method: "POST", body: input }),
   conversation: (conversationId) => request(`/api/conversations/${encodeURIComponent(conversationId)}`),
+  deleteConversation: (conversationId) => request(`/api/conversations/${encodeURIComponent(conversationId)}`, { method: "DELETE" }),
+  restoreConversation: (conversationId) => request(`/api/conversations/${encodeURIComponent(conversationId)}/restore`, { method: "POST" }),
   sendConversationMessage: (conversationId, text, modelId, images = undefined) => request(`/api/conversations/${encodeURIComponent(conversationId)}/messages`, { method: "POST", body: { text, modelId, ...(images?.length ? { images } : {}) } }),
   inspectVisualEvidence: (input) => request("/api/visual-evidence/inspect", { method: "POST", body: input }),
   createTrip: (input) => request("/api/trips", { method: "POST", body: input }),
@@ -44,8 +47,9 @@ export const api = {
   decisions: (tripId) => request(`/api/trips/${encodeURIComponent(tripId)}/decisions`),
   transit: (tripId, nodeId) => request(`/api/trips/${encodeURIComponent(tripId)}/transit/${encodeURIComponent(nodeId)}`),
   refreshMobility: (tripId) => request(`/api/trips/${encodeURIComponent(tripId)}/mobility/refresh`, { method: "POST" }),
+  previewMobility: (tripId, baseRevision, selections, signal = undefined) => request(`/api/trips/${encodeURIComponent(tripId)}/mobility/preview`, { method: "POST", body: { baseRevision, selections }, signal }),
   submitFeedback: (tripId, input) => request(`/api/trips/${encodeURIComponent(tripId)}/feedback`, { method: "POST", body: input }),
   propose: (tripId, proposal) => request(`/api/trips/${encodeURIComponent(tripId)}/proposals`, { method: "POST", body: { proposal } }),
-  accept: (tripId, proposalId, selections = undefined) => request(`/api/trips/${encodeURIComponent(tripId)}/proposals/${encodeURIComponent(proposalId)}/accept`, { method: "POST", body: selections ? { selections } : {} }),
+  accept: (tripId, proposalId, selections = undefined, partial = false) => request(`/api/trips/${encodeURIComponent(tripId)}/proposals/${encodeURIComponent(proposalId)}/accept`, { method: "POST", body: { ...(selections ? { selections } : {}), ...(partial ? { partial: true } : {}) } }),
   reject: (tripId, proposalId) => request(`/api/trips/${encodeURIComponent(tripId)}/proposals/${encodeURIComponent(proposalId)}/reject`, { method: "POST" }),
 };

@@ -15,6 +15,36 @@ export const SOCIAL_ERROR_CODES = [
 export const DomainSchema = Type.Union(FOUR_DOMAINS.map((domain) => Type.Literal(domain)), { $id: "TravelDomain" });
 export type TravelDomain = Static<typeof DomainSchema>;
 
+export const PriceQualitySchema = Type.Union([
+  Type.Literal("firm"),
+  Type.Literal("reference"),
+  Type.Literal("estimate"),
+  Type.Literal("unknown"),
+], { $id: "TravelPriceQuality" });
+export type PriceQuality = Static<typeof PriceQualitySchema>;
+
+export const TravelPriceSchema = Type.Object({
+  amount: Type.Union([Type.Number({ minimum: 0 }), Type.Null()]),
+  currency: Type.String({ minLength: 3, maxLength: 8 }),
+  quality: PriceQualitySchema,
+  basis: Type.Optional(Type.Union([Type.String({ maxLength: 240 }), Type.Null()])),
+  checkedAt: Type.Optional(Type.Union([Type.String({ minLength: 10, maxLength: 40 }), Type.Null()])),
+}, { $id: "TravelPrice", additionalProperties: false });
+export type TravelPrice = Static<typeof TravelPriceSchema>;
+
+export const BudgetDomainSchema = Type.Union([
+  Type.Literal("stay"), Type.Literal("transport"), Type.Literal("food"), Type.Literal("play"), Type.Literal("other"),
+]);
+
+export const BudgetBucketSchema = Type.Object({
+  committed: Type.Number({ minimum: 0 }),
+  estimated: Type.Number({ minimum: 0 }),
+  quality: PriceQualitySchema,
+  basis: Type.Array(Type.String({ maxLength: 240 }), { maxItems: 12 }),
+  unknownCount: Type.Integer({ minimum: 0 }),
+}, { $id: "TravelBudgetBucket", additionalProperties: false });
+export type BudgetBucket = Static<typeof BudgetBucketSchema>;
+
 export const IdentifierSchema = Type.String({ minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9_.:-]+$" });
 export const IsoTimestampSchema = Type.String({ minLength: 10, maxLength: 40 });
 const NullableStringSchema = Type.Union([Type.String(), Type.Null()]);
@@ -25,6 +55,11 @@ export const TripBriefSchema = Type.Object({
   dates: Type.Optional(NullableStringSchema),
   origin: Type.Optional(NullableStringSchema),
   arrivalMode: Type.Optional(NullableStringSchema),
+  arrivalAirport: Type.Optional(NullableStringSchema),
+  arrivalTerminal: Type.Optional(NullableStringSchema),
+  arrivalTime: Type.Optional(NullableStringSchema),
+  arrivalConfirmed: Type.Optional(Type.Boolean()),
+  intercityBooked: Type.Optional(Type.Boolean()),
   partyProfile: Type.Optional(NullableStringSchema),
   pace: Type.Optional(NullableStringSchema),
   lodgingPreference: Type.Optional(NullableStringSchema),
@@ -34,6 +69,90 @@ export const TripBriefSchema = Type.Object({
   foodPreferences: Type.Optional(Type.Array(Type.String({ maxLength: 120 }), { maxItems: 12 })),
 }, { $id: "TripBrief", additionalProperties: true });
 export type TripBrief = Static<typeof TripBriefSchema>;
+
+const ResearchTextListSchema = Type.Array(Type.String({ minLength: 1, maxLength: 120 }), { maxItems: 12 });
+const ResearchAnchorCoordinateSchema = Type.Object({
+  label: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
+  longitude: Type.Number({ minimum: -180, maximum: 180 }),
+  latitude: Type.Number({ minimum: -90, maximum: 90 }),
+}, { additionalProperties: false });
+
+export const ResearchDomainCriteriaInputSchema = Type.Object({
+  keywords: Type.Optional(ResearchTextListSchema),
+  namedEntities: Type.Optional(ResearchTextListSchema),
+  targetAreas: Type.Optional(ResearchTextListSchema),
+  anchorCoordinates: Type.Optional(Type.Array(ResearchAnchorCoordinateSchema, { maxItems: 6 })),
+  hardConstraints: Type.Optional(ResearchTextListSchema),
+  preferenceHints: Type.Optional(ResearchTextListSchema),
+}, { $id: "ResearchDomainCriteriaInput", additionalProperties: false });
+export type ResearchDomainCriteriaInput = Static<typeof ResearchDomainCriteriaInputSchema>;
+
+export const ResearchCriteriaInputSchema = Type.Object({
+  byDomain: Type.Optional(Type.Object({
+    play: Type.Optional(ResearchDomainCriteriaInputSchema),
+    food: Type.Optional(ResearchDomainCriteriaInputSchema),
+    stay: Type.Optional(ResearchDomainCriteriaInputSchema),
+    transport: Type.Optional(ResearchDomainCriteriaInputSchema),
+  }, { additionalProperties: false })),
+  intercityIntent: Type.Optional(Type.Union([
+    Type.Literal("flight"), Type.Literal("train"), Type.Literal("flexible"), Type.Literal("none"),
+  ])),
+  localMobilityIntent: Type.Optional(Type.Array(Type.Union([
+    Type.Literal("transit"), Type.Literal("taxi"), Type.Literal("walk"), Type.Literal("accessible_transit"), Type.Literal("flexible"),
+  ]), { maxItems: 5 })),
+  arrival: Type.Optional(Type.Object({
+    airport: Type.Optional(Type.String({ maxLength: 120 })),
+    terminal: Type.Optional(Type.String({ maxLength: 40 })),
+    time: Type.Optional(Type.String({ maxLength: 40 })),
+    confirmed: Type.Optional(Type.Boolean()),
+  }, { additionalProperties: false })),
+}, { $id: "ResearchCriteriaInput", additionalProperties: false });
+export type ResearchCriteriaInput = Static<typeof ResearchCriteriaInputSchema>;
+
+const NormalizedResearchDomainCriteriaSchema = Type.Object({
+  keywords: ResearchTextListSchema,
+  namedEntities: ResearchTextListSchema,
+  targetAreas: ResearchTextListSchema,
+  anchorCoordinates: Type.Array(ResearchAnchorCoordinateSchema, { maxItems: 6 }),
+  hardConstraints: ResearchTextListSchema,
+  preferenceHints: ResearchTextListSchema,
+}, { additionalProperties: false });
+
+export const TravelResearchCriteriaSchema = Type.Object({
+  schemaVersion: Type.Literal("travel-research-criteria-v1"),
+  origin: NullableStringSchema,
+  destination: Type.String({ minLength: 1, maxLength: 120 }),
+  dates: NullableStringSchema,
+  partySize: Type.Union([Type.Integer({ minimum: 1, maximum: 12 }), Type.Null()]),
+  budgetCny: Type.Union([Type.Number({ minimum: 0 }), Type.Null()]),
+  travelerConstraintHints: ResearchTextListSchema,
+  byDomain: Type.Object({
+    play: NormalizedResearchDomainCriteriaSchema,
+    food: NormalizedResearchDomainCriteriaSchema,
+    stay: NormalizedResearchDomainCriteriaSchema,
+    transport: NormalizedResearchDomainCriteriaSchema,
+  }, { additionalProperties: false }),
+  intercityIntent: Type.Union([
+    Type.Literal("flight"), Type.Literal("train"), Type.Literal("flexible"), Type.Literal("none"),
+  ]),
+  localMobilityIntent: Type.Array(Type.Union([
+    Type.Literal("transit"), Type.Literal("taxi"), Type.Literal("walk"), Type.Literal("accessible_transit"), Type.Literal("flexible"),
+  ]), { maxItems: 5 }),
+  arrival: Type.Object({
+    airport: NullableStringSchema,
+    terminal: NullableStringSchema,
+    time: NullableStringSchema,
+    confirmed: Type.Boolean(),
+  }, { additionalProperties: false }),
+  fingerprint: IdentifierSchema,
+  domainFingerprints: Type.Object({
+    play: IdentifierSchema,
+    food: IdentifierSchema,
+    stay: IdentifierSchema,
+    transport: IdentifierSchema,
+  }, { additionalProperties: false }),
+}, { $id: "TravelResearchCriteria", additionalProperties: false });
+export type TravelResearchCriteria = Static<typeof TravelResearchCriteriaSchema>;
 
 export const ReadinessSignalIdSchema = Type.Union([
   Type.Literal("travel_documents"),
@@ -168,6 +287,8 @@ export const DecisionNodeSchema = Type.Object({
   time: Type.Union([Type.String(), Type.Null()]),
   location: LocationValueSchema,
   media: Type.Array(MediaItemSchema, { maxItems: 6 }),
+  price: TravelPriceSchema,
+  // Numeric mirror retained for persisted v1 consumers during the migration.
   cost: Type.Number(),
   version: Type.Integer({ minimum: 1 }),
   updatedAt: IsoTimestampSchema,
@@ -481,7 +602,7 @@ const OpenDecisionSchema = Type.Object({
 
 export const PatchOperationSchema = Type.Union([
   Type.Object({ kind: Type.Literal("add_candidate"), nodeId: IdentifierSchema, node: DecisionNodeInputSchema }, { additionalProperties: false }),
-  Type.Object({ kind: Type.Literal("select"), nodeId: IdentifierSchema }, { additionalProperties: false }),
+  Type.Object({ kind: Type.Literal("select"), nodeId: IdentifierSchema, node: Type.Optional(DecisionNodeInputSchema) }, { additionalProperties: false }),
   Type.Object({ kind: Type.Literal("reject"), nodeId: IdentifierSchema }, { additionalProperties: false }),
   Type.Object({ kind: Type.Literal("update"), nodeId: IdentifierSchema, changes: ExtensibleObjectSchema }, { additionalProperties: false }),
 ], { $id: "TripPatchOperation" });
@@ -538,8 +659,16 @@ export const TripStateSchema = Type.Object({
   budgetLedger: Type.Object({
     currency: Type.String(),
     totalBudget: Type.Union([Type.Number(), Type.Null()]),
+    domains: Type.Object({
+      stay: BudgetBucketSchema,
+      transport: BudgetBucketSchema,
+      food: BudgetBucketSchema,
+      play: BudgetBucketSchema,
+      other: BudgetBucketSchema,
+    }, { additionalProperties: false }),
     committed: Type.Number(),
     estimated: Type.Number(),
+    exceedsBudget: Type.Boolean(),
   }, { additionalProperties: false }),
   environment: Type.Object({
     weather: Type.Union([WeatherObservationSchema, Type.Null()]),
@@ -653,6 +782,7 @@ export const ProviderCandidateSchema = Type.Object({
   title: Type.String(),
   summary: Type.Optional(Type.String()),
   cost: Type.Optional(Type.Number()),
+  price: Type.Optional(TravelPriceSchema),
   location: Type.Optional(LocationValueSchema),
   media: Type.Optional(Type.Array(MediaItemSchema)),
   operability: Type.Optional(ExtensibleObjectSchema),
@@ -664,6 +794,125 @@ export const ProviderCandidateSchema = Type.Object({
 }, { $id: "ProviderCandidate", additionalProperties: true });
 export type ProviderCandidate = Static<typeof ProviderCandidateSchema>;
 
+export const TravelAnalysisLaneSchema = Type.Union([
+  Type.Literal("inventory_budget"),
+  Type.Literal("local_discovery"),
+  Type.Literal("operability_schedule"),
+]);
+export type TravelAnalysisLane = Static<typeof TravelAnalysisLaneSchema>;
+
+export const TravelAnalysisCandidateSchema = Type.Object({
+  candidateId: IdentifierSchema,
+  domain: DomainSchema,
+  title: Type.String({ maxLength: 200 }),
+  summary: Type.Optional(Type.String({ maxLength: 1_000 })),
+  cost: Type.Optional(Type.Number()),
+  price: Type.Optional(TravelPriceSchema),
+  operability: Type.Optional(ExtensibleObjectSchema),
+  evidenceRefs: Type.Array(Type.String({ maxLength: 300 }), { maxItems: 16 }),
+}, { additionalProperties: false });
+export type TravelAnalysisCandidate = Static<typeof TravelAnalysisCandidateSchema>;
+
+export const TravelAnalysisInputSchema = Type.Object({
+  analysisId: IdentifierSchema,
+  runId: IdentifierSchema,
+  tripId: IdentifierSchema,
+  baseRevision: Type.Integer({ minimum: 0 }),
+  criteriaFingerprint: Type.String({ minLength: 1, maxLength: 128 }),
+  objective: Type.String({ minLength: 1, maxLength: 1_000 }),
+  brief: ExtensibleObjectSchema,
+  travelers: Type.Array(ExtensibleObjectSchema, { maxItems: 12 }),
+  candidates: Type.Array(TravelAnalysisCandidateSchema, { maxItems: 36 }),
+  weather: Type.Optional(Type.Union([WeatherObservationSchema, Type.Null()])),
+  locks: Type.Array(IdentifierSchema, { maxItems: 36 }),
+}, { additionalProperties: false });
+export type TravelAnalysisInput = Static<typeof TravelAnalysisInputSchema>;
+
+export const TravelAnalysisFindingSchema = Type.Object({
+  findingId: IdentifierSchema,
+  summary: Type.String({ minLength: 1, maxLength: 800 }),
+  reasonCode: Type.String({ minLength: 1, maxLength: 120 }),
+  candidateIds: Type.Array(IdentifierSchema, { maxItems: 16 }),
+  evidenceRefs: Type.Array(Type.String({ maxLength: 300 }), { maxItems: 24 }),
+}, { additionalProperties: false });
+export type TravelAnalysisFinding = Static<typeof TravelAnalysisFindingSchema>;
+
+export const TravelAnalysisLaneResultSchema = Type.Object({
+  schemaVersion: Type.Literal("travel-analysis-lane-v1"),
+  analysisId: IdentifierSchema,
+  runId: IdentifierSchema,
+  tripId: IdentifierSchema,
+  baseRevision: Type.Integer({ minimum: 0 }),
+  criteriaFingerprint: Type.String({ minLength: 1, maxLength: 128 }),
+  lane: TravelAnalysisLaneSchema,
+  attempt: Type.Integer({ minimum: 1, maximum: 2 }),
+  queuedAt: IsoTimestampSchema,
+  startedAt: IsoTimestampSchema,
+  completedAt: IsoTimestampSchema,
+  status: Type.Union([Type.Literal("completed"), Type.Literal("failed"), Type.Literal("timed_out")]),
+  model: Type.Union([Type.String({ maxLength: 160 }), Type.Null()]),
+  queueDurationMs: Type.Number({ minimum: 0 }),
+  executionDurationMs: Type.Number({ minimum: 0 }),
+  tokenUsage: Type.Union([Type.Object({ input: Type.Number({ minimum: 0 }), output: Type.Number({ minimum: 0 }), total: Type.Number({ minimum: 0 }) }, { additionalProperties: false }), Type.Null()]),
+  findings: Type.Array(TravelAnalysisFindingSchema, { maxItems: 20 }),
+  recommendedCandidateIds: Type.Array(IdentifierSchema, { maxItems: 24 }),
+  rejectedCandidateIds: Type.Array(IdentifierSchema, { maxItems: 24 }),
+  reasonCodes: Type.Array(Type.String({ maxLength: 120 }), { maxItems: 24 }),
+  unknowns: Type.Array(Type.String({ maxLength: 500 }), { maxItems: 20 }),
+  needsContext: Type.Array(Type.String({ maxLength: 300 }), { maxItems: 12 }),
+  evidenceRefs: Type.Array(Type.String({ maxLength: 300 }), { maxItems: 48 }),
+  skillId: Type.String({ minLength: 1, maxLength: 80 }),
+  skillVersion: Type.String({ minLength: 1, maxLength: 80 }),
+}, { additionalProperties: false });
+export type TravelAnalysisLaneResult = Static<typeof TravelAnalysisLaneResultSchema>;
+
+export const TravelAnalysisFanoutResultSchema = Type.Object({
+  schemaVersion: Type.Literal("travel-analysis-fanout-v1"),
+  analysisId: IdentifierSchema,
+  runId: IdentifierSchema,
+  tripId: IdentifierSchema,
+  baseRevision: Type.Integer({ minimum: 0 }),
+  criteriaFingerprint: Type.String({ minLength: 1, maxLength: 128 }),
+  status: Type.Union([Type.Literal("completed"), Type.Literal("partial"), Type.Literal("failed"), Type.Literal("skipped"), Type.Literal("stale_discarded")]),
+  engine: Type.Union([Type.Literal("dynamic_workflow"), Type.Literal("pi_subagents"), Type.Literal("fixture")]),
+  lanes: Type.Array(TravelAnalysisLaneResultSchema, { maxItems: 3 }),
+  requiredLanes: Type.Array(TravelAnalysisLaneSchema, { maxItems: 3 }),
+  startedLanes: Type.Array(TravelAnalysisLaneSchema, { maxItems: 3 }),
+  completedLanes: Type.Array(TravelAnalysisLaneSchema, { maxItems: 3 }),
+  failedLanes: Type.Array(TravelAnalysisLaneSchema, { maxItems: 3 }),
+  timedOutLanes: Type.Array(TravelAnalysisLaneSchema, { maxItems: 3 }),
+  coverage: Type.Union([Type.Literal("complete"), Type.Literal("partial"), Type.Literal("failed")]),
+  degradedReasons: Type.Array(Type.String({ maxLength: 300 }), { maxItems: 12 }),
+  joinCount: Type.Union([Type.Literal(0), Type.Literal(1)]),
+  joinArtifactId: Type.Union([IdentifierSchema, Type.Null()]),
+  taskCount: Type.Integer({ minimum: 0, maximum: 3 }),
+  childConcurrency: Type.Integer({ minimum: 1, maximum: 3 }),
+  modelFallback: Type.Object({
+    primaryStatus: Type.String({ maxLength: 80 }),
+    fallbackStatus: Type.String({ maxLength: 80 }),
+    fallbackModel: Type.Union([Type.String({ maxLength: 160 }), Type.Null()]),
+  }, { additionalProperties: false }),
+  startedAt: IsoTimestampSchema,
+  completedAt: IsoTimestampSchema,
+  deadlineAt: IsoTimestampSchema,
+  conditionRevision: Type.Object({
+    status: Type.Union([Type.Literal("not_needed"), Type.Literal("recommended")]),
+    reasonCodes: Type.Array(Type.String({ maxLength: 120 }), { maxItems: 12 }),
+  }, { additionalProperties: false }),
+  events: Type.Optional(Type.Array(Type.Object({
+    type: Type.String({ maxLength: 80 }),
+    lane: Type.String({ maxLength: 80 }),
+    at: IsoTimestampSchema,
+    error: Type.Optional(Type.Union([Type.String({ maxLength: 500 }), Type.Null()])),
+    attempt: Type.Optional(Type.Integer({ minimum: 1, maximum: 2 })),
+    queuedAt: Type.Optional(IsoTimestampSchema),
+    queueDurationMs: Type.Optional(Type.Number({ minimum: 0 })),
+    executionDurationMs: Type.Optional(Type.Number({ minimum: 0 })),
+    model: Type.Optional(Type.Union([Type.String({ maxLength: 160 }), Type.Null()])),
+  }, { additionalProperties: false }), { maxItems: 12 })),
+}, { additionalProperties: false });
+export type TravelAnalysisFanoutResult = Static<typeof TravelAnalysisFanoutResultSchema>;
+
 const ProviderFailureStatusSchema = Type.Union([
   Type.Literal("provider_unavailable"), Type.Literal("AUTH_REQUIRED"), Type.Literal("ACCOUNT_LIMITED"),
   Type.Literal("RATE_LIMITED"), Type.Literal("EMPTY_VERIFIED"), Type.Literal("SOURCE_UNAVAILABLE"),
@@ -672,7 +921,7 @@ const ProviderFailureStatusSchema = Type.Union([
 export const ProviderResultSchema = Type.Union([
   Type.Object({
     schemaVersion: Type.Literal("travel-provider-result-v1"),
-    status: Type.Literal("completed"),
+    status: Type.Union([Type.Literal("completed"), Type.Literal("partial")]),
     provider: Type.String(),
     providerLabel: Type.Optional(Type.String()),
     destination: Type.Optional(NullableStringSchema),

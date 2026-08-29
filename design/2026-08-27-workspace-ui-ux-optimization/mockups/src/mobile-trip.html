@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  :root {
+    --ink:#17191c; --ink-soft:#38434b; --muted:#53616b; --quiet:#64727b;
+    --line:#dfe4e7; --line-strong:#cbd3d8; --canvas:#f6f8f9; --surface:#fff; --surface-subtle:#f0f4f5;
+    --coral:#ff5a4f; --coral-action:#c9443b; --coral-soft:#fff0ed;
+    --blue:#2166bd; --blue-soft:#edf4fb; --green:#24754b; --green-soft:#e8f6ec;
+    --amber:#84531d; --amber-soft:#fff7ef;
+  }
+  html,body { width:393px; height:852px; overflow:hidden; }
+  body { font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif; color:var(--ink); background:var(--canvas); display:flex; flex-direction:column; }
+  svg.ic { width:20px; height:20px; stroke:currentColor; fill:none; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; flex:none; }
+
+  /* Topbar 48 */
+  .topbar { height:48px; flex:none; background:var(--surface); border-bottom:1px solid var(--line); display:flex; align-items:center; padding:0 14px; gap:8px; }
+  .topbar .bicon { width:20px; height:20px; flex:none; }
+  .topbar .sum { font-size:13px; font-weight:650; color:var(--ink); white-space:nowrap; }
+  .topbar .trips { margin-left:auto; width:44px; height:44px; display:flex; align-items:center; justify-content:center; color:var(--ink-soft); }
+
+  .content { flex:1; padding:12px 14px; display:flex; flex-direction:column; gap:10px; min-height:0; }
+
+  .ready { background:var(--amber-soft); border:1px solid #f0dfc8; border-radius:10px; padding:9px 12px; display:flex; align-items:center; gap:10px; color:var(--amber); flex:none; min-height:44px; }
+  .ready svg { width:18px; height:18px; }
+  .ready .t { font-size:13px; font-weight:650; }
+  .ready .s { font-size:12px; opacity:.85; }
+  .ready .chev { margin-left:auto; }
+
+  .chips { display:flex; gap:6px; flex:none; }
+  .chip { display:flex; align-items:center; gap:5px; height:30px; padding:0 10px; background:var(--surface); border:1px solid var(--line); border-radius:999px; font-size:12px; font-weight:500; color:var(--ink-soft); white-space:nowrap; }
+  .chip svg { width:13px; height:13px; }
+
+  .segs { flex:none; display:flex; flex-direction:column; background:var(--surface); border:1px solid var(--line); border-radius:14px; overflow:hidden; }
+  .seg { display:flex; align-items:center; gap:10px; padding:10px 12px; min-height:64px; border-bottom:1px solid var(--line); }
+  .seg:last-child { border-bottom:none; }
+  .dicon { width:36px; height:36px; border-radius:50%; background:var(--surface-subtle); display:flex; align-items:center; justify-content:center; color:var(--ink-soft); flex:none; }
+  .seg .mid { flex:1; min-width:0; }
+  .seg .r1 { display:flex; align-items:center; gap:6px; }
+  .seg .type { font-size:11px; font-weight:650; color:var(--muted); }
+  .badge { font-size:11px; font-weight:500; padding:2px 8px; border-radius:999px; flex:none; }
+  .badge.green { background:var(--green-soft); color:var(--green); }
+  .badge.grey { background:var(--surface-subtle); color:var(--muted); }
+  .badge.amber { background:var(--amber-soft); color:var(--amber); }
+  .seg .name { font-size:15px; font-weight:650; margin-top:2px; }
+  .seg .meta { font-size:12px; color:var(--muted); margin-top:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .seg .meta .more { color:var(--blue); font-weight:500; }
+  .seg .chev { color:var(--quiet); display:flex; flex:none; }
+  .seg .chev svg { width:16px; height:16px; }
+
+  .tail { flex:none; background:var(--surface); border:1px solid var(--line); border-radius:10px; min-height:44px; display:flex; align-items:center; padding:8px 12px; gap:8px; }
+  .tail .t { font-size:13px; font-weight:650; }
+  .tail .s { font-size:11px; color:var(--muted); margin-top:1px; }
+  .tail .maplink { margin-left:auto; display:flex; align-items:center; gap:4px; color:var(--blue); font-size:12px; font-weight:500; }
+  .tail .maplink svg { width:14px; height:14px; }
+
+  /* Tab bar */
+  .tabbar { flex:none; background:var(--surface); border-top:1px solid var(--line); }
+  .tabs { height:56px; display:flex; }
+  .tab { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; color:var(--muted); font-size:11px; font-weight:500; position:relative; }
+  .tab svg { width:22px; height:22px; }
+  .tab.on { color:var(--coral-action); font-weight:650; }
+  .tab .bdg { position:absolute; top:6px; left:calc(50% + 8px); min-width:16px; height:16px; padding:0 4px; border-radius:999px; background:var(--coral); color:#fff; font-size:10px; font-weight:650; display:flex; align-items:center; justify-content:center; }
+  .home { height:34px; display:flex; align-items:center; justify-content:center; }
+  .home .bar { width:134px; height:5px; border-radius:999px; background:var(--ink); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <svg class="bicon" viewBox="0 0 24 24" fill="#ff5a4f"><path d="M12 22s-7.5-6.2-7.5-11.5a7.5 7.5 0 1 1 15 0C19.5 15.8 12 22 12 22z"/><circle cx="12" cy="10.5" r="2.8" fill="#fff"/></svg>
+  <span class="sum">上海 · 8/27–29 · 3 人</span>
+  <div class="trips"><svg class="ic" viewBox="0 0 24 24"><path d="M9 4h11M9 4v16M9 4L4 7v16l5-3M9 20h11V7M9 20l6-3M20 7l-5-3M15 4v13"/></svg></div>
+</header>
+
+<div class="content">
+  <div class="ready">
+    <svg class="ic" viewBox="0 0 24 24"><path d="M12 4L2.8 20h18.4L12 4z"/><path d="M12 10v4M12 17h.01"/></svg>
+    <div>
+      <span class="t">出发前还差 2 项</span><br>
+      <span class="s">博物馆预约 · 接机车确认</span>
+    </div>
+    <svg class="ic chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+  </div>
+  <div class="chips">
+    <div class="chip"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M7 15h4"/></svg>预算 ¥8,000</div>
+    <div class="chip"><svg class="ic" viewBox="0 0 24 24"><path d="M7 15a5 5 0 1 1 .8-9.9A6 6 0 0 1 19.5 8 4 4 0 0 1 19 15H7z"/><path d="M8 18l-1 2M12.5 18l-1 2M17 18l-1 2"/></svg>小雨 3 天</div>
+    <div class="chip"><svg class="ic" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c1-2.8 3-4 5.5-4s4.5 1.2 5.5 4"/><circle cx="17" cy="9" r="2.4"/><path d="M16 14.6c2.2.2 3.7 1.3 4.5 3.4"/></svg>3 人 · 含长辈</div>
+  </div>
+  <div class="segs">
+    <div class="seg">
+      <div class="dicon"><svg class="ic" viewBox="0 0 24 24"><path d="M3 16.5h18M5 16.5l6.5-2 6.5-6.8c.8-.8.2-2.2-1-2.2l-2.2.1-3.2 3.4-4.1-1.2-1.6.4 2.9 3.1-3.8 1.2z"/></svg></div>
+      <div class="mid">
+        <div class="r1"><span class="type">抵达</span><span class="badge green">已确认</span></div>
+        <div class="name">浦东机场 T2 到达</div>
+        <div class="meta">第 1 天 · 8/27 14:00 落地 · 接机打车 ¥120 起</div>
+      </div>
+      <span class="chev"><svg class="ic" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></span>
+    </div>
+    <div class="seg">
+      <div class="dicon"><svg class="ic" viewBox="0 0 24 24"><path d="M3 18v-8M3 13h18v5M3 16h18M7 13v-2.5A1.5 1.5 0 0 1 8.5 9h4A2.5 2.5 0 0 1 15 11.5V13M21 18v2M3 18v2"/></svg></div>
+      <div class="mid">
+        <div class="r1"><span class="type">住宿锚点</span><span class="badge green">已确认</span></div>
+        <div class="name">全季酒店（人民广场店）</div>
+        <div class="meta">¥564 · 评分 4.5 · 离地铁 400m · 2 晚</div>
+      </div>
+      <span class="chev"><svg class="ic" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></span>
+    </div>
+    <div class="seg">
+      <div class="dicon"><svg class="ic" viewBox="0 0 24 24"><path d="M6 3v7a2 2 0 0 0 2 2v9M8 3v5M4 3v5M10 3v7a2 2 0 0 1-2 2"/><path d="M17 3c-1.8 1.2-3 3.8-3 7v3h3v8M17 3v18"/></svg></div>
+      <div class="mid">
+        <div class="r1"><span class="type">餐饮</span><span class="badge grey">待确认</span></div>
+        <div class="name">上海 12 弄 · 本帮菜</div>
+        <div class="meta">¥168 起 · 评分 4.5 · <span class="more">另有 2 个替代</span></div>
+      </div>
+      <span class="chev"><svg class="ic" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></span>
+    </div>
+    <div class="seg">
+      <div class="dicon"><svg class="ic" viewBox="0 0 24 24"><path d="M12 21s-6-4.6-6-9.5a6 6 0 1 1 12 0C18 16.4 12 21 12 21z"/><circle cx="12" cy="11.5" r="2"/></svg></div>
+      <div class="mid">
+        <div class="r1"><span class="type">游玩</span><span class="badge amber">需备选</span></div>
+        <div class="name">上海市历史博物馆</div>
+        <div class="meta">免费 · 需预约 · <span class="more">另有 2 个替代</span></div>
+      </div>
+      <span class="chev"><svg class="ic" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></span>
+    </div>
+  </div>
+  <div class="tail">
+    <div>
+      <div class="t">整趟预算 ¥564 / ¥8,000</div>
+      <div class="s">已确认 2/4 项</div>
+    </div>
+    <span class="maplink"><svg class="ic" viewBox="0 0 24 24"><path d="M9 4h11M9 4v16M9 4L4 7v16l5-3M9 20h11V7M9 20l6-3M20 7l-5-3M15 4v13"/></svg>查看地图</span>
+  </div>
+</div>
+
+<nav class="tabbar">
+  <div class="tabs">
+    <div class="tab">
+      <svg class="ic" viewBox="0 0 24 24"><path d="M12 3a9 9 0 0 0-7.8 13.5L3 21l4.7-1.2A9 9 0 1 0 12 3z"/><path d="M8.5 11h.01M12 11h.01M15.5 11h.01"/></svg>
+      对话
+    </div>
+    <div class="tab on">
+      <svg class="ic" viewBox="0 0 24 24"><path d="M4 6l1.5 1.5L8 5M4 12l1.5 1.5L8 11M4 18l1.5 1.5L8 17M11 6h9M11 12h9M11 18h9"/></svg>
+      行程
+      <span class="bdg">2</span>
+    </div>
+    <div class="tab">
+      <svg class="ic" viewBox="0 0 24 24"><path d="M9 4h11M9 4v16M9 4L4 7v16l5-3M9 20h11V7M9 20l6-3M20 7l-5-3M15 4v13"/></svg>
+      地图
+    </div>
+  </div>
+  <div class="home"><span class="bar"></span></div>
+</nav>
+
+</body>
+</html>

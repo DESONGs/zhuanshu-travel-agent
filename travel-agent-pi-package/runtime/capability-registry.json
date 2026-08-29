@@ -1,82 +1,60 @@
 {
-  "schemaVersion": "travel-capability-registry-v1",
+  "schemaVersion": "travel-capability-registry-v2",
   "defaults": {
     "alwaysOn": ["trip_control", "travel_context", "trip_patch", "policy", "travel_qa", "observability"],
-    "loadPolicy": "load only semantic capabilities relevant to the current decision; external providers need passed_read_only_isolated."
+    "loadPolicy": "Load only capabilities relevant to the current decision. Provider availability is derived at runtime."
   },
   "capabilities": [
     {
       "capabilityId": "trip_control",
-      "status": "available",
       "description": "Shared trip state, decision graph, dirty-set calculation, and work queues.",
-      "triggers": ["trip", "itinerary", "change", "replan"],
-      "securityReview": { "status": "not_applicable", "summary": "Deterministic local runtime." }
+      "securityRequirements": ["parent_owned_state", "revision_checked_mutations"]
     },
     {
       "capabilityId": "travel_context",
-      "status": "available",
-      "description": "Decision-scoped context packs plus deterministic Environment and Mobility gates for destination/date weather and selected-place city movement.",
-      "triggers": ["context", "evidence", "traveler constraints", "environment", "weather freshness", "mobility freshness"],
-      "securityReview": { "status": "not_applicable", "summary": "Deterministic local runtime." }
+      "description": "Decision-scoped context plus deterministic weather and mobility freshness gates.",
+      "securityRequirements": ["bounded_context", "no_sensitive_fields"]
     },
     {
       "capabilityId": "trip_patch",
-      "status": "available",
-      "description": "Revision-aware proposal validation and parent-agent commit.",
-      "triggers": ["proposal", "accept", "rebase", "locked"],
-      "securityReview": { "status": "not_applicable", "summary": "Deterministic local runtime." }
+      "description": "Revision-aware proposal validation and parent-authorized commit.",
+      "securityRequirements": ["write_contract", "lock_check", "explicit_confirmation_for_commit"]
     },
     {
       "capabilityId": "social_read_worker",
-      "status": "blocked",
-      "description": "Read-only XHS/Douyin evidence collection through an isolated worker.",
-      "triggers": ["xiaohongshu", "douyin", "social", "short video"],
+      "description": "Read-only social discovery through an isolated worker.",
       "toolPackage": "third-party-or-mcp",
-      "securityReview": {
-        "status": "pending_fixed_sha_audit",
-        "summary": "No provider is enabled until static review and isolated real read-only smoke pass.",
-        "requiredBeforeEnable": ["fixed_sha", "license", "no_credentials_in_parent", "passed_read_only_isolated"]
-      }
+      "securityRequirements": ["fixed_sha", "license_review", "no_credentials_in_parent", "isolated_read_only_smoke_required"]
     },
     {
       "capabilityId": "china_travel_content_research",
-      "status": "available_limited",
-      "description": "Composed China travel research across social discovery, entity resolution, source-independence review and official fact verification.",
-      "triggers": ["china travel research", "travel guide", "xiaohongshu", "destination research"],
-      "toolPackage": "plugins/travel-agent/skills/research-china-travel-content",
-      "securityReview": { "status": "social_provider_blocked", "summary": "The composition Skill is loadable. It returns a visible social-discovery gap until a dedicated Xiaohongshu Worker and account pass isolated read-only smoke." }
+      "description": "China travel research across discovery, entity resolution, source review, and official fact verification.",
+      "toolPackage": "plugins/travel-agent/skills/research-trip",
+      "securityRequirements": ["source_attribution", "provider_failures_visible", "no_model_fabricated_facts"]
     },
     {
       "capabilityId": "amap_official",
-      "status": "blocked",
       "description": "Official China POI, routing, weather, and navigation handoff.",
-      "triggers": ["map", "route", "poi", "weather", "navigation"],
-      "toolPackage": "official-mcp",
-      "securityReview": { "status": "credential_valid_account_gate_10044", "summary": "POI once returned real data, but the current account gateway blocks POI, weather and route validation with 10044. Keep disabled until the expanded POI/weather/route/static-path smoke passes." }
+      "toolPackage": "official-provider-adapter",
+      "securityRequirements": ["credential_server_side", "live_smoke_required", "read_only"]
     },
     {
       "capabilityId": "transport_query",
-      "status": "available_limited",
-      "description": "Read-only rail and flight offer lookup through audited Fliggy FlyAI and Tuniu official MCP. No purchase action.",
-      "triggers": ["train", "rail", "flight", "transport offer"],
-      "toolPackage": "official-provider-worker",
-      "securityReview": { "status": "passed_read_only_isolated", "summary": "Fliggy runs in a restricted child process; Tuniu uses fixed official endpoints and a read-only tool allowlist. Both completed credentialed real smoke." }
+      "description": "Read-only rail and flight inventory lookup. No purchase action.",
+      "toolPackage": "official-provider-adapter",
+      "securityRequirements": ["isolated_read_only_smoke_required", "freshness_visible", "no_purchase"]
     },
     {
       "capabilityId": "fliggy_flyai_search",
-      "status": "available_limited",
-      "description": "Read-only hotel, flight, train and POI search with Fliggy handoff links. It is not a food recommendation source and never books automatically.",
-      "triggers": ["hotel", "flight", "train", "ticket", "poi"],
+      "description": "Read-only hotel, flight, train, ticket, and POI search with handoff links.",
       "toolPackage": "@fly-ai/flyai-cli@1.0.16",
-      "securityReview": { "status": "passed_read_only_isolated", "summary": "Pinned package, no lifecycle scripts, restricted environment, no inherited application secrets, and credentialed real search smoke." }
+      "securityRequirements": ["restricted_environment", "credential_server_side", "no_booking"]
     },
     {
       "capabilityId": "tuniu_official_mcp",
-      "status": "available_limited",
-      "description": "Official read-only train, hotel, flight and ticket MCP second source.",
-      "triggers": ["train", "hotel", "flight", "ticket"],
+      "description": "Official read-only hotel, train, flight, and ticket source.",
       "toolPackage": "fixed-endpoint-mcp-client",
-      "securityReview": { "status": "passed_read_only_isolated", "summary": "Credentialed hotel, train and flight searches returned verified non-empty results. Booking and unknown tools remain blocked before network access." }
+      "securityRequirements": ["fixed_endpoint_allowlist", "credential_server_side", "no_booking"]
     }
   ]
 }
