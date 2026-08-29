@@ -606,9 +606,13 @@ function normalizeMobilityObservation(input: DynamicRecord): DynamicRecord {
     coverage: {
       routedNodeIds: unique(asArray(input.coverage?.routedNodeIds).map((item) => String(item).slice(0, 128))).slice(0, 24),
       unresolvedNodeIds: unique(asArray(input.coverage?.unresolvedNodeIds).map((item) => String(item).slice(0, 128))).slice(0, 24),
+      routedStopIds: unique(asArray(input.coverage?.routedStopIds).map((item) => String(item).slice(0, 128))).slice(0, 32),
+      unresolvedStopIds: unique(asArray(input.coverage?.unresolvedStopIds).map((item) => String(item).slice(0, 128))).slice(0, 32),
       unscheduled: input.coverage?.unscheduled !== false,
     },
     legs: asArray(input.legs).slice(0, 8).map((leg) => clone(leg)),
+    itinerary: input.itinerary ? clone(input.itinerary) : null,
+    feasibility: input.feasibility ? clone(input.feasibility) : null,
     travelerFit: clone(input.travelerFit ?? {}),
     reason: input.reason == null ? null : String(input.reason).slice(0, 200),
     caveats: asArray(input.caveats).map((item) => String(item).slice(0, 500)).slice(0, 12),
@@ -623,6 +627,8 @@ function mobilityPlanningFingerprint(mobility: DynamicRecord): string {
     destination: mobility.destination,
     coverage: mobility.coverage,
     legs: mobility.legs,
+    itinerary: mobility.itinerary,
+    feasibility: mobility.feasibility,
     travelerFit: mobility.travelerFit,
     reason: mobility.reason,
   });

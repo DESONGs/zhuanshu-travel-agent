@@ -30,6 +30,7 @@ test("AMap mobility turns selected places into bounded walking, transit and taxi
   const mobility = normalizeTripMobility(await provider.planMobility({
     brief: { destination: "上海", dates: "2026-10-03 至 2026-10-07" },
     travelers: [{ travelerId: "traveler_father", displayName: "父亲", careNeeds: { mobility: { maxContinuousWalkMeters: 800, maxTransfers: 1, avoidStairs: true } } }],
+    targetAreas: ["人民广场"],
     selectedNodes: [
       { nodeId: "stay_people_square", domain: "stay", title: "人民广场酒店", selected: true, location: { citycode: "021", coordinates: { longitude: 121.473701, latitude: 31.230416 } }, operability: { providerPoiId: "stay-1" } },
       { nodeId: "play_pearl", domain: "play", title: "东方明珠", selected: true, location: { citycode: "021", coordinates: { longitude: 121.499809, latitude: 31.239666 } }, operability: { providerPoiId: "play-1" } },
@@ -43,6 +44,8 @@ test("AMap mobility turns selected places into bounded walking, transit and taxi
   assert.deepEqual(mobility.travelerFit.constrainedTravelerIds, ["traveler_father"]);
   assert.equal(mobility.travelerFit.maxContinuousWalkMeters, 800);
   assert.equal(mobility.travelerFit.accessibilityEvidence, "partial");
+  assert.equal(mobility.travelerFit.stayAnchorFits[0].area, "人民广场");
+  assert.ok(mobility.travelerFit.stayAnchorFits[0].alternatives.some((item) => item.mode === "transit"));
   assert.equal(mobility.legs[0].alternatives.find((item) => item.mode === "transit").realTimeArrival, false);
   const transit = mobility.legs[0].alternatives.find((item) => item.mode === "transit");
   assert.deepEqual(transit.steps[0].walkType, { code: "9", kind: "elevator", label: "直梯" });

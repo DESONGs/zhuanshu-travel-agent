@@ -180,6 +180,17 @@ test("criteria fusion filters hotel entities from food and unrelated areas or at
   assert.equal(output.caveats.some((item) => item.includes("不能单独证明") && item.includes("真实到访反馈")), true);
 });
 
+test("long-tail food ranking demotes low-rated commercial food halls", async () => {
+  const criteria = buildTravelResearchCriteria({ brief: { destination: "上海", lodgingPreference: "人民广场", foodPreferences: ["本帮菜", "不太大众的小店"] }, domains: ["food"], question: "想吃本帮菜和不太大众的小店" });
+  const output = await new CompositeTravelResearchProvider({ providers: [{ status: "configured", research: async () => result("amap", { play: [], stay: [], transport: [], food: [
+    { domain: "food", title: "沪上商业美食城购物中心店", summary: "餐饮服务", location: { address: "人民广场" }, operability: { provider: "amap_web_service", type: "餐饮服务;美食城", typeCode: "050100", rating: "3.7" } },
+    { domain: "food", title: "老上海本帮菜馆", summary: "本帮菜", location: { address: "人民广场附近" }, operability: { provider: "amap_web_service", type: "餐饮服务;中餐厅", typeCode: "050100", rating: "4.6" } },
+  ] }, "https://lbs.amap.com/") }] }).research({ domains: ["food"], criteria });
+
+  assert.equal(output.byDomain.food[0].title, "老上海本帮菜馆");
+  assert.equal(output.byDomain.food[0].operability.longTailEvidence, "not_verified_by_current_sources");
+});
+
 test("transport source status distinguishes verified empty, unavailable and rate limited", async () => {
   const empty = await new CompositeTravelResearchProvider({ providers: [
     { status: "configured", research: async () => result("ota_empty", { play: [], food: [], stay: [], transport: [] }, "https://example.com/empty") },

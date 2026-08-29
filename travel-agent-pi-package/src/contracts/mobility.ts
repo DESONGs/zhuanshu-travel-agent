@@ -1,4 +1,4 @@
-import { MobilityObservationSchema, assertSchema, type MobilityLeg, type MobilityObservation } from "./index.js";
+import { MobilityObservationSchema, TripFeasibilitySchema, TripItinerarySchema, assertSchema, type MobilityLeg, type MobilityObservation } from "./index.js";
 
 const MODES = new Set(["walk", "transit", "taxi"]);
 const STATUSES = new Set(["completed", "partial", "needs_context", "provider_unavailable"]);
@@ -112,8 +112,14 @@ function place(input: unknown, field: string) {
   const value = objectValue(input, field);
   return {
     nodeId: text(value.nodeId, `${field}.nodeId`, { optional: true, max: 128 }),
+    stopId: text(value.stopId, `${field}.stopId`, { optional: true, max: 128 }),
     label: text(value.label, `${field}.label`, { max: 200 }),
     coordinates: coordinates(value.coordinates, `${field}.coordinates`),
+    dayIndex: nonNegativeNumber(value.dayIndex, `${field}.dayIndex`, { optional: true }),
+    date: text(value.date, `${field}.date`, { optional: true, max: 10 }),
+    role: text(value.role, `${field}.role`, { optional: true, max: 40 }),
+    startAt: timestamp(value.startAt, `${field}.startAt`, { optional: true }),
+    endAt: timestamp(value.endAt, `${field}.endAt`, { optional: true }),
   };
 }
 
@@ -226,6 +232,25 @@ function travelerFit(input: unknown) {
   if (!value) return { constrainedTravelerIds: [], maxContinuousWalkMeters: null, maxTransfers: null, stepFreeRequired: false, avoidStairs: false, accessibilityEvidence: "not_required" };
   const evidence = typeof value.accessibilityEvidence === "string" && ["verified", "partial", "unverified", "not_required"].includes(value.accessibilityEvidence)
     ? value.accessibilityEvidence : (value.stepFreeRequired || value.avoidStairs ? "unverified" : "not_required");
+  const stayAnchorFits = Array.isArray(value.stayAnchorFits) ? value.stayAnchorFits.slice(0, 2).map((item, index) => {
+    const fit = objectValue(item, `travelerFit.stayAnchorFits.${index}`);
+    return {
+      area: text(fit.area, `travelerFit.stayAnchorFits.${index}.area`, { max: 80 }),
+      recommendedMode: text(fit.recommendedMode, `travelerFit.stayAnchorFits.${index}.recommendedMode`, { max: 20 }),
+      checkedAt: timestamp(fit.checkedAt, `travelerFit.stayAnchorFits.${index}.checkedAt`, { optional: true }),
+      source: text(fit.source, `travelerFit.stayAnchorFits.${index}.source`, { max: 120 }),
+      alternatives: Array.isArray(fit.alternatives) ? fit.alternatives.slice(0, 3).map((alternativeValue, alternativeIndex) => {
+        const candidate = objectValue(alternativeValue, `travelerFit.stayAnchorFits.${index}.alternatives.${alternativeIndex}`);
+        return {
+          mode: text(candidate.mode, `travelerFit.stayAnchorFits.${index}.alternatives.${alternativeIndex}.mode`, { max: 20 }),
+          totalMinutes: nonNegativeNumber(candidate.totalMinutes, `travelerFit.stayAnchorFits.${index}.alternatives.${alternativeIndex}.totalMinutes`),
+          walkingMeters: nonNegativeNumber(candidate.walkingMeters, `travelerFit.stayAnchorFits.${index}.alternatives.${alternativeIndex}.walkingMeters`, { optional: true }),
+          transfers: nonNegativeNumber(candidate.transfers, `travelerFit.stayAnchorFits.${index}.alternatives.${alternativeIndex}.transfers`, { optional: true }),
+          estimatedFareCny: nonNegativeNumber(candidate.estimatedFareCny, `travelerFit.stayAnchorFits.${index}.alternatives.${alternativeIndex}.estimatedFareCny`, { optional: true }),
+        };
+      }) : [],
+    };
+  }) : [];
   return {
     constrainedTravelerIds: Array.isArray(value.constrainedTravelerIds) ? [...new Set(value.constrainedTravelerIds.map(String))].slice(0, 12) : [],
     maxContinuousWalkMeters: nonNegativeNumber(value.maxContinuousWalkMeters, "travelerFit.maxContinuousWalkMeters", { optional: true }),
@@ -234,7 +259,7 @@ function travelerFit(input: unknown) {
     planningTransferTarget: nonNegativeNumber(value.planningTransferTarget, "travelerFit.planningTransferTarget", { optional: true }),
     walkingTargetSource: text(value.walkingTargetSource, "travelerFit.walkingTargetSource", { optional: true, max: 80 }),
     transferTargetSource: text(value.transferTargetSource, "travelerFit.transferTargetSource", { optional: true, max: 80 }),
-    stepFreeRequired: value.stepFreeRequired === true, avoidStairs: value.avoidStairs === true, accessibilityEvidence: evidence,
+    stepFreeRequired: value.stepFreeRequired === true, avoidStairs: value.avoidStairs === true, accessibilityEvidence: evidence, stayAnchorFits,
   };
 }
 
@@ -254,9 +279,14 @@ export function normalizeTripMobility(input: unknown): MobilityObservation {
     coverage: {
       routedNodeIds: Array.isArray(coverage?.routedNodeIds) ? [...new Set(coverage.routedNodeIds.map(String))].slice(0, 24) : [],
       unresolvedNodeIds: Array.isArray(coverage?.unresolvedNodeIds) ? [...new Set(coverage.unresolvedNodeIds.map(String))].slice(0, 24) : [],
+      routedStopIds: Array.isArray(coverage?.routedStopIds) ? [...new Set(coverage.routedStopIds.map(String))].slice(0, 32) : [],
+      unresolvedStopIds: Array.isArray(coverage?.unresolvedStopIds) ? [...new Set(coverage.unresolvedStopIds.map(String))].slice(0, 32) : [],
       unscheduled: coverage?.unscheduled !== false,
     },
-    legs, travelerFit: travelerFit(value.travelerFit), reason: text(value.reason, "reason", { optional: true, max: 200 }),
+    legs,
+    itinerary: value.itinerary ? assertSchema(TripItinerarySchema, value.itinerary, "invalid_trip_itinerary") : null,
+    feasibility: value.feasibility ? assertSchema(TripFeasibilitySchema, value.feasibility, "invalid_trip_feasibility") : null,
+    travelerFit: travelerFit(value.travelerFit), reason: text(value.reason, "reason", { optional: true, max: 200 }),
     caveats: Array.isArray(value.caveats) ? value.caveats.map((item) => String(item).trim().slice(0, 500)).filter(Boolean).slice(0, 12) : [],
     sourceDocumentation: safeAmapUrl(value.sourceDocumentation, "sourceDocumentation"), fabricatedResults: false,
   }, "invalid_trip_mobility");

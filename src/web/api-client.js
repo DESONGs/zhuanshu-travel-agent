@@ -50,6 +50,6 @@ export const api = {
   previewMobility: (tripId, baseRevision, selections, signal = undefined) => request(`/api/trips/${encodeURIComponent(tripId)}/mobility/preview`, { method: "POST", body: { baseRevision, selections }, signal }),
   submitFeedback: (tripId, input) => request(`/api/trips/${encodeURIComponent(tripId)}/feedback`, { method: "POST", body: input }),
   propose: (tripId, proposal) => request(`/api/trips/${encodeURIComponent(tripId)}/proposals`, { method: "POST", body: { proposal } }),
-  accept: (tripId, proposalId, selections = undefined, partial = false) => request(`/api/trips/${encodeURIComponent(tripId)}/proposals/${encodeURIComponent(proposalId)}/accept`, { method: "POST", body: { ...(selections ? { selections } : {}), ...(partial ? { partial: true } : {}) } }),
+  accept: (tripId, proposalId, selections = undefined, partial = false, previewId = undefined, baseRevision = undefined) => request(`/api/trips/${encodeURIComponent(tripId)}/proposals/${encodeURIComponent(proposalId)}/accept`, { method: "POST", body: { ...(selections ? { selections } : {}), ...(partial ? { partial: true } : {}), ...(previewId ? { previewId } : {}), ...(baseRevision != null ? { baseRevision } : {}) } }),
   reject: (tripId, proposalId) => request(`/api/trips/${encodeURIComponent(tripId)}/proposals/${encodeURIComponent(proposalId)}/reject`, { method: "POST" }),
 };

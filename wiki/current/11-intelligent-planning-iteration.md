@@ -254,6 +254,7 @@ V3 前端方案（`wiki/research/2026-08-29-ui-component-sources-and-first-princ
 - 生成中的旧按秒阶段文案已移除。完成后 AgentProgressRail 只渲染真实 activity；2026-08-29 浏览器自然请求实际显示 `save_trip_understanding`、`research_trip_options`，预算追问实际显示 `get_trip_plan_view`、`estimate_costs`。分析 lane 失败时仍显示 failed/partial，不冒充完整。
 - A 阶段没有为清单完整而抽取无消费者的 Button/Badge 包装；只落地并迁移当前确有风险的 `OverlaySurface`，统一 Place Detail、History Drawer、Delete Dialog 的 Escape、focus trap、焦点恢复、body scroll lock 与全工作区 inert。
 - 微信/支付宝小程序已同步抵达优先顺序、六候选、价格性质、分域预算和局部确认，不再强迫四域一次确认；仍使用平台原生 Map 与轻量 CSS，不复制 Web 动画运行时。
-- **C / D 尚未全部关闭。** 已有多点路线、移动 Sheet 手势、地图缩放和小程序信息等价；全程出行总账、`check_plan` 主动补缺、按天地图切换、执行事件、租车判断、四端真机与真实 OAuth 仍按既有上线门继续，不能从本次 Web QA 推断完成。
+- **A0 行程正确性门禁已关闭。** 新增派生的 Day/Date/Role itinerary 与 feasibility；城际目的地节点使用 `arrivalAt`，柔性时间窗按真实移动耗时顺延，缺路、固定时间逆序、已知营业冲突和楼梯硬冲突会在提交前阻断。确认复用同 revision preview，不重复请求路线。
+- **C / D 尚未全部关闭。** A0 已提前交付按天数据基础、路线模式比较和可执行性缺口；全程出行策略总账、执行事件、租车判断、四端真机与真实 OAuth 仍按既有上线门继续，不能从本次 Web QA 推断完成。
 
-验证：严格 TypeScript、156 项完整测试、Web production build、微信/支付宝 native contract 均通过；真实浏览器完成 1440、1180、900、393 视口，以及“自然语言请求 → 6 候选/价格 → 分域预算 → 试排 → 多点地图 → activity”路径。复杂四域语义 fan-out 本次仍为 failed coverage，诚实降级生效，但不能称为稳定完整分析。
+验证：严格 TypeScript、164 项完整测试、Web production build、微信/支付宝 native contract 均通过；真实浏览器完成 1440、1152（125% 等效）、393 视口，以及“自然语言请求 → 航班/高铁 → 分域预算 → Day 1/2 多点路线 → 模式切换 → feasibility gate → 确认”路径。复杂四域语义 fan-out 仍可能 partial，诚实降级生效，但不能称为稳定完整分析。

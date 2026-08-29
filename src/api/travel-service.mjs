@@ -3,9 +3,12 @@ import {
   acceptStagedTripPatch,
   applyMobilityObservation,
   applyWeatherObservation,
+  buildItineraryDraft,
   commitTripPatch,
   createTripControlState,
   estimateTripBudget,
+  finalizeItinerarySchedule,
+  itineraryPreviewId,
   recordBookingConfirmation,
   recordTripFeedback,
   rejectStagedTripPatch,
@@ -135,11 +138,28 @@ function readinessView(state) {
 }
 
 function nodeScheduleValue(node) {
-  return node.time ?? node.operability?.departureAt ?? node.operability?.arrivalAt ?? null;
+  if (node.domain === "transport" && ["intercity_inventory", "user_confirmed_arrival"].includes(node.operability?.mobilityRole)) {
+    return node.operability?.arrivalAt ?? node.operability?.planningWindow?.endAt ?? node.time ?? null;
+  }
+  return node.operability?.planningWindow?.startAt ?? node.time ?? node.operability?.arrivalAt ?? node.operability?.departureAt ?? null;
 }
 
 function todayView(state, { clock } = {}) {
-  const selected = state.nodes.filter((node) => node.selected).map((node) => {
+  const selectedNodes = state.nodes.filter((node) => node.selected);
+  const nodesById = new Map(selectedNodes.map((node) => [node.nodeId, node]));
+  const itineraryStops = state.environment?.mobility?.itinerary?.stops ?? [];
+  const selected = itineraryStops.length ? itineraryStops.map((stop) => {
+    const node = nodesById.get(stop.nodeId);
+    const timestamp = stop.startAt ? new Date(stop.startAt).getTime() : Number.NaN;
+    const roleLabel = { intercity_arrival: "抵达", stay_check_in: "入住", stay_departure: "从住宿出发", stay_return: "返回住宿", meal: "用餐", activity: "游玩", local_transport: "市内移动" }[stop.role] ?? "安排";
+    return {
+      taskId: `task_${stop.stopId}`, stopId: stop.stopId, nodeId: stop.nodeId, domain: stop.domain,
+      title: stop.role === "intercity_arrival" ? stop.title : node?.title ?? stop.title,
+      role: stop.role, roleLabel, dayIndex: stop.dayIndex, date: stop.date, scheduledAt: stop.startAt,
+      timestamp: Number.isFinite(timestamp) ? timestamp : null, summary: node?.summary ?? "", location: node?.location ?? null,
+      media: node?.media ?? [], sourceStatus: node?.sourceStatus ?? "unverified", foreignGuestEligible: node?.foreignGuestEligible ?? null, operability: node?.operability ?? {},
+    };
+  }) : selectedNodes.map((node) => {
     const scheduledAt = nodeScheduleValue(node);
     const timestamp = scheduledAt ? new Date(scheduledAt).getTime() : Number.NaN;
     return {
@@ -156,7 +176,8 @@ function todayView(state, { clock } = {}) {
       foreignGuestEligible: node.foreignGuestEligible,
       operability: node.operability ?? {},
     };
-  }).sort((left, right) => {
+  });
+  selected.sort((left, right) => {
     if (left.timestamp != null && right.timestamp != null) return left.timestamp - right.timestamp;
     if (left.timestamp != null) return -1;
     if (right.timestamp != null) return 1;
@@ -169,8 +190,8 @@ function todayView(state, { clock } = {}) {
   const nextTask = currentIndex >= 0 ? selected[currentIndex + 1] ?? null : null;
   const route = currentTask
     ? (state.environment?.mobility?.legs ?? []).find((leg) => nextTask
-      ? leg.origin?.nodeId === currentTask.nodeId && leg.destination?.nodeId === nextTask.nodeId
-      : leg.origin?.nodeId === currentTask.nodeId || leg.destination?.nodeId === currentTask.nodeId) ?? null
+      ? (currentTask.stopId && nextTask.stopId ? leg.origin?.stopId === currentTask.stopId && leg.destination?.stopId === nextTask.stopId : leg.origin?.nodeId === currentTask.nodeId && leg.destination?.nodeId === nextTask.nodeId)
+      : currentTask.stopId ? leg.origin?.stopId === currentTask.stopId || leg.destination?.stopId === currentTask.stopId : leg.origin?.nodeId === currentTask.nodeId || leg.destination?.nodeId === currentTask.nodeId) ?? null
     : null;
   const readiness = readinessView(state);
   return {
@@ -201,6 +222,8 @@ function controlView(state, providerStatus = "provider_unavailable") {
     pendingProposals: state.pendingProposals.map(({ operations, ...proposal }) => ({ ...proposal, operationCount: operations.length })),
     weather: state.environment?.weather ?? null,
     mobility: state.environment?.mobility ?? null,
+    itinerary: state.environment?.mobility?.itinerary ?? null,
+    feasibility: state.environment?.mobility?.feasibility ?? null,
     readiness: readinessView(state),
     providerStatus,
   };
@@ -418,20 +441,28 @@ function linkedCandidates(byDomain, weather, criteria = null) {
     }
     if (domain === "transport") {
       const ordered = [...candidates].sort((left, right) => {
+        const fit = Number(right.operability?.researchFit?.score ?? 0) - Number(left.operability?.researchFit?.score ?? 0);
+        if (fit) return fit;
+        const availability = Number((right.operability?.availableSeats ?? -1) > 0) - Number((left.operability?.availableSeats ?? -1) > 0)
+          || Number(left.operability?.availableSeats === 0) - Number(right.operability?.availableSeats === 0);
+        if (availability) return availability;
         const leftCost = Number(left.cost) > 0 ? Number(left.cost) : Number.POSITIVE_INFINITY;
         const rightCost = Number(right.cost) > 0 ? Number(right.cost) : Number.POSITIVE_INFINITY;
         return leftCost - rightCost;
       });
       const intercity = ordered.filter((candidate) => candidate.operability?.mobilityRole === "intercity_inventory" || ["FLIGHT", "TRAIN"].includes(candidate.operability?.transportType));
-      if (criteria?.intercityIntent === "flight") return [domain, intercity.filter((candidate) => candidate.operability?.transportType === "FLIGHT").slice(0, 6)];
-      if (criteria?.intercityIntent === "train") return [domain, intercity.filter((candidate) => candidate.operability?.transportType === "TRAIN").slice(0, 6)];
+      const executable = intercity.filter((candidate) => candidate.operability?.availableSeats !== 0 && candidate.operability?.inventoryUsability !== "unavailable");
+      const highSpeedRequested = (criteria?.byDomain?.transport?.preferenceHints ?? []).includes("high_speed_train");
+      const eligible = highSpeedRequested ? executable.filter((candidate) => candidate.operability?.transportType === "FLIGHT" || candidate.operability?.highSpeed === true) : executable;
+      if (criteria?.intercityIntent === "flight") return [domain, eligible.filter((candidate) => candidate.operability?.transportType === "FLIGHT").slice(0, 6)];
+      if (criteria?.intercityIntent === "train") return [domain, eligible.filter((candidate) => candidate.operability?.transportType === "TRAIN").slice(0, 6)];
       if (criteria?.intercityIntent === "flexible") {
-        if (!intercity.length) return [domain, []];
-        const representative = ["FLIGHT", "TRAIN"].flatMap((type) => intercity.find((candidate) => candidate.operability?.transportType === type) ?? []);
-        return [domain, [...representative, ...intercity.filter((candidate) => !representative.includes(candidate))].filter((candidate, index, items) => items.indexOf(candidate) === index).slice(0, 6)];
+        if (!eligible.length) return [domain, []];
+        const representative = ["FLIGHT", "TRAIN"].flatMap((type) => eligible.find((candidate) => candidate.operability?.transportType === type) ?? []);
+        return [domain, [...representative, ...eligible.filter((candidate) => !representative.includes(candidate))].filter((candidate, index, items) => items.indexOf(candidate) === index).slice(0, 6)];
       }
-      const representative = ["FLIGHT", "TRAIN"].flatMap((type) => ordered.find((candidate) => candidate.operability?.transportType === type) ?? []);
-      const balanced = [...representative, ...ordered.filter((candidate) => !representative.includes(candidate))]
+      const representative = ["FLIGHT", "TRAIN"].flatMap((type) => eligible.find((candidate) => candidate.operability?.transportType === type) ?? []);
+      const balanced = [...representative, ...eligible.filter((candidate) => !representative.includes(candidate))]
         .filter((candidate, index, items) => items.indexOf(candidate) === index);
       return [domain, balanced.slice(0, 6)];
     }
@@ -440,7 +471,14 @@ function linkedCandidates(byDomain, weather, criteria = null) {
 }
 
 function isoTripDates(value) {
-  return [...String(value ?? "").matchAll(/\b(20\d{2}-\d{2}-\d{2})\b/g)].map((match) => match[1]);
+  const matches = [...String(value ?? "").matchAll(/\b(20\d{2}-\d{2}-\d{2})\b/g)].map((match) => match[1]);
+  if (!matches.length) return [];
+  const start = new Date(`${matches[0]}T00:00:00.000Z`);
+  const end = new Date(`${matches[1] ?? matches[0]}T00:00:00.000Z`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) return [];
+  const dates = [];
+  for (let cursor = start; cursor <= end && dates.length < 60; cursor = new Date(cursor.getTime() + 86_400_000)) dates.push(cursor.toISOString().slice(0, 10));
+  return dates;
 }
 
 function normalizedScheduleAt(value, fallbackDate = null) {
@@ -555,8 +593,23 @@ function candidateSourceLabel(candidate, fallback = "旅行资料来源") {
   return resolved.length ? resolved.join("、") : fallback;
 }
 
+function conciseProviderSummary(candidate) {
+  const raw = String(candidate?.summary ?? "").replace(/\s+/g, " ").trim();
+  if (!raw) return "资料说明仍待补充。";
+  const promotional = /必打卡|网红|震撼|超值|奢华|豪华|顶级|极致|名优|吸引着|正如|人们常说|遗憾|惬意|一览无余|尽收眼底|一生必去|不容错过|爆款|种草|宝藏/u;
+  const facts = [...new Set(raw.split(/\s*[·。；;]\s*/u).map((item) => item.trim()).filter((item) => item && !promotional.test(item)))];
+  const factLimit = candidate?.domain === "play" ? 3 : 5;
+  return (facts.length ? facts.slice(0, factLimit).join(" · ") : raw).slice(0, 360);
+}
+
 function buildResearchProposal(state, providerResult, criteria) {
   const byDomain = linkedCandidates(providerResult.byDomain ?? {}, providerResult.weather, criteria);
+  const highSpeedRequested = (criteria?.byDomain?.transport?.preferenceHints ?? []).includes("high_speed_train");
+  const highSpeedReturned = byDomain.transport.some((candidate) => candidate.operability?.transportType === "TRAIN" && candidate.operability?.highSpeed === true);
+  const transportNotices = [
+    ...(highSpeedRequested && !highSpeedReturned ? ["本次已查询来源没有返回可核验且可用的高铁候选；这不代表市场没有车次或余票，建议在官方 12306 再核验。"] : []),
+    ...((providerResult.byDomain?.transport ?? []).some((candidate) => candidate.operability?.availableSeats === 0) ? ["无票班次只作为本次库存对照，不进入可采用候选。"] : []),
+  ];
   const proposalSuffix = providerResult.analysis?.runId ? String(providerResult.analysis.runId).replace(/[^A-Za-z0-9_.:-]/g, "_").slice(-24) : randomUUID().slice(0, 8);
   const candidateEntries = FOUR_DOMAINS.flatMap((domain) => byDomain[domain].map((candidate, index) => {
     const nodeId = `${candidate.candidateId}_${proposalSuffix}_${index + 1}`.slice(0, 128);
@@ -577,7 +630,7 @@ function buildResearchProposal(state, providerResult, criteria) {
       nodeId: entry.nodeId,
       domain: entry.domain,
       title: entry.candidate.title,
-      summary: entry.candidate.summary,
+      summary: conciseProviderSummary(entry.candidate),
       selected: entry.selected,
       status: "candidate",
       sourceStatus: providerResult.fixtureOnly ? "contract_fixture" : "verified_provider",
@@ -596,9 +649,10 @@ function buildResearchProposal(state, providerResult, criteria) {
       foreignGuestEligible: null,
       spoilerLevel: "low",
       impactsNodeIds: [],
-      time: window?.startAt ?? null,
+      time: entry.domain === "transport" ? window?.endAt ?? null : window?.startAt ?? null,
       operability: {
         ...entry.candidate.operability,
+        providerSummary: String(entry.candidate.summary ?? "").slice(0, 1_000),
         checkedAt: entry.candidate.checkedAt,
         sourceLabel: candidateSourceLabel(entry.candidate, providerResult.providerLabel),
         researchDepth: entry.candidate.operability?.researchDepth ?? "provider_search",
@@ -648,6 +702,7 @@ function buildResearchProposal(state, providerResult, criteria) {
     caveats: [
       ...(providerResult.fixtureOnly ? ["这是界面与合同 QA Fixture，不代表真实 Provider 已接线。"] : []),
       ...(providerResult.caveats ?? []),
+      ...transportNotices,
       ...(!weatherVerified ? ["天气尚未核验完成；户外项目、步行换乘、住宿衔接和餐饮动线都需要在取得对应日期预报后再确认。"] : []),
       ...(providerResult.weather?.planningImpact?.active ? ["当前方案已把天气作为跨吃住行玩的约束；预报更新后需要重新核验受影响部分。"] : []),
       "价格、房态、班次、排队和营业状态仍需在预订或出发前再次核验。",
@@ -698,6 +753,10 @@ function placeSourceRefs(state) {
   return [...new Set(nodes.flatMap((node) => Array.isArray(node?.sourceRefs) ? node.sourceRefs : []).filter(Boolean))];
 }
 
+function stayTargetAreas(state) {
+  return [...new Set(state.pendingProposals.flatMap((proposal) => proposal.researchCriteria?.byDomain?.stay?.targetAreas ?? []).map(String).filter(Boolean))].slice(0, 2);
+}
+
 function mobilityTotals(mobility) {
   const recommended = (mobility?.legs ?? []).map((leg) => leg.alternatives?.find((alternative) => alternative.mode === leg.recommendedMode)).filter(Boolean);
   return {
@@ -709,20 +768,45 @@ function mobilityTotals(mobility) {
   };
 }
 
-function previewNodeView(node) {
+function mobilityPlaceForNode(mobility, nodeId) {
+  return (mobility?.legs ?? []).flatMap((leg) => [leg.origin, leg.destination])
+    .find((place) => place?.nodeId === nodeId && Number.isFinite(place?.coordinates?.longitude) && Number.isFinite(place?.coordinates?.latitude)) ?? null;
+}
+
+function previewNodeView(node, mobility = null) {
+  const mobilityPlace = mobilityPlaceForNode(mobility, node.nodeId);
+  const location = mobilityPlace && !Number.isFinite(node.location?.coordinates?.longitude)
+    ? { ...(node.location && typeof node.location === "object" ? node.location : {}), label: node.location?.label ?? mobilityPlace.label, coordinates: mobilityPlace.coordinates }
+    : node.location ?? null;
   return {
     nodeId: node.nodeId,
     domain: node.domain,
     title: node.title,
     summary: node.summary,
     time: node.time ?? null,
-    location: node.location ?? null,
+    location,
     media: node.media ?? [],
     cost: Number(node.cost ?? 0),
     price: node.price ?? null,
     sourceStatus: node.sourceStatus ?? "unverified",
     operability: node.operability ?? {},
   };
+}
+
+function mobilityWithItinerary(observation, draft) {
+  const base = normalizeTripMobility({
+    ...observation,
+    itinerary: draft.itinerary,
+    feasibility: draft.feasibility,
+    coverage: { ...(observation?.coverage ?? {}), unscheduled: !draft.itinerary },
+  });
+  const finalized = finalizeItinerarySchedule(draft, base, base.checkedAt);
+  return normalizeTripMobility({
+    ...base,
+    itinerary: finalized.itinerary,
+    feasibility: finalized.feasibility,
+    coverage: { ...base.coverage, unscheduled: !finalized.itinerary },
+  });
 }
 
 export class TravelService {
@@ -733,6 +817,7 @@ export class TravelService {
     this.analysisFanout = analysisFanout;
     this.analysisRunCoordinator = analysisRunCoordinator;
     this.analysisDegradedReason = analysisDegradedReason;
+    this.mobilityPreviewCache = new Map();
   }
 
   providerStatus() {
@@ -960,36 +1045,46 @@ export class TravelService {
       chosen.push(...state.nodes.filter((node) => node.selected && node.domain === domain));
     }
     const selectedNodes = [...new Map(chosen.map((node) => [node.nodeId, { ...node, selected: true }])).values()];
-    let mobility;
+    const itineraryDraft = buildItineraryDraft(state.brief, selectedNodes);
+    let observation;
     if (selectedNodes.length < 2) {
-      mobility = normalizeTripMobility({ schemaVersion: "trip-mobility-v1", status: "needs_context", destination: state.brief?.destination ?? null, source: "amap_routes_v5", reason: "select_arrival_and_at_least_one_place", fabricatedResults: false });
+      observation = { schemaVersion: "trip-mobility-v1", status: "needs_context", destination: state.brief?.destination ?? null, source: "amap_routes_v5", reason: "select_arrival_and_at_least_one_place", fabricatedResults: false };
     } else if (!this.researchProvider || typeof this.researchProvider.planMobility !== "function") {
-      mobility = normalizeTripMobility({ schemaVersion: "trip-mobility-v1", status: "provider_unavailable", destination: state.brief?.destination ?? null, source: "amap_routes_v5", reason: "amap_routes_provider_not_configured", fabricatedResults: false });
+      observation = { schemaVersion: "trip-mobility-v1", status: "provider_unavailable", destination: state.brief?.destination ?? null, source: "amap_routes_v5", reason: "amap_routes_provider_not_configured", fabricatedResults: false };
     } else {
       try {
-        mobility = normalizeTripMobility(await this.researchProvider.planMobility({ tripId: state.tripId, brief: state.brief, travelers: state.travelers, selectedNodes }));
+        observation = await this.researchProvider.planMobility({ tripId: state.tripId, brief: state.brief, travelers: state.travelers, selectedNodes, itineraryStops: itineraryDraft.itinerary?.stops ?? [], targetAreas: stayTargetAreas(state), signal: input.signal ?? null });
       } catch (error) {
-        mobility = normalizeTripMobility({ schemaVersion: "trip-mobility-v1", status: "provider_unavailable", destination: state.brief?.destination ?? null, source: "amap_routes_v5", reason: error?.code ?? "SOURCE_UNAVAILABLE", fabricatedResults: false });
+        observation = { schemaVersion: "trip-mobility-v1", status: "provider_unavailable", destination: state.brief?.destination ?? null, source: "amap_routes_v5", reason: error?.code ?? "SOURCE_UNAVAILABLE", fabricatedResults: false };
       }
     }
+    const mobility = mobilityWithItinerary(observation, itineraryDraft);
+    const itineraryOrder = new Map((mobility.itinerary?.stops ?? []).map((stop, index) => [stop.nodeId, index]));
     const nodesBySchedule = [...selectedNodes].sort((left, right) => {
+      const order = (itineraryOrder.get(left.nodeId) ?? Number.MAX_SAFE_INTEGER) - (itineraryOrder.get(right.nodeId) ?? Number.MAX_SAFE_INTEGER);
+      if (order) return order;
       const leftValue = new Date(nodeScheduleValue(left) ?? 0).getTime();
       const rightValue = new Date(nodeScheduleValue(right) ?? 0).getTime();
       return (Number.isFinite(leftValue) ? leftValue : Number.MAX_SAFE_INTEGER) - (Number.isFinite(rightValue) ? rightValue : Number.MAX_SAFE_INTEGER);
     });
     const totals = mobilityTotals(mobility);
-    const baseline = mobilityTotals(state.environment?.mobility);
+    const baselineMobility = state.environment?.mobility;
+    const baselineAvailable = baselineMobility?.status === "completed" && baselineMobility?.feasibility?.canConfirm === true;
+    const baseline = baselineAvailable ? mobilityTotals(baselineMobility) : null;
     const previewBudget = estimateTripBudget({ ...state, nodes: selectedNodes });
     const baselineBudget = estimateTripBudget(state);
     const weather = state.environment?.weather ?? null;
-    return {
+    const previewResult = {
       schemaVersion: "trip-mobility-preview-v1",
       status: mobility.status,
       tripId: state.tripId,
       revision: state.revision,
       committed: false,
-      selectedNodes: nodesBySchedule.map(previewNodeView),
+      previewId: itineraryPreviewId({ tripId: state.tripId, revision: state.revision, selections, itinerary: mobility.itinerary, checkedAt: mobility.checkedAt }),
+      selectedNodes: nodesBySchedule.map((node) => previewNodeView(node, mobility)),
       mobility,
+      itinerary: mobility.itinerary,
+      feasibility: mobility.feasibility,
       impact: {
         stopCount: selectedNodes.length,
         estimatedDecisionCostCny: previewBudget.estimated,
@@ -1000,12 +1095,13 @@ export class TravelService {
           exceedsBudget: previewBudget.exceedsBudget,
         },
         route: totals,
-        deltaFromConfirmed: {
+        baseline: baselineAvailable ? { kind: "confirmed_plan", route: baseline } : { kind: "none", route: null },
+        deltaFromConfirmed: baseline ? {
           totalMinutes: totals.totalMinutes - baseline.totalMinutes,
           walkingMeters: totals.walkingMeters - baseline.walkingMeters,
           transfers: totals.transfers - baseline.transfers,
           estimatedFareCny: totals.estimatedFareCny - baseline.estimatedFareCny,
-        },
+        } : null,
         weather: weather ? {
           status: weather.status,
           coverage: weather.coverage,
@@ -1015,14 +1111,20 @@ export class TravelService {
           affectedDomains: weather.planningImpact?.affectedDomains ?? [],
           severity: weather.planningImpact?.severity ?? "none",
         } : null,
+        stayAnchorFits: mobility.travelerFit?.stayAnchorFits ?? [],
       },
       caveats: ["这是试选路线，不会修改已确认行程。", ...(mobility.caveats ?? [])],
       fabricatedResults: false,
     };
+    this.mobilityPreviewCache.set(previewResult.previewId, { tripId: state.tripId, revision: state.revision, selections: JSON.stringify(Object.entries(selections).sort(([left], [right]) => left.localeCompare(right))), preview: previewResult });
+    while (this.mobilityPreviewCache.size > 20) this.mobilityPreviewCache.delete(this.mobilityPreviewCache.keys().next().value);
+    return previewResult;
   }
 
   async refreshTripMobility(input) {
     const state = requireTrip(await this.store.get(input.tripId), input.tripId);
+    const selectedNodes = state.nodes.filter((node) => node.selected);
+    const itineraryDraft = buildItineraryDraft(state.brief, selectedNodes);
     let observation;
     if (!this.researchProvider || typeof this.researchProvider.planMobility !== "function") {
       observation = {
@@ -1039,7 +1141,9 @@ export class TravelService {
           tripId: state.tripId,
           brief: state.brief,
           travelers: state.travelers,
-          selectedNodes: state.nodes.filter((node) => node.selected),
+          selectedNodes,
+          itineraryStops: itineraryDraft.itinerary?.stops ?? [],
+          targetAreas: stayTargetAreas(state),
         });
       } catch (error) {
         observation = {
@@ -1052,11 +1156,11 @@ export class TravelService {
         };
       }
     }
-    const normalized = normalizeTripMobility({
+    const normalized = mobilityWithItinerary({
       ...observation,
       status: ["completed", "partial", "needs_context", "provider_unavailable"].includes(observation?.status) ? observation.status : "provider_unavailable",
       reason: ["completed", "partial"].includes(observation?.status) ? observation.reason : observation?.reason ?? observation?.status ?? "SOURCE_UNAVAILABLE",
-    });
+    }, itineraryDraft);
     const next = applyMobilityObservation(state, normalized, { clock: this.clock });
     const saved = await this.store.save(next, { expectedStorageVersion: state.storageVersion });
     return {
@@ -1343,8 +1447,28 @@ export class TravelService {
   async acceptTripChange(input) {
     validateRequest("accept_trip_change", input);
     const state = requireTrip(await this.store.get(input.tripId), input.tripId);
+    if (input.baseRevision != null && Number(input.baseRevision) !== state.revision) {
+      return { schemaVersion: "trip-commit-result-v1", status: "needs_rebase", tripId: state.tripId, revision: state.revision, validation: { ok: false, reason: "itinerary_preview_stale" } };
+    }
+    const hasSelections = input.selections && Object.values(input.selections).some(Boolean);
+    let preflight = null;
+    if (hasSelections) {
+      const selectionKey = JSON.stringify(Object.entries(input.selections).sort(([left], [right]) => left.localeCompare(right)));
+      const cached = input.previewId ? this.mobilityPreviewCache.get(input.previewId) : null;
+      const preview = cached?.tripId === state.tripId && cached.revision === state.revision && cached.selections === selectionKey
+        ? cached.preview
+        : await this.previewTripMobility({ tripId: input.tripId, baseRevision: state.revision, selections: input.selections });
+      preflight = preview;
+      if (preview.feasibility?.canConfirm !== true) {
+        return { schemaVersion: "trip-commit-result-v1", status: "rejected", tripId: state.tripId, revision: state.revision, validation: { ok: false, reason: "itinerary_not_executable" }, feasibility: preview.feasibility, previewId: preview.previewId };
+      }
+    }
     const result = acceptStagedTripPatch(state, input.proposalId, { clock: this.clock, selections: input.selections, partial: input.partial === true });
     if (result.status !== "committed") return result;
+    if (preflight?.mobility && preflight.feasibility?.canConfirm === true) {
+      result.state.environment = { ...result.state.environment, mobility: preflight.mobility, updatedAt: new Date(this.clock?.() ?? Date.now()).toISOString() };
+      result.qa = validateTripCoherence(result.state);
+    }
     const saved = await this.store.save(result.state, { expectedStorageVersion: state.storageVersion });
     const selectedNodeIds = Object.values(input.selections ?? {}).filter(Boolean);
     return {
@@ -1358,6 +1482,8 @@ export class TravelService {
       selectedNodes: saved.nodes.filter((node) => selectedNodeIds.includes(node.nodeId)).map((node) => ({ nodeId: node.nodeId, domain: node.domain, title: node.title })),
       openDomains: saved.openDecisions.filter((decision) => decision.status === "open").map((decision) => decision.domain),
       pendingProposalIds: saved.pendingProposals.map((proposal) => proposal.proposalId),
+      mobility: preflight?.mobility ?? null,
+      feasibility: preflight?.feasibility ?? null,
     };
   }
 

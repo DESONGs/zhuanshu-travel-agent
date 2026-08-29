@@ -224,6 +224,7 @@ function normalizeTransport(item, checkedAt, context = {}) {
   const providerRef = shortHash(`${transportNumbers}:${first.depDateTime}:${last.arrDateTime}`);
   const priceHint = text(item.ticketPrice ?? item.price, 40);
   const transportType = transportKind(first.transportType ?? first.marketingTransportName);
+  const highSpeed = transportType === "TRAIN" && /^[GCD]/i.test(transportNumbers);
   const placeKind = transportType === "FLIGHT" ? "airport" : "rail_station";
   const departureLabel = endpointLabel(first.depStationName, placeKind);
   const arrivalLabel = endpointLabel(last.arrStationName, placeKind);
@@ -246,6 +247,7 @@ function normalizeTransport(item, checkedAt, context = {}) {
       mobilityRole: "intercity_inventory",
       inventoryVerified: false,
       transportType,
+      highSpeed,
       serviceNumber: transportNumbers || null,
       carrier: text(first.marketingTransportName, 80) || null,
       departureCity: text(context.origin, 100) || null,

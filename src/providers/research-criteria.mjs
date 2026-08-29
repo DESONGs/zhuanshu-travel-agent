@@ -150,6 +150,9 @@ export function buildTravelResearchCriteria({ brief = {}, travelers = [], questi
   for (const domain of DOMAINS) byDomain[domain].hardConstraints = unique([...byDomain[domain].hardConstraints, ...travelerHints]);
 
   const arrival = arrivalCriteria(brief, question, input.arrival);
+  const transportCorpus = `${brief?.arrivalMode ?? ""} ${question ?? ""}`;
+  if (/高铁|动车/u.test(transportCorpus)) byDomain.transport.preferenceHints = unique([...byDomain.transport.preferenceHints, "high_speed_train"]);
+  if (/飞机|航班|机票/u.test(transportCorpus) && /高铁|动车/u.test(transportCorpus)) byDomain.transport.preferenceHints = unique([...byDomain.transport.preferenceHints, "compare_flight_high_speed_train"]);
   if (arrival.airport) byDomain.transport.namedEntities = unique([...byDomain.transport.namedEntities, [arrival.airport, arrival.terminal].filter(Boolean).join(" ")]);
   byDomain.transport.namedEntities = byDomain.transport.namedEntities.filter((item) => /机场|航站楼|火车站|高铁站|客运站|地铁站|码头/u.test(item));
   byDomain.transport.keywords = byDomain.transport.keywords.filter((item) => !/酒店|宾馆|民宿|停车场|停车点/u.test(item));

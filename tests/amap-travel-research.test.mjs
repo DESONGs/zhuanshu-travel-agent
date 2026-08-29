@@ -51,8 +51,11 @@ function fakeAmapFetch(url) {
     return Promise.resolve(new Response(Uint8Array.from([137, 80, 78, 71]), { status: 200, headers: { "content-type": "image/png" } }));
   }
   if (parsed.pathname === "/v3/geocode/geo") {
-    return Promise.resolve(new Response(JSON.stringify({ status: "1", info: "OK", infocode: "10000", geocodes: [{ city: "大理白族自治州", adcode: "532901", location: "100.170000,25.690000" }] }), { status: 200, headers: { "content-type": "application/json" } }));
+    return Promise.resolve(new Response(JSON.stringify({ status: "1", info: "OK", infocode: "10000", geocodes: [{ city: "大理白族自治州", citycode: "0872", adcode: "532901", location: "100.170000,25.690000" }] }), { status: 200, headers: { "content-type": "application/json" } }));
   }
+  if (parsed.pathname === "/v5/direction/transit/integrated") return Promise.resolve(new Response(JSON.stringify({ status: "1", info: "OK", infocode: "10000", route: { transits: [{ distance: "5000", walking_distance: "300", cost: { duration: "1800", transit_fee: "3" }, segments: [{ bus: { buslines: [{ name: "公交测试线", departure_stop: { name: "甲" }, arrival_stop: { name: "乙" }, duration: "1500", distance: "4500" }] } }] }] } }), { status: 200, headers: { "content-type": "application/json" } }));
+  if (parsed.pathname === "/v5/direction/driving") return Promise.resolve(new Response(JSON.stringify({ status: "1", info: "OK", infocode: "10000", route: { paths: [{ distance: "5000", cost: { duration: "900", taxi: "20" }, steps: [{ instruction: "驾车前往", step_distance: "5000", cost: { duration: "900" } }] }] } }), { status: 200, headers: { "content-type": "application/json" } }));
+  if (parsed.pathname === "/v5/direction/walking") return Promise.resolve(new Response(JSON.stringify({ status: "1", info: "OK", infocode: "10000", route: { paths: [{ distance: "1200", cost: { duration: "1200" }, steps: [{ instruction: "步行前往", step_distance: "1200", cost: { duration: "1200" } }] }] } }), { status: 200, headers: { "content-type": "application/json" } }));
   if (parsed.pathname === "/v3/weather/weatherInfo") {
     return Promise.resolve(new Response(JSON.stringify({ status: "1", info: "OK", infocode: "10000", forecasts: [{ city: "大理市", province: "云南", adcode: "532901", reporttime: "2026-08-14 11:00:00", casts: [
       { date: "2026-08-14", week: "5", dayweather: "中雨", nightweather: "小雨", daytemp: "26", nighttemp: "18", daywind: "东", nightwind: "东", daypower: "4", nightpower: "3" },
@@ -275,12 +278,13 @@ test("provider-backed research stages selectable linked candidates and promotes 
   assert.equal(proposal.byDomain.transport.length, 0, "AMap station POIs must not substitute for intercity inventory");
   const selections = Object.fromEntries(Object.entries(proposal.byDomain).filter(([, items]) => items.length).map(([domain, items]) => [domain, items.at(-1).nodeId]));
   const accepted = await service.acceptTripChange({ tripId: "trip_amap", proposalId: proposal.proposalId, selections });
-  assert.equal(accepted.status, "committed");
+  assert.equal(accepted.status, "committed", JSON.stringify({ validation: accepted.validation, feasibility: accepted.feasibility }));
   const after = await service.getTripPlanView("trip_amap");
   assert.equal(after.pendingProposals.length, 0);
   assert.equal(after.byDomain.food.find((node) => node.selected).nodeId, selections.food);
   const persisted = await store.get("trip_amap");
-  assert.deepEqual(after.qa.operabilityGaps, [{ domain: "transport", code: "city_mobility_unverified" }]);
+  assert.deepEqual(after.qa.operabilityGaps, []);
+  assert.equal(after.mobility.feasibility.canConfirm, true);
   assert.equal(persisted.evidence.claims.length, 6);
   assert.equal(persisted.evidence.contentItems.length, 6);
   assert.equal(persisted.evidence.claims.every((claim) => persisted.nodes.some((node) => node.nodeId === claim.nodeId)), true);

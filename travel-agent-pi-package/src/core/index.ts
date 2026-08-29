@@ -5,3 +5,4 @@ export * from "./trip-runtime.js";
 export * from "./trip-store.js";
 export * from "./trip-state-hydration.js";
 export * from "./travel-service.js";
+export * from "./itinerary-schedule.js";

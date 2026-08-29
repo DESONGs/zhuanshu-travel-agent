@@ -274,11 +274,19 @@ function candidateFit(candidate, domain, criteria) {
   const areaMatches = matchesAny(corpus, domainCriteria.targetAreas);
   const keywordMatches = matchesAny(corpus, domainCriteria.keywords);
   let score = namedMatches.length * 240 + areaMatches.length * 160 + keywordMatches.length * 35;
+  const longTailRequested = ["food", "play"].includes(domain)
+    && /小店|小众|不太大众|当地人|在地/u.test([...(domainCriteria.keywords ?? []), ...(domainCriteria.preferenceHints ?? [])].join(" "));
   if (candidate.operability?.provider === "amap_web_service") score += 20;
   if (domain === "stay" && candidate.operability?.inventoryVerified === true) score += 140;
   if (domain === "stay" && candidate.operability?.roomName) score += 40;
   if (domain === "food" && /本帮菜|上海本地菜|本地菜/u.test((domainCriteria.keywords ?? []).join(" "))) {
     if (/本帮|上海菜|老上海|沪味|沪菜/u.test(corpus)) score += 180;
+  }
+  if (domain === "food") {
+    const rating = Number(candidate.operability?.rating);
+    if (Number.isFinite(rating)) score += rating >= 4.5 ? 100 : rating >= 4.0 ? 30 : -220;
+    if (longTailRequested && /美食城|购物中心|商业广场|商场|连锁集合/u.test(corpus)) score -= 180;
+    if (longTailRequested && candidate.operability?.longTailEvidence === "verified") score += 220;
   }
   if (domain === "transport") {
     const type = candidate.operability?.transportType;
@@ -287,6 +295,11 @@ function candidateFit(candidate, domain, criteria) {
     if (criteria?.intercityIntent === "flight") score += type === "FLIGHT" ? 320 : -500;
     if (criteria?.intercityIntent === "train") score += type === "TRAIN" ? 320 : -500;
     if (criteria?.intercityIntent === "flexible" && ["FLIGHT", "TRAIN"].includes(type)) score += 220;
+    const highSpeedRequested = (domainCriteria.preferenceHints ?? []).includes("high_speed_train");
+    if (type === "TRAIN" && highSpeedRequested) score += candidate.operability?.highSpeed === true ? 320 : -500;
+    if (candidate.operability?.availableSeats === 0 || candidate.operability?.inventoryUsability === "unavailable") score -= 1_000;
+    const duration = Number(candidate.operability?.durationMinutes);
+    if (Number.isFinite(duration)) score -= Math.min(360, duration / 4);
     const requestedAirport = criteria?.arrival?.airport;
     const arrival = candidate.operability?.arrivalPlace;
     if (type === "FLIGHT" && requestedAirport) {

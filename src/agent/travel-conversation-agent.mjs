@@ -645,11 +645,11 @@ export class TravelConversationAgent {
         const match = explicitCandidateMatch(input, plan);
         if (match) {
           const committed = await this.travelService.acceptTripChange({ tripId: activeTripId, proposalId: match.proposal.proposalId, selections: { [match.domain]: match.candidate.nodeId }, partial: true });
-          if (committed.status !== "committed") return finishDeterministicTurn("这次没有完成候选确认，当前行程没有被修改。", [{ toolName: "confirm_trip_selection", status: committed.status ?? "rejected" }]);
+          if (committed.status !== "committed") return finishDeterministicTurn(`${committed.feasibility?.primaryBlocker ?? "这次没有完成候选确认"}，当前行程没有被修改。`, [{ toolName: "confirm_trip_selection", status: committed.status ?? "rejected" }]);
           let updatedPlan = await this.travelService.getTripPlanView(activeTripId);
-          let mobility = updatedPlan.mobility;
+          let mobility = committed.mobility ?? updatedPlan.mobility;
           const hasConfirmedArrival = (updatedPlan.byDomain?.transport ?? []).some((node) => node.selected && node.operability?.mobilityRole === "user_confirmed_arrival");
-          if (match.domain === "stay" && hasConfirmedArrival) {
+          if (match.domain === "stay" && hasConfirmedArrival && !["completed", "partial"].includes(mobility?.status)) {
             const refreshed = await this.travelService.refreshTripMobility({ tripId: activeTripId });
             mobility = refreshed.mobility;
             updatedPlan = await this.travelService.getTripPlanView(activeTripId);
@@ -897,7 +897,7 @@ export class TravelConversationAgent {
           if (!explicitArrivalConfirmationIntent(input)) return toolFailure("explicit_user_confirmation_required");
           const result = await this.travelService.confirmUserArrival({ tripId: activeTripId, ...params });
           if (result.status !== "committed") return toolResult(result, { status: result.status ?? "rejected", tripId: activeTripId });
-          let mobility = null;
+          let mobility = committed.mobility ?? null;
           latestPlanView = await this.travelService.getTripPlanView(activeTripId);
           if ((latestPlanView.byDomain?.stay ?? []).some((node) => node.selected)) {
             mobility = await this.travelService.refreshTripMobility({ tripId: activeTripId });
@@ -925,11 +925,11 @@ export class TravelConversationAgent {
           const candidate = proposal?.byDomain?.[params.domain]?.find((item) => item.nodeId === params.nodeId);
           if (!proposal || !candidate) return toolFailure("proposal_selection_not_found");
           const committed = await this.travelService.acceptTripChange({ tripId: activeTripId, proposalId: proposal.proposalId, selections: { [params.domain]: params.nodeId }, partial: true });
-          if (committed.status !== "committed") return toolResult(committed, { status: committed.status ?? "rejected", tripId: activeTripId });
+          if (committed.status !== "committed") return toolResult(committed, { status: committed.status ?? "rejected", tripId: activeTripId, blocker: committed.feasibility?.primaryBlocker ?? null });
           let mobility = null;
           latestPlanView = await this.travelService.getTripPlanView(activeTripId);
           const hasConfirmedArrival = (latestPlanView.byDomain?.transport ?? []).some((node) => node.selected && node.operability?.mobilityRole === "user_confirmed_arrival");
-          if (params.domain === "stay" && hasConfirmedArrival) {
+          if (params.domain === "stay" && hasConfirmedArrival && !["completed", "partial"].includes(mobility?.status)) {
             const refreshed = await this.travelService.refreshTripMobility({ tripId: activeTripId });
             mobility = refreshed.mobility;
             latestPlanView = await this.travelService.getTripPlanView(activeTripId);

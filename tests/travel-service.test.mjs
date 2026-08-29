@@ -124,6 +124,64 @@ test("golden path persists a staged four-domain proposal and commits only after 
   assert.deepEqual(stored.proposalHistory.map((item) => item.status), ["accepted", "accepted"]);
 });
 
+test("confirmation gate rejects an incomplete route without changing TripState", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "travel-feasibility-gate-"));
+  const service = new TravelService({
+    store: new TripStore({ rootDir }),
+    clock,
+    researchProvider: { status: "configured", planMobility: async () => ({ schemaVersion: "trip-mobility-v1", status: "partial", destination: "上海", source: "fixture", checkedAt: "2026-08-13T12:00:00Z", freshUntil: null, coverage: { routedNodeIds: [], unresolvedNodeIds: ["stay_hotel"], unscheduled: false }, legs: [], travelerFit: {}, reason: "route_missing", caveats: [], sourceDocumentation: null, fabricatedResults: false }) },
+  });
+  await service.createTrip({ tripId: "trip_feasibility_gate", brief: { destination: "上海", dates: "2026-10-15 至 2026-10-17" } });
+  const proposal = fourDomainProposal("trip_feasibility_gate");
+  proposal.operations.find((operation) => operation.nodeId === "transport_train").node.operability = { mobilityRole: "intercity_inventory", transportType: "FLIGHT", arrivalAt: "2026-10-15 21:20", arrivalPlace: { label: "浦东机场" } };
+  await service.proposeTripChange({ tripId: "trip_feasibility_gate", proposal });
+  const before = await service.getTripPlanView("trip_feasibility_gate");
+
+  const rejected = await service.acceptTripChange({ tripId: "trip_feasibility_gate", proposalId: proposal.proposalId, selections: { transport: "transport_train", stay: "stay_hotel" }, partial: true });
+  const after = await service.getTripPlanView("trip_feasibility_gate");
+
+  assert.equal(rejected.status, "rejected");
+  assert.equal(rejected.validation.reason, "itinerary_not_executable");
+  assert.equal(rejected.feasibility.canConfirm, false);
+  assert.equal(after.revision, before.revision);
+  assert.equal(Object.values(after.byDomain).flat().some((node) => node.selected), false);
+});
+
+test("a current feasible preview is reused once during confirmation", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "travel-preview-reuse-"));
+  let mobilityCalls = 0;
+  const researchProvider = {
+    status: "configured",
+    planMobility: async ({ itineraryStops }) => {
+      mobilityCalls += 1;
+      const legs = itineraryStops.slice(0, -1).map((stop, index) => {
+        const next = itineraryStops[index + 1];
+        const place = (item) => ({ nodeId: item.nodeId, stopId: item.stopId, label: item.title, coordinates: null, dayIndex: item.dayIndex, date: item.date, role: item.role, startAt: item.startAt, endAt: item.endAt });
+        return { legId: `reuse_leg_${index}`, origin: place(stop), destination: place(next), recommendedMode: "taxi", rationale: "fixture", alternatives: [{ mode: "taxi", totalMinutes: 20, distanceMeters: 5_000, walkingMeters: 0, transfers: 0, estimatedFareCny: 30, scheduleBasis: "query_time_estimate", realTimeArrival: false, navigationUrl: null, polyline: [], steps: [], accessibilityFeatures: [], accessibilityAssessment: { hasStairs: false, hasElevator: false, hasEscalator: false, hasRamp: false, stepFreeContinuity: "not_verified", realTimeStatus: false } }] };
+      });
+      return { schemaVersion: "trip-mobility-v1", status: "completed", destination: "上海", source: "fixture", checkedAt: "2026-08-13T12:00:00Z", freshUntil: null, coverage: { routedNodeIds: [...new Set(itineraryStops.map((stop) => stop.nodeId))], unresolvedNodeIds: [], routedStopIds: itineraryStops.map((stop) => stop.stopId), unresolvedStopIds: [], unscheduled: false }, legs, travelerFit: {}, reason: null, caveats: [], sourceDocumentation: null, fabricatedResults: false };
+    },
+  };
+  const service = new TravelService({ store: new TripStore({ rootDir }), clock, researchProvider });
+  await service.createTrip({ tripId: "trip_preview_reuse", brief: { destination: "上海", dates: "2026-10-15 至 2026-10-17" } });
+  const proposal = fourDomainProposal("trip_preview_reuse");
+  proposal.operations.find((operation) => operation.nodeId === "transport_train").node.operability = { mobilityRole: "intercity_inventory", transportType: "FLIGHT", arrivalAt: "2026-10-15 09:00", arrivalPlace: { label: "虹桥机场" } };
+  proposal.operations.find((operation) => operation.nodeId === "stay_hotel").node.impactsNodeIds = [];
+  await service.proposeTripChange({ tripId: "trip_preview_reuse", proposal });
+  const selections = { transport: "transport_train", stay: "stay_hotel" };
+  const preview = await service.previewTripMobility({ tripId: "trip_preview_reuse", baseRevision: 0, selections });
+
+  const accepted = await service.acceptTripChange({ tripId: "trip_preview_reuse", proposalId: proposal.proposalId, selections, partial: true, previewId: preview.previewId });
+
+  assert.equal(accepted.status, "committed", JSON.stringify({ validation: accepted.validation, feasibility: accepted.feasibility, preview: preview.feasibility }));
+  assert.equal(accepted.mobility.status, "completed");
+  assert.equal(mobilityCalls, 1, "confirmation must reuse the current preview rather than query the route twice");
+  const plan = await service.getTripPlanView("trip_preview_reuse");
+  assert.equal(plan.today.currentTask.role, "intercity_arrival");
+  assert.match(plan.today.currentTask.scheduledAt, /2026-10-15T09:00/);
+  assert.equal(plan.today.nextTask.role, "stay_check_in");
+});
+
 test("research proposal is visibly provisional when place evidence succeeds but weather is unavailable", async () => {
   const rootDir = await mkdtemp(join(tmpdir(), "travel-weather-gate-"));
   const candidate = {
@@ -163,6 +221,20 @@ test("research proposal is visibly provisional when place evidence succeeds but 
   assert.equal(result.proposal.partial, true);
   assert.equal(result.proposal.summary.includes("暂定候选"), true);
   assert.equal(result.proposal.caveats.some((item) => item.includes("天气尚未核验完成")), true);
+});
+
+test("a date range expands every day so Day 2 is not mistaken for the trip end date", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "travel-middle-day-schedule-"));
+  const checkedAt = "2026-08-29T12:00:00.000Z";
+  const play = { candidateId: "play_bund_day2", domain: "play", title: "外滩", summary: "城市观光 · 中山东一路 · 正如人们常说这里一生必去 · 24 小时开放", checkedAt, sourceId: "fixture:bund", claimId: "claim_bund", entityId: "entity_bund", location: { coordinates: { longitude: 121.49, latitude: 31.24 } }, operability: { provider: "fixture" }, source: { sourceId: "fixture:bund", provider: "fixture", sourceType: "official_provider", providerPoiId: "bund", checkedAt, documentationUrl: "https://example.com/provider", independenceGroup: "fixture:bund", commercialBias: "unknown" }, entity: { entityId: "entity_bund", kind: "place", canonicalName: "外滩", providerRefs: ["fixture:bund"] }, claim: { claimId: "claim_bund", entityId: "entity_bund", statement: "外滩存在", sourceRefs: ["fixture:bund"] } };
+  const service = new TravelService({ store: new TripStore({ rootDir }), clock, researchProvider: { status: "configured", research: async () => ({ status: "completed", provider: "fixture", providerLabel: "Fixture", checkedAt, byDomain: { play: [play], food: [], stay: [], transport: [] }, partial: false, weather: { status: "SOURCE_UNAVAILABLE" }, caveats: [], fabricatedResults: false }) } });
+  await service.createTrip({ tripId: "trip_middle_day", brief: { destination: "上海", dates: "2026-10-15 至 2026-10-17" } });
+
+  const research = await service.researchTripOptions({ tripId: "trip_middle_day", domains: ["play"], question: "安排外滩" });
+
+  assert.match(research.proposal.byDomain.play[0].operability.planningWindow.startAt, /^2026-10-16T10:00/);
+  assert.match(research.proposal.byDomain.play[0].operability.planningWindow.label, /第 2 天/);
+  assert.doesNotMatch(research.proposal.byDomain.play[0].summary, /一生必去|正如人们常说/);
 });
 
 test("a pending proposal is not reused for a missing domain or a narrower follow-up search", async () => {
@@ -324,20 +396,32 @@ test("user-confirmed arrival plus a stay-only acceptance preserves other choices
   const researchProvider = {
     status: "configured",
     research: async () => ({ status: "completed", provider: "provider_fixture", providerLabel: "Fixture", checkedAt, byDomain, partial: false, weather: { status: "SOURCE_UNAVAILABLE" }, caveats: [], fabricatedResults: false }),
-    planMobility: async ({ selectedNodes }) => {
+    planMobility: async ({ selectedNodes, itineraryStops = [] }) => {
       const arrival = selectedNodes.find((node) => node.operability?.mobilityRole === "user_confirmed_arrival");
       const stay = selectedNodes.find((node) => node.domain === "stay");
       assert.ok(arrival, "mobility must use the user-confirmed arrival rather than inventory");
       assert.equal(stay?.title, "全季酒店（上海人民广场南京路步行街店）");
+      const nodesById = new Map(selectedNodes.map((node) => [node.nodeId, node]));
+      const scheduledStops = itineraryStops.length ? itineraryStops : [{ stopId: arrival.nodeId, nodeId: arrival.nodeId, title: "浦东机场 T2" }, { stopId: stay.nodeId, nodeId: stay.nodeId, title: stay.title }];
+      const place = (stop) => {
+        const node = nodesById.get(stop.nodeId);
+        const fallback = node?.domain === "transport" ? { longitude: 121.8079, latitude: 31.1528 } : node?.location?.coordinates ?? { longitude: 121.4804, latitude: 31.2382 };
+        return { nodeId: stop.nodeId, stopId: stop.stopId, label: stop.role === "intercity_arrival" ? "浦东机场 T2" : stop.title, coordinates: fallback, dayIndex: stop.dayIndex ?? 1, date: stop.date ?? "2026-08-27", role: stop.role ?? null, startAt: stop.startAt ?? null, endAt: stop.endAt ?? null };
+      };
+      const legs = scheduledStops.slice(0, -1).map((stop, index) => {
+        const nextStop = scheduledStops[index + 1];
+        const first = index === 0;
+        return {
+          legId: `fixture_leg_${index + 1}`, origin: place(stop), destination: place(nextStop), recommendedMode: "taxi",
+          rationale: first ? "公交步行 1128 米，超过当前 600 米目标；公交需换乘 2 次，超过当前 1 次目标。打车约 52 分钟、步行 0 米、换乘 0 次，因此优先打车。电梯与连续无台阶状态仍待核验；该未知项不是本次推荐打车的直接触发条件。" : "当前夹点使用查询时打车估算。",
+          ...(first ? { recommendationAudit: { thresholds: { walkingMeters: 600, transfers: 1, walkingSource: "traveler_explicit", transferSource: "reduced_mobility_default" }, transit: { totalMinutes: 163, walkingMeters: 1128, transfers: 2, estimatedFareCny: 26, walkingExceeded: true, transfersExceeded: true, hasStairs: false, hasEscalator: true, stepFreeContinuity: "not_verified" }, taxi: { totalMinutes: 52, walkingMeters: 0, transfers: 0, estimatedFareCny: 151 }, triggers: ["transit_walking_exceeds_target", "transit_transfers_exceed_target"], accessibilityEvidence: { status: "not_verified", directTrigger: false } } } : {}),
+          alternatives: [{ mode: "transit", totalMinutes: first ? 163 : 45, distanceMeters: 40_000, walkingMeters: first ? 1128 : 300, transfers: first ? 2 : 1, estimatedFareCny: first ? 26 : 5, scheduleBasis: "scheduled_service", realTimeArrival: false, navigationUrl: "https://uri.amap.com/navigation?mode=bus", polyline: [], steps: [], accessibilityFeatures: [], accessibilityAssessment: { hasStairs: false, hasElevator: false, hasEscalator: first, hasRamp: false, stepFreeContinuity: "not_verified", realTimeStatus: false } }, { mode: "taxi", totalMinutes: first ? 52 : 25, distanceMeters: first ? 47_000 : 8_000, walkingMeters: 0, transfers: 0, estimatedFareCny: first ? 151 : 35, scheduleBasis: "query_time_estimate", realTimeArrival: false, navigationUrl: "https://uri.amap.com/navigation?mode=car", polyline: [], steps: [], accessibilityFeatures: [], accessibilityAssessment: { hasStairs: false, hasElevator: false, hasEscalator: false, hasRamp: false, stepFreeContinuity: "not_verified", realTimeStatus: false } }],
+        };
+      });
       return {
         schemaVersion: "trip-mobility-v1", status: "completed", destination: "上海", source: "amap_routes_v5", checkedAt, freshUntil: "2026-08-26T13:00:00.000Z",
-        coverage: { routedNodeIds: [arrival.nodeId, stay.nodeId], unresolvedNodeIds: [], unscheduled: false },
-        legs: [{
-          legId: "arrival_to_stay", origin: { nodeId: arrival.nodeId, label: "浦东机场 T2", coordinates: { longitude: 121.8079, latitude: 31.1528 } }, destination: { nodeId: stay.nodeId, label: stay.title, coordinates: { longitude: 121.4804, latitude: 31.2382 } }, recommendedMode: "taxi",
-          rationale: "公交步行 1128 米，超过当前 600 米目标；公交需换乘 2 次，超过当前 1 次目标。打车约 52 分钟、步行 0 米、换乘 0 次，因此优先打车。电梯与连续无台阶状态仍待核验；该未知项不是本次推荐打车的直接触发条件。",
-          recommendationAudit: { thresholds: { walkingMeters: 600, transfers: 1, walkingSource: "traveler_explicit", transferSource: "reduced_mobility_default" }, transit: { totalMinutes: 163, walkingMeters: 1128, transfers: 2, estimatedFareCny: 26, walkingExceeded: true, transfersExceeded: true, hasStairs: false, hasEscalator: true, stepFreeContinuity: "not_verified" }, taxi: { totalMinutes: 52, walkingMeters: 0, transfers: 0, estimatedFareCny: 151 }, triggers: ["transit_walking_exceeds_target", "transit_transfers_exceed_target"], accessibilityEvidence: { status: "not_verified", directTrigger: false } },
-          alternatives: [{ mode: "transit", totalMinutes: 163, distanceMeters: 40_000, walkingMeters: 1128, transfers: 2, estimatedFareCny: 26, scheduleBasis: "scheduled_service", realTimeArrival: false, navigationUrl: "https://uri.amap.com/navigation?mode=bus", polyline: [], steps: [], accessibilityFeatures: [], accessibilityAssessment: { hasStairs: false, hasElevator: false, hasEscalator: true, hasRamp: false, stepFreeContinuity: "not_verified", realTimeStatus: false } }, { mode: "taxi", totalMinutes: 52, distanceMeters: 47_000, walkingMeters: 0, transfers: 0, estimatedFareCny: 151, scheduleBasis: "query_time_estimate", realTimeArrival: false, navigationUrl: "https://uri.amap.com/navigation?mode=car", polyline: [], steps: [], accessibilityFeatures: [], accessibilityAssessment: { hasStairs: false, hasElevator: false, hasEscalator: false, hasRamp: false, stepFreeContinuity: "not_verified", realTimeStatus: false } }],
-        }],
+        coverage: { routedNodeIds: [...new Set(scheduledStops.map((stop) => stop.nodeId))], unresolvedNodeIds: [], routedStopIds: scheduledStops.map((stop) => stop.stopId), unresolvedStopIds: [], unscheduled: false },
+        legs,
         travelerFit: { constrainedTravelerIds: ["traveler_2"], maxContinuousWalkMeters: 600, maxTransfers: null, planningWalkingTarget: 600, planningTransferTarget: 1, walkingTargetSource: "traveler_explicit", transferTargetSource: "reduced_mobility_default", avoidStairs: true, accessibilityEvidence: "unverified" },
         reason: null, caveats: [], sourceDocumentation: "https://lbs.amap.com/api/webservice/guide/api/newroute", fabricatedResults: false,
       };
@@ -497,6 +581,28 @@ test("a bounded intercity comparison keeps all relevant flight and rail options 
   assert.equal(research.status, "proposed");
   assert.equal(research.proposal.byDomain.transport.length, 5);
   assert.deepEqual([...new Set(research.proposal.byDomain.transport.map((item) => item.operability.transportType))].sort(), ["FLIGHT", "TRAIN"]);
+});
+
+test("unavailable ordinary trains never substitute for a requested high-speed option", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "travel-high-speed-no-match-"));
+  const checkedAt = "2026-08-13T12:00:00.000Z";
+  const candidate = (type, number, availableSeats, highSpeed = false) => ({
+    candidateId: `transport_${number}`, domain: "transport", title: `${number} 广州 → 上海`, summary: "班次候选", cost: type === "FLIGHT" ? 680 : 220,
+    sourceId: `provider:${number}`, claimId: `claim_${number}`, entityId: `entity_${number}`, checkedAt,
+    operability: { transportType: type, serviceNumber: number, highSpeed, availableSeats, inventoryUsability: availableSeats === 0 ? "unavailable" : "available", mobilityRole: "intercity_inventory", routeVerified: true, scheduleVerified: true },
+    source: { provider: "provider_fixture", sourceType: "official_ota_inventory", providerPoiId: number, checkedAt, documentationUrl: "https://example.com/provider", independenceGroup: `provider:${number}`, commercialBias: "commercial_inventory" },
+    entity: { entityId: `entity_${number}`, kind: "transport_offer", canonicalName: number, providerRefs: [`provider:${number}`] },
+    claim: { claimId: `claim_${number}`, entityId: `entity_${number}`, statement: "班次存在", sourceRefs: [`provider:${number}`] },
+  });
+  const candidates = [candidate("FLIGHT", "AQ1005", 9), candidate("TRAIN", "K528", 0, false), candidate("TRAIN", "G100", 0, true)];
+  const service = new TravelService({ store: new TripStore({ rootDir }), clock, researchProvider: { status: "configured", research: async () => ({ status: "completed", provider: "provider_fixture", providerLabel: "Fixture", checkedAt, byDomain: { play: [], food: [], stay: [], transport: candidates }, partial: false, weather: { status: "SOURCE_UNAVAILABLE" }, caveats: [], fabricatedResults: false }) } });
+  await service.createTrip({ tripId: "trip_high_speed_no_match", brief: { destination: "上海", origin: "广州", dates: "2026-10-15 至 2026-10-17", arrivalMode: "飞机或高铁" } });
+
+  const research = await service.researchTripOptions({ tripId: "trip_high_speed_no_match", domains: ["transport"], question: "飞机和高铁都可以，不要普通慢车" });
+
+  assert.deepEqual(research.proposal.byDomain.transport.map((item) => item.operability.serviceNumber), ["AQ1005"]);
+  assert.ok(research.proposal.caveats.some((item) => /没有返回可核验且可用的高铁候选/.test(item)));
+  assert.ok(research.proposal.caveats.some((item) => /无票班次只作为本次库存对照/.test(item)));
 });
 
 test("AMap transport-facility POIs never substitute for missing flexible intercity inventory", async () => {

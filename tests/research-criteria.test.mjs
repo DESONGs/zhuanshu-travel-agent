@@ -44,6 +44,13 @@ test("arrival becomes authoritative only after the traveler explicitly confirms 
   assert.equal(criteria.arrival.confirmed, true);
 });
 
+test("keeps high-speed rail intent distinct from generic train inventory", () => {
+  const criteria = buildTravelResearchCriteria({ brief: { ...brief, arrivalMode: "飞机或高铁" }, travelers, domains: ["transport"], question: "飞机和高铁都可以，但不要用普通慢车替代高铁。" });
+  assert.equal(criteria.intercityIntent, "flexible");
+  assert.ok(criteria.byDomain.transport.preferenceHints.includes("high_speed_train"));
+  assert.ok(criteria.byDomain.transport.preferenceHints.includes("compare_flight_high_speed_train"));
+});
+
 test("domain fingerprints change only for affected research semantics", () => {
   const first = buildTravelResearchCriteria({ brief, travelers, domains: ["stay"], criteria: { byDomain: { stay: { targetAreas: ["人民广场"] } } } });
   const second = buildTravelResearchCriteria({ brief: { ...brief, lodgingPreference: "南京东路" }, travelers, domains: ["stay"], criteria: { byDomain: { stay: { targetAreas: ["南京东路"] } } } });

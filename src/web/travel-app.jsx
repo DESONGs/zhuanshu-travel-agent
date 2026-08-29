@@ -217,6 +217,8 @@ function messageError(error) {
     conversation_access_denied: "你没有访问这段旅行对话的权限。",
     sensitive_conversation_input_blocked: "为保护隐私，请不要发送证件号、支付卡号、Cookie、Token 或密码。只需描述相关的可操作性要求即可。",
     empty_conversation_message: "先写下这趟旅行的想法。",
+    itinerary_not_executable: "这份试排仍有时间或路线冲突，修复阻断项后才能采用。",
+    itinerary_preview_stale: "旅行条件刚刚变化，请重新核验这份试排后再采用。",
   };
   return messages[error.code] ?? "这次没有处理完成，请稍后重试。你的旅行内容不会丢失。";
 }
@@ -316,7 +318,7 @@ function MessageBubble({ message }) {
   </article>;
 }
 
-function ThinkingMessage() {
+function ThinkingMessage({ hasPlan = false, onBackground = null }) {
   const { pick } = useUiLocale();
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   useEffect(() => {
@@ -324,7 +326,8 @@ function ThinkingMessage() {
     const timer = window.setInterval(() => setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1_000)), 1_000);
     return () => window.clearInterval(timer);
   }, []);
-  return <article className="chat-message assistant typing" aria-live="polite" aria-label={pick("旅行助手正在处理这次请求", "Travel Agent is working on this request")}><div className="message-avatar"><Sparkle weight="fill" /></div><div className="thinking-state"><div className="typing-dots"><i /><i /><i /></div><small><strong>{pick("正在处理这次旅行请求", "Working on this travel request")}</strong><span>{pick("完成后会显示实际执行的核验步骤，不预演尚未发生的进度。", "The actual verification steps will appear when complete; unfinished work is not presented as progress.")}</span><time>{elapsedSeconds}s</time></small></div></article>;
+  const waitingLonger = elapsedSeconds >= 20;
+  return <article className="chat-message assistant typing" aria-live="polite" aria-label={pick("旅行助手正在处理这次请求", "Travel Agent is working on this request")}><div className="message-avatar"><Sparkle weight="fill" /></div><div className="thinking-state"><div className="typing-dots"><i /><i /><i /></div><small><strong>{waitingLonger ? pick("仍在等待真实来源返回", "Still waiting for verified sources") : pick("正在处理这次旅行请求", "Working on this travel request")}</strong><span>{waitingLonger ? pick("当前还没有新的可确认结果；旧方案会保留，你可以先回去继续查看。", "There is no new confirmable result yet. Your existing plan stays available while this continues.") : pick("完成后会显示实际执行的核验步骤，不预演尚未发生的进度。", "The actual verification steps will appear when complete; unfinished work is not presented as progress.")}</span><time>{elapsedSeconds}s</time>{waitingLonger && hasPlan ? <button type="button" onClick={onBackground}>{pick("回到旧方案，后台继续", "View the existing plan while this continues")}</button> : null}</small></div></article>;
 }
 
 function ConversationIntro({ onPrompt }) {
@@ -405,11 +408,11 @@ function ActivityStrip({ activities }) {
   if (!activities?.length) return null;
   const labels = locale === "en"
     ? { interpret_visual_context: "Understanding the image with this trip", save_trip_understanding: "Trip requirements saved", research_trip_options: "Researching the connected trip", get_trip_control_view: "Trip requirements loaded", get_trip_plan_view: "Current plan loaded", estimate_costs: "Trip budget calculated", explain_recommendation: "Recommendation evidence loaded", confirm_user_arrival: "Confirmed arrival saved", confirm_trip_selection: "Selected option confirmed", accept_trip_change: "Plan confirmed", refresh_trip_mobility: "City movement checked", reject_trip_change: "Options dismissed", trip_readiness: "Travel readiness updated" }
-    : { interpret_visual_context: "正在结合这趟旅行理解图片", save_trip_understanding: "已记住旅行要求", research_trip_options: "正在查找吃住行玩", get_trip_control_view: "已读取旅行要求", get_trip_plan_view: "已读取当前方案", estimate_costs: "已按真实价格口径计算整趟预算", explain_recommendation: "已读取候选的推荐依据", confirm_user_arrival: "已记录确认的抵达事实", confirm_trip_selection: "已确认所选候选", accept_trip_change: "已确认方案", refresh_trip_mobility: "已核验城市内移动", reject_trip_change: "已放弃候选", trip_readiness: "已更新出发准备" };
+    : { interpret_visual_context: "已结合这趟旅行理解图片", save_trip_understanding: "已记住旅行要求", research_trip_options: "已核验吃住行玩候选", get_trip_control_view: "已读取旅行要求", get_trip_plan_view: "已读取当前方案", estimate_costs: "已按真实价格口径计算整趟预算", explain_recommendation: "已读取候选的推荐依据", confirm_user_arrival: "已记录确认的抵达事实", confirm_trip_selection: "已确认所选候选", accept_trip_change: "已确认方案", refresh_trip_mobility: "已核验城市内移动", reject_trip_change: "已放弃候选", trip_readiness: "已更新出发准备" };
   const failureStatuses = new Set(["provider_unavailable", "AUTH_REQUIRED", "ACCOUNT_LIMITED", "RATE_LIMITED", "SOURCE_UNAVAILABLE", "EMPTY_VERIFIED", "failed", "error"]);
   const latest = [...new Map(activities.map((activity) => [activity.toolName, activity])).values()];
   const activityText = (activity) => activity.toolName === "interpret_visual_context" && activity.status === "completed" ? pick("已结合图片理解这次需求", "Image understood in this request") : activity.toolName === "interpret_visual_context" && activity.status === "failed" ? pick("这次没有读完图片", "The image could not be read") : activity.toolName === "confirm_user_arrival" && activity.status !== "committed" ? pick("抵达事实尚未确认", "Arrival is not confirmed yet") : activity.toolName === "confirm_trip_selection" && activity.status !== "committed" ? pick("候选尚未确认", "The option is not confirmed yet") : activity.toolName === "research_trip_options" && activity.status === "error" ? pick("本轮没有重新搜索，原候选保持不变", "No new search was run; existing options were kept") : activity.toolName === "restore_trip_draft" ? activity.status === "recovered" ? pick("已恢复旅行草案", "Trip draft restored") : pick("旅行草案需要恢复", "Trip draft needs recovery") : activity.toolName === "research_trip_options" && ["provider_unavailable", "AUTH_REQUIRED", "SOURCE_UNAVAILABLE"].includes(activity.status) ? pick("没有取得实时地点资料", "Live place data was not available") : activity.toolName === "research_trip_options" && activity.status === "ACCOUNT_LIMITED" ? pick("地图资料暂时无法访问", "Map data is temporarily unavailable") : activity.toolName === "research_trip_options" && activity.status === "RATE_LIMITED" ? pick("实时资料请求较多，请稍后再试", "Live sources are busy. Try again shortly.") : activity.toolName === "research_trip_options" && activity.status === "EMPTY_VERIFIED" ? pick("本次来源未返回可核验结果", "The checked sources returned no verified result") : activity.toolName === "refresh_trip_mobility" && activity.status === "provider_unavailable" ? pick("城市路线资料暂不可用", "City routing is temporarily unavailable") : activity.toolName === "refresh_trip_mobility" && activity.status === "needs_context" ? pick("确认更多地点后再核验路线", "Confirm more places before routing") : `${labels[activity.toolName] ?? pick("已处理旅行要求", "Travel request processed")}${activity.status === "proposed" ? pick("，可以在方案中比较", "; ready to compare") : ""}`;
-  return <section className="agent-progress-rail" aria-live="polite" aria-label={pick("本轮真实执行记录", "Actual steps for this request")}><header><Sparkle weight="fill" /><span><strong>{pick("本轮实际完成", "Actually completed")}</strong><small>{pick("以下记录来自真实工具 activity", "These entries come from actual tool activity")}</small></span></header><ol>{latest.map((activity) => { const warning = failureStatuses.has(activity.status); const running = activity.status === "running"; return <li key={activity.toolName} className={warning ? "warning" : running ? "running" : "complete"}><i>{running ? <CircleNotch className="spin" /> : warning ? <WarningCircle weight="fill" /> : <CheckCircle weight="fill" />}</i><span><strong>{activityText(activity)}</strong><small>{activity.status}</small></span></li>; })}</ol></section>;
+  return <section className="agent-progress-rail" aria-live="polite" aria-label={pick("本轮处理记录", "Steps for this request")}><header><Sparkle weight="fill" /><span><strong>{pick("本轮处理情况", "What happened this time")}</strong><small>{pick("只显示实际完成或明确失败的步骤", "Only completed or explicitly failed steps are shown")}</small></span></header><ol>{latest.map((activity) => { const warning = failureStatuses.has(activity.status); const running = activity.status === "running"; const stateLabel = running ? pick("处理中", "In progress") : warning ? pick("需要处理", "Needs attention") : pick("已完成", "Completed"); return <li key={activity.toolName} className={warning ? "warning" : running ? "running" : "complete"}><i>{running ? <CircleNotch className="spin" /> : warning ? <WarningCircle weight="fill" /> : <CheckCircle weight="fill" />}</i><span><strong>{activityText(activity)}</strong><small>{stateLabel}</small></span></li>; })}</ol></section>;
 }
 
 function CandidatePhoto({ candidate }) {
@@ -428,7 +431,9 @@ function domainMeta(domain) {
 function scheduleLabel(item) {
   const planningWindow = item?.operability?.planningWindow;
   if (planningWindow?.label) return planningWindow.basis === "agent_suggested_window" ? `${planningWindow.label}（建议）` : planningWindow.label;
-  const value = item?.time ?? item?.operability?.departureAt ?? item?.operability?.arrivalAt;
+  const value = item?.domain === "transport" && ["intercity_inventory", "user_confirmed_arrival"].includes(item?.operability?.mobilityRole)
+    ? item?.operability?.arrivalAt ?? planningWindow?.endAt ?? item?.time
+    : item?.time ?? item?.operability?.arrivalAt ?? item?.operability?.departureAt;
   if (!value) return "待排入日程";
   if (/^\d{1,2}:\d{2}$/.test(value)) return value;
   const date = new Date(value);
@@ -437,7 +442,9 @@ function scheduleLabel(item) {
 }
 
 function scheduleSortValue(item) {
-  const value = item?.operability?.planningWindow?.startAt ?? item?.time ?? item?.operability?.departureAt ?? item?.operability?.arrivalAt;
+  const value = item?.domain === "transport" && ["intercity_inventory", "user_confirmed_arrival"].includes(item?.operability?.mobilityRole)
+    ? item?.operability?.arrivalAt ?? item?.operability?.planningWindow?.endAt ?? item?.time
+    : item?.operability?.planningWindow?.startAt ?? item?.time ?? item?.operability?.arrivalAt ?? item?.operability?.departureAt;
   const parsed = value ? new Date(value).getTime() : Number.NaN;
   return Number.isFinite(parsed) ? parsed : Number.MAX_SAFE_INTEGER;
 }
@@ -734,8 +741,8 @@ function PlaceDetailSheet({ node, plan, tripId, onClose, onSubmitFeedback }) {
         <section className="place-detail-intro"><span className="detail-domain"><meta.icon weight="duotone" />{meta.label}</span><h2 id="place-detail-title">{node.title}</h2><p className={summaryExpanded ? "expanded" : ""}>{node.summary || "当前来源只返回了地点名称和位置。"}</p>{longSummary ? <button type="button" className="detail-text-toggle" onClick={() => setSummaryExpanded((current) => !current)}>{summaryExpanded ? "收起介绍" : "展开完整介绍"}<CaretDown className={summaryExpanded ? "expanded" : ""} /></button> : null}</section>
         {facts.length ? <section className="detail-facts" aria-label="地点关键信息">{facts.map((fact) => <div key={fact.label}><small>{fact.label}</small><strong>{fact.value}</strong></div>)}</section> : null}
         {node.domain === "transport" ? <section className="detail-section transport-detail"><header><div><Train weight="duotone" /></div><span><strong>班次、到达点与票价</strong><small>跨城库存来自 OTA；市内接驳由高德路线补齐</small></span></header><TransportSnapshot detail={detail} /></section> : null}
-        <section className="detail-section location-detail"><header><div><MapTrifold weight="duotone" /></div><span><strong>{node.domain === "transport" ? "到达点与地图" : "位置与地图"}</strong><small>{node.domain === "transport" ? detail.arrivalPlace?.label || detail.arrivalRouteAnchor?.label || "到达点待核验" : location}</small></span></header><TripDecisionMap nodes={[mappedNode]} activeNodeId={node.nodeId} onFocusNode={() => {}} tripId={tripId} staticMapAvailable={false} label={`${node.title}的位置地图`} /><p className="detail-map-scope">这里只显示当前地点；候选之间的完整路线请回到方案工作台查看。</p>{mapUrl ? <a className="detail-primary-link" href={mapUrl} target="_blank" rel="noreferrer"><NavigationArrow />在高德查看这个地点</a> : null}</section>
-        <section className="detail-section facilities-detail"><header><div><Elevator weight="duotone" /></div><span><strong>设施与可达性</strong><small>{facilities.length ? "地图资料，非实时，建议现场确认" : "当前来源尚未返回设施资料"}</small></span></header>{detail.requestedFacilityNeeds?.length ? <div className="facility-evidence-status"><span><b>这次旅行需要</b>{detail.requestedFacilityNeeds.join("；")}</span><span><b>当前已取得</b>{facilities.length ? facilities.map((facility) => facility.label).join("、") : "尚无可用设施记录"}</span><span><b>到场前仍要确认</b>设施是否开放、正常运行，以及是否能形成连续无台阶路线</span></div> : null}<FacilityReferences facilities={facilities} emptyText={node.domain === "stay" ? "当前酒店来源只返回了图片、位置和参考价格；电梯、停车、早餐、卫生间等设施需要在酒店详情页继续核验。" : "当前来源没有返回卫生间、电梯、坡道或储物设施；不代表现场没有，出发前仍需核验。"} />{detail.indoorMap || detail.indoor ? <p className="facility-note">已取得室内或楼层相关资料；入口、楼层和开放情况仍以现场为准。</p> : null}{detail.bookingUrl ? <a className="detail-primary-link" href={detail.bookingUrl} target="_blank" rel="noreferrer"><NavigationArrow />在{detail.bookingProviderLabel || "供应方"}查看完整图片与设施</a> : null}</section>
+        <section className="detail-section location-detail"><header><div><MapTrifold weight="duotone" /></div><span><strong>{node.domain === "transport" ? "到达点与地图" : "位置与地图"}</strong><small>{node.domain === "transport" ? detail.arrivalPlace?.label || detail.arrivalRouteAnchor?.label || "到达点待核验" : location}</small></span></header><TripDecisionMap nodes={[mappedNode]} activeNodeId={node.nodeId} onFocusNode={() => {}} tripId={tripId} staticMapAvailable={false} label={`${node.title}的位置地图`} /><p className="detail-map-scope">{mapUrl ? "这里只显示当前地点；候选之间的完整路线请回到方案工作台查看。" : "当前实体尚未解析出可靠坐标；地址会保留，但不会据此声称位置方便。"}</p>{mapUrl ? <a className="detail-primary-link" href={mapUrl} target="_blank" rel="noreferrer"><NavigationArrow />在高德查看这个地点</a> : null}</section>
+        <section className="detail-section facilities-detail"><header><div><Elevator weight="duotone" /></div><span><strong>设施与可达性</strong><small>{facilities.length ? "地图资料，非实时，建议现场确认" : "当前来源尚未返回设施资料"}</small></span></header>{detail.requestedFacilityNeeds?.length ? <div className="facility-evidence-status"><span><b>这次旅行需要</b>{detail.requestedFacilityNeeds.join("；")}</span><span><b>当前已取得</b>{facilities.length ? facilities.map((facility) => facility.label).join("、") : "尚无可用设施记录"}</span><span><b>到场前仍要确认</b>设施是否开放、正常运行，以及是否能形成连续无台阶路线</span></div> : null}<FacilityReferences facilities={facilities} emptyText={node.domain === "stay" ? `当前酒店来源只返回了图片、位置和${detailPrice.quality === "firm" ? "本次报价快照" : detailPrice.quality === "reference" ? "参考价格" : "价格线索"}；电梯、停车、早餐、卫生间等设施仍需核验。` : "当前来源没有返回卫生间、电梯、坡道或储物设施；不代表现场没有，出发前仍需核验。"} />{detail.indoorMap || detail.indoor ? <p className="facility-note">已取得室内或楼层相关资料；入口、楼层和开放情况仍以现场为准。</p> : null}{detail.bookingUrl ? <a className="detail-primary-link" href={detail.bookingUrl} target="_blank" rel="noreferrer"><NavigationArrow />在{detail.bookingProviderLabel || "供应方"}查看完整图片与设施</a> : node.domain === "stay" ? <p className="detail-handoff-unavailable">当前只能比较这份住宿资料，尚未取得可用的库存详情或预订交接链接。</p> : null}</section>
         {["food", "play", "stay"].includes(node.domain) ? <VisitFeedbackSection node={node} onSubmit={onSubmitFeedback} /> : null}
         <section className="detail-source-note"><WarningCircle weight="fill" /><p>{acceptedSourceLabel(node)}。图片、价格、房态、营业状态和设施信息以跳转页或现场为准。</p></section>
       </div>
@@ -1010,7 +1017,7 @@ function candidateReasonChips(candidate, pick) {
     const code = String(reason.reasonCode ?? "");
     if (/budget|price|fare|cost/i.test(code)) return pick("预算匹配已核验", "Budget fit checked");
     if (/inventory|offer|availability/i.test(code)) return pick("库存证据已核验", "Inventory evidence checked");
-    if (/local|long_tail|character|discovery/i.test(code)) return pick("在地特色有证据", "Local character supported");
+    if (/local|long_tail|character|discovery/i.test(code)) return detail.longTailEvidence === "verified" ? pick("在地特色有独立证据", "Local character has independent evidence") : null;
     if (/route|walk|mobility|operability|schedule/i.test(code)) return pick("动线与执行条件已比较", "Route and operability compared");
     if (/source|evidence|independ/i.test(code)) return pick("来源证据已交叉检查", "Source evidence cross-checked");
     return null;
@@ -1020,7 +1027,7 @@ function candidateReasonChips(candidate, pick) {
   return [...new Set([
     ...semanticReasons,
     detail.inventoryVerified === true && detail.availableSeats !== 0 ? pick("本次库存已核验", "Inventory checked for this search") : null,
-    matchedAreas.length ? pick(`命中 ${matchedAreas.slice(0, 2).join("、")}`, `Matches ${matchedAreas.slice(0, 2).join(", ")}`) : null,
+    matchedAreas.length && detail.stayAnchorFits?.length ? pick(`已核验到 ${matchedAreas.slice(0, 2).join("、")} 的实际动线`, `Route to ${matchedAreas.slice(0, 2).join(", ")} checked`) : null,
     detail.weatherFit === "preferred" ? pick("当前天气更适合", "Better fit for current weather") : null,
     sourceCount > 1 ? pick(`${sourceCount} 个独立来源`, `${sourceCount} sources`) : candidate?.sourceStatus === "verified_provider" ? pick("具名来源已核验", "Named source checked") : null,
   ].filter(Boolean))].slice(0, 3);
@@ -1065,7 +1072,7 @@ function PlanningSelectionRow({ domain, candidate, active, status, candidateCoun
   </button>;
 }
 
-function PlanningChoiceCard({ candidate, domain, confirmed = false, trial = false, replacing = false, baselineCandidate = null, comparisonMode = false, trialImpact = null, onChoose, onPreview }) {
+function PlanningChoiceCard({ candidate, domain, confirmed = false, trial = false, replacing = false, baselineCandidate = null, comparisonMode = false, trialImpact = null, partySize = 1, onChoose, onPreview }) {
   const { locale, pick } = useUiLocale();
   const meta = domainMeta(domain);
   const Icon = meta.icon;
@@ -1077,6 +1084,9 @@ function PlanningChoiceCard({ candidate, domain, confirmed = false, trial = fals
   const reasonChips = candidateReasonChips(candidate, pick);
   const budgetDelta = trial ? trialImpact?.budgetDelta?.estimated : null;
   const routeDelta = trial ? trialImpact?.deltaFromConfirmed : null;
+  const localEvidencePending = ["food", "play"].includes(domain) && candidate.operability?.longTailEvidence === "not_verified_by_current_sources";
+  const stayAnchorFits = trial && domain === "stay" ? trialImpact?.stayAnchorFits ?? [] : [];
+  const transportPartyTotal = domain === "transport" && candidateCost != null && partySize > 1 ? Math.round(candidateCost * partySize) : null;
   const differenceCues = !confirmed && comparisonMode ? [
     costDelta ? { label: `${pick("单项", "Item")} ${costDelta > 0 ? "+" : "−"}¥${Math.abs(costDelta)}`, tone: costDelta > 0 ? "up" : "down" } : null,
     budgetDelta ? { label: `${pick("整趟", "Trip")} ${budgetDelta > 0 ? "+" : "−"}¥${Math.abs(Math.round(budgetDelta))}`, tone: budgetDelta > 0 ? "up" : "down" } : null,
@@ -1092,11 +1102,14 @@ function PlanningChoiceCard({ candidate, domain, confirmed = false, trial = fals
       <div className="planning-choice-state"><span><Icon weight="duotone" />{domainLabel(domain, locale)}</span>{confirmed ? <em><CheckCircle weight="fill" />{comparisonMode ? pick("当前 · 已确认", "Current · confirmed") : pick("已确认", "Confirmed")}</em> : trial ? <em><Sparkle weight="fill" />{pick("试排中", "Drafting")}</em> : comparisonMode ? <em>{pick("候选", "Option")}</em> : null}</div>
       <h4>{candidate.title}</h4>
       <PriceSlot candidate={candidate} />
+      {transportPartyTotal != null ? <small className="party-fare-total">{pick(`${partySize} 人票价合计约 ¥${transportPartyTotal}，不含市内接驳`, `About CNY ${transportPartyTotal} for ${partySize} travelers, excluding local transfers`)}</small> : null}
       {domain === "transport" ? <TransportSnapshot detail={candidate.operability} compact /> : <p>{candidate.summary || pick("资料说明仍待补充。", "Details still need checking.")}</p>}
       {details.length ? <div className="planning-choice-meta">{details.map((item) => <span key={item}>{item}</span>)}</div> : null}
       {differenceCues.length ? <div className="candidate-difference-chips">{differenceCues.map((cue) => <span key={cue.label} className={cue.tone}>{cue.label}</span>)}</div> : null}
       {reasonChips.length ? <div className="candidate-reason-chips" aria-label={pick("推荐依据", "Recommendation evidence")}>{reasonChips.map((reason) => <span key={reason}><CheckCircle weight="fill" />{reason}</span>)}</div> : null}
+      {localEvidencePending ? <p className="candidate-evidence-pending"><WarningCircle weight="fill" />{pick("当地特色仍待独立内容或到访证据核验", "Local character still needs independent content or visit evidence")}</p> : null}
       {trial && domain === "stay" && (routeDelta || budgetDelta) ? <p className="cross-domain-impact"><ArrowsClockwise />{pick("住宿变化已联动重算餐饮、游玩动线与整趟预算。", "This stay change has recalculated food, activity routes and the whole-trip budget.")}</p> : null}
+      {stayAnchorFits.length ? <div className="stay-anchor-fits" aria-label={pick("住宿到目标区域的实际动线", "Actual routes from this stay to target areas")}>{stayAnchorFits.map((fit) => <span key={fit.area}><strong>{pick(`到${fit.area}`, `To ${fit.area}`)}</strong>{fit.alternatives.map((alternative) => <small key={alternative.mode}>{MOBILITY_MODE_LABELS[alternative.mode] || alternative.mode} {alternative.totalMinutes} min{alternative.walkingMeters != null ? ` · ${Math.round(alternative.walkingMeters)}m` : ""}{alternative.estimatedFareCny != null ? ` · ¥${Math.round(alternative.estimatedFareCny)}` : ""}</small>)}</span>)}</div> : null}
       <small>{acceptedSourceLabel({ ...candidate, domain })}{checkedAt ? ` · ${formatCheckedAt(checkedAt)}` : ""}</small>
       <div className="planning-choice-actions">
         {!confirmed || replacing ? <button type="button" className={`planning-choice-select ${trial ? "trial-active" : ""}`} onClick={onChoose}>{comparisonMode ? trial ? pick("取消试排", "Cancel draft") : pick("试排", "Preview") : trial ? (replacing ? pick("取消替换", "Cancel replacement") : pick("已加入试排", "Added to draft")) : replacing ? pick("试试替换", "Try replacement") : pick("加入路线试排", "Add to route draft")}</button> : null}
@@ -1106,13 +1119,47 @@ function PlanningChoiceCard({ candidate, domain, confirmed = false, trial = fals
   </article>;
 }
 
-function routeTimeline(mobility, nodes) {
+function routeTimeline(mobility, nodes, itinerary = mobility?.itinerary) {
   const legs = mobility?.legs ?? [];
   const byId = new Map(nodes.map((node) => [node.nodeId, node]));
+  if (itinerary?.stops?.length) {
+    const legsByStop = new Map(legs.map((leg) => [leg.origin?.stopId ?? `${leg.origin?.nodeId}->${leg.destination?.nodeId}`, leg]));
+    return itinerary.stops.map((stop) => {
+      const outgoing = legsByStop.get(stop.stopId) ?? legs.find((leg) => leg.origin?.nodeId === stop.nodeId && leg.origin?.dayIndex === stop.dayIndex) ?? null;
+      const place = outgoing?.origin ?? legs.find((leg) => leg.destination?.stopId === stop.stopId)?.destination ?? { nodeId: stop.nodeId, stopId: stop.stopId, label: stop.title, dayIndex: stop.dayIndex, date: stop.date, role: stop.role, startAt: stop.startAt, endAt: stop.endAt };
+      return { node: byId.get(stop.nodeId) ?? null, place, leg: outgoing, schedule: stop };
+    });
+  }
   if (!legs.length) return nodes.map((node) => ({ node, place: { nodeId: node.nodeId, label: node.title }, leg: null }));
   const rows = [{ node: byId.get(legs[0].origin?.nodeId) ?? null, place: legs[0].origin, leg: legs[0] }];
   legs.forEach((leg, index) => rows.push({ node: byId.get(leg.destination?.nodeId) ?? null, place: leg.destination, leg: legs[index + 1] ?? null }));
   return rows;
+}
+
+function routeTotals(mobility) {
+  const recommended = (mobility?.legs ?? []).map((leg) => leg.alternatives?.find((alternative) => alternative.mode === leg.recommendedMode)).filter(Boolean);
+  return {
+    legCount: recommended.length,
+    totalMinutes: recommended.reduce((sum, item) => sum + Number(item.totalMinutes ?? 0), 0),
+    walkingMeters: recommended.reduce((sum, item) => sum + Number(item.walkingMeters ?? 0), 0),
+    transfers: recommended.reduce((sum, item) => sum + Number(item.transfers ?? 0), 0),
+    estimatedFareCny: recommended.reduce((sum, item) => sum + Number(item.estimatedFareCny ?? 0), 0),
+  };
+}
+
+function mobilityWithModeOverrides(mobility, overrides) {
+  if (!mobility || !Object.keys(overrides).length) return mobility;
+  return { ...mobility, legs: (mobility.legs ?? []).map((leg) => ({ ...leg, recommendedMode: leg.alternatives?.some((alternative) => alternative.mode === overrides[leg.legId]) ? overrides[leg.legId] : leg.recommendedMode })) };
+}
+
+function itineraryStopLabel(stop, pick) {
+  if (!stop) return pick("时间待补", "Time needed");
+  const roles = {
+    intercity_arrival: pick("抵达", "Arrival"), stay_check_in: pick("入住", "Check-in"), stay_departure: pick("从住宿出发", "Leave stay"),
+    stay_return: pick("返回住宿", "Return to stay"), meal: pick("用餐", "Meal"), activity: pick("游玩", "Activity"), local_transport: pick("市内移动", "Local transfer"),
+  };
+  const time = stop.startAt ? compactDateTime(stop.startAt) : stop.date;
+  return `${pick(`第 ${stop.dayIndex} 天`, `Day ${stop.dayIndex}`)} · ${time} · ${roles[stop.role] ?? stop.role}`;
 }
 
 function RouteWeatherDisclosure({ weather, onEdit }) {
@@ -1136,26 +1183,26 @@ function RouteWeatherDisclosure({ weather, onEdit }) {
 function RoutePreviewPanel({ trip, plan, nodes, mobility, comparisonNodes = [], comparisonMobility = null, preview, previewStatus, previewIsCurrent, onFocusMap, onPreviewNode, onEditWeather, onRetryRoute }) {
   const { locale, pick } = useUiLocale();
   const [focusNodeId, setFocusNodeId] = useState(null);
+  const [modeOverrides, setModeOverrides] = useState({});
   useEffect(() => {
     if (focusNodeId && !nodes.some((node) => node.nodeId === focusNodeId)) setFocusNodeId(null);
   }, [nodes, focusNodeId]);
-  const rows = routeTimeline(mobility, nodes);
-  const route = (previewIsCurrent ? preview?.impact?.route : null) ?? (() => {
-    const recommended = (mobility?.legs ?? []).map((leg) => leg.alternatives?.find((alternative) => alternative.mode === leg.recommendedMode)).filter(Boolean);
-    return {
-      legCount: recommended.length,
-      totalMinutes: recommended.reduce((sum, item) => sum + Number(item.totalMinutes ?? 0), 0),
-      walkingMeters: recommended.reduce((sum, item) => sum + Number(item.walkingMeters ?? 0), 0),
-      transfers: recommended.reduce((sum, item) => sum + Number(item.transfers ?? 0), 0),
-      estimatedFareCny: recommended.reduce((sum, item) => sum + Number(item.estimatedFareCny ?? 0), 0),
-    };
-  })();
-  const delta = previewIsCurrent ? preview?.impact?.deltaFromConfirmed : null;
+  useEffect(() => setModeOverrides({}), [mobility?.checkedAt, preview?.previewId]);
+  const displayMobility = useMemo(() => mobilityWithModeOverrides(mobility, modeOverrides), [mobility, modeOverrides]);
+  const rows = routeTimeline(displayMobility, nodes, previewIsCurrent ? preview?.itinerary : displayMobility?.itinerary);
+  const route = routeTotals(displayMobility);
+  const baselineRoute = previewIsCurrent ? preview?.impact?.baseline?.route ?? null : null;
+  const delta = baselineRoute ? {
+    totalMinutes: route.totalMinutes - baselineRoute.totalMinutes,
+    walkingMeters: route.walkingMeters - baselineRoute.walkingMeters,
+    transfers: route.transfers - baselineRoute.transfers,
+    estimatedFareCny: route.estimatedFareCny - baselineRoute.estimatedFareCny,
+  } : null;
   const unresolvedNodeIds = new Set(previewIsCurrent ? preview?.mobility?.coverage?.unresolvedNodeIds ?? [] : []);
   const unresolvedNodes = nodes.filter((node) => unresolvedNodeIds.has(node.nodeId));
   const activeBudget = previewIsCurrent ? preview?.impact?.budget ?? plan?.budget : plan?.budget;
   const budgetDelta = previewIsCurrent ? preview?.impact?.budgetDelta : null;
-  const routeRecommendations = (mobility?.legs ?? []).map((leg) => leg.alternatives?.find((alternative) => alternative.mode === leg.recommendedMode)).filter(Boolean);
+  const routeRecommendations = (displayMobility?.legs ?? []).map((leg) => leg.alternatives?.find((alternative) => alternative.mode === leg.recommendedMode)).filter(Boolean);
   const maxLegWalkingMeters = routeRecommendations.reduce((maximum, alternative) => Math.max(maximum, Number(alternative.walkingMeters ?? 0)), 0);
   const maxLegTransfers = routeRecommendations.reduce((maximum, alternative) => Math.max(maximum, Number(alternative.transfers ?? 0)), 0);
   const walkingTarget = mobility?.travelerFit?.planningWalkingTarget;
@@ -1169,25 +1216,25 @@ function RoutePreviewPanel({ trip, plan, nodes, mobility, comparisonNodes = [], 
   const isDraft = previewStatus !== "idle" || Boolean(preview);
   return <aside className={`route-preview-panel ${isDraft ? "trial-route" : "confirmed-route"}`} aria-label={pick("试选路线与影响", "Draft route and impact")}>
     <div className={`route-preview-map ${previewStatus === "loading" ? "recalculating" : ""}`}>
-      <TripDecisionMap nodes={nodes} comparisonNodes={comparisonNodes} activeNodeId={focusNodeId} onFocusNode={setFocusNodeId} mobility={mobility} comparisonMobility={previewIsCurrent ? comparisonMobility : null} tripId={trip?.tripId} staticMapAvailable={!preview && plan?.mapPreviewAvailable === true} label={pick("机场、住宿、游玩与餐饮的多点路线", "Multi-stop route across arrival, stay, activities and food")} locale={locale} />
+      <TripDecisionMap nodes={nodes} comparisonNodes={comparisonNodes} activeNodeId={focusNodeId} onFocusNode={setFocusNodeId} mobility={displayMobility} comparisonMobility={previewIsCurrent ? comparisonMobility : null} tripId={trip?.tripId} staticMapAvailable={!preview && plan?.mapPreviewAvailable === true} label={pick("机场、住宿、游玩与餐饮的多点路线", "Multi-stop route across arrival, stay, activities and food")} locale={locale} />
       {isDraft ? <div className="route-comparison-legend"><strong>{pick("对比：当前 vs 试排", "Compare: current vs draft")}</strong><span><i className="trial" />{pick("试排路线", "Draft route")}</span><span><i className="current" />{pick("当前路线", "Current route")}</span></div> : null}
       <button type="button" className="route-focus-button" onClick={onFocusMap}><MapTrifold />{pick("专注地图", "Focus map")}</button>
       {previewStatus === "loading" ? <span className="route-recalculating"><CircleNotch className="spin" />{pick("正在重算多点路线…", "Recalculating the multi-stop route…")}</span> : null}
     </div>
-    {isDraft ? <div className="route-trial-impact" aria-live="polite"><strong>{pick("试排影响", "Draft impact")}</strong>{previewStatus === "loading" ? <span>{pick("重算中…", "Recalculating…")}</span> : deltaParts.length ? deltaParts.map((part) => <span key={part.label} className={part.tone}>{part.label}</span>) : <span>{pick("等待路线核验", "Waiting for route check")}</span>}{walkingTarget != null || transferTarget != null ? <em className={(walkingTarget != null && maxLegWalkingMeters > walkingTarget) || (transferTarget != null && maxLegTransfers > transferTarget) ? "warning" : "ok"}>{pick("体力校验", "Effort")} {walkingTarget != null ? `${Math.round(maxLegWalkingMeters)}/${walkingTarget}m` : ""}{transferTarget != null ? ` · ${maxLegTransfers}/${transferTarget}` : ""}{(walkingTarget == null || maxLegWalkingMeters <= walkingTarget) && (transferTarget == null || maxLegTransfers <= transferTarget) ? <CheckCircle weight="bold" /> : null}</em> : null}</div> : null}
+    {isDraft ? <div className="route-trial-impact" aria-live="polite"><strong>{pick("试排影响", "Draft impact")}</strong>{previewStatus === "loading" ? <span>{pick("重算中…", "Recalculating…")}</span> : deltaParts.length ? deltaParts.map((part) => <span key={part.label} className={part.tone}>{part.label}</span>) : previewIsCurrent && preview?.impact?.baseline?.kind === "none" ? <span>{pick(`首次试排：${Math.round(route.totalMinutes)} 分钟 · 约 ¥${Math.round(route.estimatedFareCny)}`, `First draft: ${Math.round(route.totalMinutes)} min · about CNY ${Math.round(route.estimatedFareCny)}`)}</span> : <span>{pick("等待路线核验", "Waiting for route check")}</span>}{walkingTarget != null || transferTarget != null ? <em className={(walkingTarget != null && maxLegWalkingMeters > walkingTarget) || (transferTarget != null && maxLegTransfers > transferTarget) ? "warning" : "ok"}>{pick("体力校验", "Effort")} {walkingTarget != null ? `${Math.round(maxLegWalkingMeters)}/${walkingTarget}m` : ""}{transferTarget != null ? ` · ${maxLegTransfers}/${transferTarget}` : ""}{(walkingTarget == null || maxLegWalkingMeters <= walkingTarget) && (transferTarget == null || maxLegTransfers <= transferTarget) ? <CheckCircle weight="bold" /> : null}</em> : null}</div> : null}
     {unresolvedNodes.length ? <div className="route-unresolved-warning"><WarningCircle weight="fill" /><span><strong>{pick("这次没有把所有试选地点接入路线", "Not every drafted place joined the route")}</strong><small>{unresolvedNodes.map((node) => node.title).join("、")}{pick(" 暂未成功定位；地图和时间合计不包含这些地点。", " could not be located, so the map and totals do not include them.")}</small></span><button type="button" onClick={onRetryRoute}><ArrowsClockwise />{pick("重算路线", "Retry route")}</button></div> : null}
-    <details className="route-stop-disclosure"><summary><span>{route.legCount || Math.max(0, rows.length - 1)} {pick("段移动", "legs")} · {route.totalMinutes ? `${Math.round(route.totalMinutes)} ${pick("分钟", "min")}` : "—"} · {Number.isFinite(route.walkingMeters) ? `${Math.round(route.walkingMeters)} m` : "—"} · {Number.isFinite(route.estimatedFareCny) && route.estimatedFareCny > 0 ? `¥${Math.round(route.estimatedFareCny)}` : "—"}</span><CaretDown /></summary><div className="route-stop-sheet"><BudgetBoard budget={activeBudget} previewDelta={budgetDelta} /><div className="route-context-grid">{walkingTarget != null || transferTarget != null ? <div className="route-traveler-fit within"><PersonSimpleWalk weight="duotone" /><span><strong>{pick("同行人体力校验", "Traveler effort")}</strong><small>{walkingTarget != null ? `${Math.round(maxLegWalkingMeters)}/${walkingTarget}m` : ""}{transferTarget != null ? ` · ${maxLegTransfers}/${transferTarget}` : ""}</small></span></div> : null}</div><section className="route-stop-timeline" aria-labelledby="route-stop-title"><header><span><strong id="route-stop-title">{pick("按时间看每一站", "Stops in time order")}</strong><small>{pick("建议时间可在确认前继续调整", "Suggested times can still be adjusted")}</small></span><button type="button" onClick={() => onEditWeather?.(`${pick("请比较当前试排的站序并给一个更省时间、更少步行的顺序：", "Compare the current drafted stop order and suggest a faster order with less walking: ")} ${nodes.map((node) => node.title).join(" → ")}`, pick("优化站序", "Optimize stop order"))}><Sparkle weight="fill" />{pick("让 AI 优化站序", "Optimize with AI")}</button></header><ol>{rows.map(({ node, place, leg }, index) => {
+    <details className="route-stop-disclosure"><summary><span>{route.legCount || Math.max(0, rows.length - 1)} {pick("段移动", "legs")} · {route.totalMinutes ? `${Math.round(route.totalMinutes)} ${pick("分钟", "min")}` : "—"} · {Number.isFinite(route.walkingMeters) ? `${Math.round(route.walkingMeters)} m` : "—"} · {Number.isFinite(route.estimatedFareCny) && route.estimatedFareCny > 0 ? `¥${Math.round(route.estimatedFareCny)}` : "—"}</span><CaretDown /></summary><div className="route-stop-sheet"><BudgetBoard budget={activeBudget} previewDelta={budgetDelta} /><div className="route-context-grid">{walkingTarget != null || transferTarget != null ? <div className="route-traveler-fit within"><PersonSimpleWalk weight="duotone" /><span><strong>{pick("同行人体力校验", "Traveler effort")}</strong><small>{walkingTarget != null ? `${Math.round(maxLegWalkingMeters)}/${walkingTarget}m` : ""}{transferTarget != null ? ` · ${maxLegTransfers}/${transferTarget}` : ""}</small></span></div> : null}</div><section className="route-stop-timeline" aria-labelledby="route-stop-title"><header><span><strong id="route-stop-title">{pick("按时间看每一站", "Stops in time order")}</strong><small>{pick("建议时间可在确认前继续调整", "Suggested times can still be adjusted")}</small></span><button type="button" onClick={() => onEditWeather?.(`${pick("请根据这份按天试排，比较是否有更省时间、更少步行的顺序，并先解释再给可撤销建议：", "Review this day-by-day draft for a faster order with less walking. Explain first and return a reversible suggestion: ")} ${rows.map((row) => `${row.schedule?.date ?? ""} ${row.schedule?.startAt ?? "时间待核验"} ${row.schedule?.role ?? ""} ${row.node?.title ?? row.place?.label}`).join(" → ")}`, pick("询问更优顺序", "Ask about a better order"))}><Sparkle weight="fill" />{pick("向 AI 询问更优顺序", "Ask AI about a better order")}</button></header><ol>{rows.map(({ node, place, leg, schedule }, index) => {
       const meta = domainMeta(node?.domain ?? "transport");
       const Icon = meta.icon;
       const recommended = leg?.alternatives?.find((alternative) => alternative.mode === leg.recommendedMode) ?? null;
       const alternatives = (leg?.alternatives ?? []).filter((alternative) => alternative.mode !== leg.recommendedMode).slice(0, 2);
-      const repeatedStay = node?.domain === "stay" && rows.slice(0, index).some((row) => row.node?.nodeId === node.nodeId);
-      return <li key={`${place?.nodeId ?? place?.label}-${index}`} className={node?.nodeId === focusNodeId ? "active" : ""}>
-        <div className="route-stop"><button type="button" className="route-stop-main" onClick={() => node?.nodeId && setFocusNodeId(node.nodeId)}><span>{index + 1}</span><Icon weight="duotone" /><span><small>{repeatedStay ? pick("返回住宿", "Return to stay") : node ? scheduleLabel(node) : pick("时间待补", "Time needed")}</small><strong>{place?.label || node?.title || pick("地点待核验", "Place needs checking")}</strong></span></button>{node ? <button type="button" className="route-stop-detail" onClick={() => onPreviewNode(node.nodeId)} aria-label={pick(`查看${node.title}详情`, `Open details for ${node.title}`)}><NavigationArrow /></button> : null}</div>
-        {leg ? <div className="route-leg"><span>{MOBILITY_MODE_LABELS[leg.recommendedMode] || leg.recommendedMode}</span><strong>{recommended ? `${recommended.totalMinutes} ${pick("分钟", "min")}` : pick("路线待核验", "Route needs checking")}</strong>{recommended?.walkingMeters != null ? <small>{pick("步行", "Walk")} {Math.round(recommended.walkingMeters)} m{recommended.transfers != null ? ` · ${recommended.transfers} ${pick("次换乘", "transfers")}` : ""}</small> : null}{alternatives.length ? <em>{alternatives.map((alternative) => `${MOBILITY_MODE_LABELS[alternative.mode] || alternative.mode} ${alternative.totalMinutes} min`).join(" / ")}</em> : null}</div> : null}
+      return <li key={schedule?.stopId ?? `${place?.nodeId ?? place?.label}-${index}`} className={node?.nodeId === focusNodeId ? "active" : ""}>
+        <div className="route-stop"><button type="button" className="route-stop-main" onClick={() => node?.nodeId && setFocusNodeId(node.nodeId)}><span>{index + 1}</span><Icon weight="duotone" /><span><small>{schedule ? itineraryStopLabel(schedule, pick) : node ? scheduleLabel(node) : pick("时间待补", "Time needed")}</small><strong>{schedule?.role === "intercity_arrival" ? place?.label : node?.title || place?.label || pick("地点待核验", "Place needs checking")}</strong></span></button>{node ? <button type="button" className="route-stop-detail" onClick={() => onPreviewNode(node.nodeId)} aria-label={pick(`查看${node.title}详情`, `Open details for ${node.title}`)}><NavigationArrow /></button> : null}</div>
+        {leg ? <div className="route-leg"><div className="route-mode-tabs" aria-label={pick("比较这段路的交通方式", "Compare modes for this leg")}>{leg.alternatives.map((alternative) => <button key={alternative.mode} type="button" className={alternative.mode === leg.recommendedMode ? "active" : ""} aria-pressed={alternative.mode === leg.recommendedMode} onClick={() => setModeOverrides((current) => ({ ...current, [leg.legId]: alternative.mode }))}>{MOBILITY_MODE_LABELS[alternative.mode] || alternative.mode}</button>)}</div><strong>{recommended ? `${recommended.totalMinutes} ${pick("分钟", "min")}` : pick("路线待核验", "Route needs checking")}</strong>{recommended?.walkingMeters != null ? <small>{pick("步行", "Walk")} {Math.round(recommended.walkingMeters)} m{recommended.transfers != null ? ` · ${recommended.transfers} ${pick("次换乘", "transfers")}` : ""}{recommended.estimatedFareCny != null ? ` · ${pick("约", "about")} ¥${Math.round(recommended.estimatedFareCny)}` : ""}</small> : null}{alternatives.length ? <em>{alternatives.map((alternative) => `${MOBILITY_MODE_LABELS[alternative.mode] || alternative.mode} ${alternative.totalMinutes} min`).join(" / ")}</em> : null}</div> : null}
       </li>;
     })}</ol></section><RouteWeatherDisclosure weather={plan?.weather} onEdit={onEditWeather} /></div></details>
     {previewStatus === "error" ? <div className="route-preview-error"><WarningCircle weight="fill" /><span>{pick("这次路线没有完成核验，当前继续显示上一版完整路线。", "The new route was not verified, so the previous complete route remains visible.")}</span><button type="button" onClick={onRetryRoute}><ArrowsClockwise />{pick("重新核验路线", "Retry route")}</button></div> : null}
+    {previewStatus === "blocked" ? <div className="route-preview-error"><WarningCircle weight="fill" /><span>{preview?.feasibility?.primaryBlocker || pick("这份试排还不能形成可执行路线。", "This draft is not yet executable.")}</span><button type="button" onClick={onRetryRoute}><ArrowsClockwise />{pick("重新核验路线", "Retry route")}</button></div> : null}
   </aside>;
 }
 
@@ -1215,7 +1262,7 @@ function useTripMobilityPreview({ trip, plan, proposal, acceptedItems, selection
     if (cached) {
       setPreview(cached);
       setPreviewSelectionKey(selectionKey);
-      setPreviewStatus("ready");
+      setPreviewStatus(["completed", "partial"].includes(cached.status) ? "ready" : "blocked");
       return undefined;
     }
     const requestId = ++requestSequence.current;
@@ -1224,17 +1271,13 @@ function useTripMobilityPreview({ trip, plan, proposal, acceptedItems, selection
     let requestTimeout = null;
     const timer = window.setTimeout(() => {
       controller = new AbortController();
-      requestTimeout = window.setTimeout(() => controller.abort(), 45_000);
+      requestTimeout = window.setTimeout(() => controller.abort(), 90_000);
       api.previewMobility(trip.tripId, plan?.revision, activeSelections, controller.signal).then((result) => {
         if (requestId !== requestSequence.current) return;
-        if (!["completed", "partial"].includes(result.status)) {
-          setPreviewStatus("error");
-          return;
-        }
         previewCache.current.set(cacheKey, result);
         setPreview(result);
         setPreviewSelectionKey(selectionKey);
-        setPreviewStatus("ready");
+        setPreviewStatus(["completed", "partial"].includes(result.status) ? "ready" : "blocked");
       }).catch(() => {
         if (requestId === requestSequence.current) setPreviewStatus("error");
       }).finally(() => window.clearTimeout(requestTimeout));
@@ -1254,9 +1297,10 @@ function useTripMobilityPreview({ trip, plan, proposal, acceptedItems, selection
     return [...new Map([...kept, ...chosen].map((node) => [node.nodeId, node])).values()].sort((left, right) => scheduleSortValue(left) - scheduleSortValue(right));
   }, [preview, acceptedItems, activeSelections, proposal]);
   const previewIsCurrent = Boolean(preview && previewSelectionKey === selectionKey);
-  const routeNodes = preview?.selectedNodes?.length ? preview.selectedNodes : previewStatus !== "ready" && acceptedItems.length ? acceptedItems : draftNodes;
+  const routeNodes = preview?.selectedNodes?.length ? preview.selectedNodes : previewStatus === "error" && acceptedItems.length ? acceptedItems : draftNodes;
   const routeMobility = Object.keys(activeSelections).length ? preview?.mobility ?? plan?.mobility : plan?.mobility;
   const routeHasUnresolvedChoices = previewIsCurrent && (preview?.mobility?.coverage?.unresolvedNodeIds?.length ?? 0) > 0;
+  const routeCanConfirm = previewIsCurrent && preview?.feasibility?.canConfirm === true;
   return {
     activeSelections,
     selectionKey,
@@ -1267,6 +1311,9 @@ function useTripMobilityPreview({ trip, plan, proposal, acceptedItems, selection
     routeNodes,
     routeMobility,
     routeHasUnresolvedChoices,
+    routeCanConfirm,
+    routeBlocker: previewIsCurrent ? preview?.feasibility?.primaryBlocker ?? null : null,
+    previewId: previewIsCurrent ? preview?.previewId ?? null : null,
     retry: () => setPreviewNonce((current) => current + 1),
   };
 }
@@ -1278,7 +1325,7 @@ function PlanningWorkbench({ trip, plan, proposal, acceptedItems, selections, on
   const [showAllCandidates, setShowAllCandidates] = useState(false);
   const domainFocusRef = useRef(null);
   const acceptedByDomain = useMemo(() => Object.fromEntries(PLANNING_FLOW.map((domain) => [domain, acceptedItems.filter((node) => node.domain === domain)])), [acceptedItems]);
-  const { activeSelections, selectedCount, preview, previewStatus, previewIsCurrent, routeNodes, routeMobility, routeHasUnresolvedChoices } = previewModel;
+  const { activeSelections, selectedCount, preview, previewStatus, previewIsCurrent, routeNodes, routeMobility, routeHasUnresolvedChoices, routeCanConfirm, routeBlocker, previewId } = previewModel;
   const replacingCount = Object.keys(activeSelections).filter((domain) => acceptedByDomain[domain]?.length).length;
   const confirmedCount = PLANNING_FLOW.filter((domain) => acceptedByDomain[domain]?.length).length;
   const selectionOverview = PLANNING_FLOW.map((domain) => {
@@ -1331,15 +1378,15 @@ function PlanningWorkbench({ trip, plan, proposal, acceptedItems, selections, on
         <header className="comparison-breadcrumb"><button type="button" onClick={() => setComparisonOpen(false)}><CaretDown />{pick("整趟安排", "Trip outline")}</button><span>/</span><strong>{activeCopy.title}</strong></header>
         <div className="comparison-context"><ActiveDomainIcon weight="duotone" /><span>{trip?.dates || pick("日期待补", "Dates needed")} · {activeCopy.detail}</span></div>
         <div className="planning-domain-options">
-          {activeConfirmed.map((candidate) => <PlanningChoiceCard key={candidate.nodeId} candidate={{ ...candidate, domain: activeDomain }} domain={activeDomain} confirmed comparisonMode baselineCandidate={candidate} onPreview={() => onPreviewCandidate(candidate.nodeId)} />)}
-          {visibleCandidates.map((candidate) => <PlanningChoiceCard key={candidate.nodeId} candidate={{ ...candidate, domain: activeDomain }} domain={activeDomain} trial={activeSelections[activeDomain] === candidate.nodeId} replacing={activeConfirmed.length > 0} comparisonMode baselineCandidate={activeConfirmed[0] ?? null} trialImpact={previewIsCurrent && activeSelections[activeDomain] === candidate.nodeId ? preview?.impact : null} onChoose={() => selectCandidate(activeDomain, activeSelections[activeDomain] === candidate.nodeId && activeConfirmed.length ? null : candidate.nodeId)} onPreview={() => onPreviewCandidate(candidate.nodeId)} />)}
+          {activeConfirmed.map((candidate) => <PlanningChoiceCard key={candidate.nodeId} candidate={{ ...candidate, domain: activeDomain }} domain={activeDomain} confirmed comparisonMode baselineCandidate={candidate} partySize={trip?.travelerCount || 1} onPreview={() => onPreviewCandidate(candidate.nodeId)} />)}
+          {visibleCandidates.map((candidate) => <PlanningChoiceCard key={candidate.nodeId} candidate={{ ...candidate, domain: activeDomain }} domain={activeDomain} trial={activeSelections[activeDomain] === candidate.nodeId} replacing={activeConfirmed.length > 0} comparisonMode baselineCandidate={activeConfirmed[0] ?? null} trialImpact={previewIsCurrent && activeSelections[activeDomain] === candidate.nodeId ? preview?.impact : null} partySize={trip?.travelerCount || 1} onChoose={() => selectCandidate(activeDomain, activeSelections[activeDomain] === candidate.nodeId && activeConfirmed.length ? null : candidate.nodeId)} onPreview={() => onPreviewCandidate(candidate.nodeId)} />)}
           {activeCandidates.length > 3 ? <button type="button" className="comparison-more-button" onClick={() => setShowAllCandidates((current) => !current)}>{showAllCandidates ? pick("收起更多候选", "Show fewer options") : locale === "en" ? `View ${activeCandidates.length - 3} more options` : `查看另外 ${activeCandidates.length - 3} 个候选`}<CaretDown className={showAllCandidates ? "expanded" : ""} /></button> : null}
           {!activeConfirmed.length && !activeCandidates.length ? <div className="planning-domain-empty"><span><ActiveDomainIcon weight="duotone" /></span><div><strong>{pick("还没有可靠候选", "No reliable options yet")}</strong><small>{pick("不会用无关地点或静态假数据填满这里。", "Unrelated places or static mock data will not be used here.")}</small></div><button type="button" onClick={() => onAskAgent(planningDomainPrompt(activeDomain, locale), `${domainLabel(activeDomain, locale)}候选`)}>{pick("重新查找", "Research again")}</button></div> : null}
         </div>
-        <p className="comparison-source-note">{pick("这些候选不会改动行程，确认后才写入。", "These options do not change the trip until you confirm.")} {proposal?.providerLabel ? `${pick("来源", "Source")}: ${consumerProviderLabel(proposal.providerLabel)}` : ""}</p>
+        <p className="comparison-source-note">{pick("这些候选不会改动行程，确认后才写入。", "These options do not change the trip until you confirm.")} {proposal?.providerLabel ? `${pick("来源", "Source")}: ${consumerProviderLabel(proposal.providerLabel)}` : ""}{activeDomain === "transport" && proposal?.caveats?.find((item) => /高铁|无票班次/u.test(item)) ? <strong>{proposal.caveats.find((item) => /高铁|无票班次/u.test(item))}</strong> : null}</p>
       </section>}
     </div><RoutePreviewPanel trip={trip} plan={plan} nodes={routeNodes} comparisonNodes={acceptedItems} mobility={routeMobility} comparisonMobility={plan?.mobility} preview={preview} previewStatus={previewStatus} previewIsCurrent={previewIsCurrent} onFocusMap={onFocusMap} onPreviewNode={onPreviewCandidate} onEditWeather={onAskAgent} onRetryRoute={previewModel.retry} /></div>
-    {selectedCount ? <footer className="planning-confirm-bar"><button type="button" className="keep-current-button" onClick={() => Object.keys(activeSelections).forEach((domain) => onSelectCandidate(domain, null))}>{pick("保持当前", "Keep current")}</button><span>{pick("试排不会修改已确认行程", "Drafting does not change the confirmed trip")}</span><button type="button" className="button primary" disabled={loading || previewStatus !== "ready" || routeHasUnresolvedChoices} onClick={() => proposal?.proposalId && onAccept(proposal.proposalId, activeSelections, { partial: true })}>{loading || previewStatus === "loading" ? <CircleNotch className="spin" /> : null}{pick("采用此方案", "Use this option")}</button></footer> : null}
+    {selectedCount ? <footer className={`planning-confirm-bar ${routeBlocker ? "blocked" : ""}`}><button type="button" className="keep-current-button" onClick={() => Object.keys(activeSelections).forEach((domain) => onSelectCandidate(domain, null))}>{pick("保持当前", "Keep current")}</button><span>{routeBlocker || pick("试排不会修改已确认行程", "Drafting does not change the confirmed trip")}</span><button type="button" className="button primary" disabled={loading || previewStatus !== "ready" || routeHasUnresolvedChoices || !routeCanConfirm} onClick={() => proposal?.proposalId && onAccept(proposal.proposalId, activeSelections, { partial: true, previewId, baseRevision: plan?.revision })}>{loading || previewStatus === "loading" ? <CircleNotch className="spin" /> : null}{routeBlocker ? pick("暂不能采用", "Cannot use yet") : pick("采用此方案", "Use this option")}</button></footer> : null}
   </section>;
 }
 
@@ -1372,10 +1419,10 @@ function TodayPanel({ trip, plan, nodes, onShowItinerary, onPrefill }) {
   const recommended = today?.route?.alternatives?.find((alternative) => alternative.mode === today.route.recommendedMode) ?? null;
   if (!today || today.status === "planning") return <section className="today-pane empty"><span className="eyebrow">Today</span><MapTrifold weight="duotone" /><h2>{pick("确认地点后，这里会变成行中首页", "This becomes your on-trip home after places are confirmed")}</h2><p>{pick("现在还没有已确认的路线。先在行程中比较并确认吃、住、行、玩，地图才会显示真实地点和下一步。", "There is no confirmed route yet. Compare and confirm the connected trip first, then the map can show real places and the next step.")}</p><button type="button" className="button primary" onClick={onShowItinerary}>{pick("返回行程选择", "Back to trip choices")}</button></section>;
   return <section className="today-pane" aria-labelledby="today-title">
-    <header><div><span className="eyebrow">Today · {pick("现在与下一步", "Now and next")}</span><h2 id="today-title">{currentNode?.title || pick("当前安排待确认", "Current plan needs confirmation")}</h2><p>{today.status === "needs_schedule" ? pick("地点已经确认，但还没有可靠的每天时间；先看路线，再补时间。", "Places are confirmed, but daily timing is not reliable yet. Check the route first, then add timing.") : scheduleLabel(currentNode)}</p></div><button type="button" className="quiet-button" onClick={onShowItinerary}><List />{pick("完整行程", "Full trip")}</button></header>
+    <header><div><span className="eyebrow">Today · {pick("现在与下一步", "Now and next")}</span><h2 id="today-title">{today.currentTask?.title || currentNode?.title || pick("当前安排待确认", "Current plan needs confirmation")}</h2><p>{today.status === "needs_schedule" ? pick("地点已经确认，但还没有可靠的每天时间；先看路线，再补时间。", "Places are confirmed, but daily timing is not reliable yet. Check the route first, then add timing.") : today.currentTask?.scheduledAt ? `${pick(`第 ${today.currentTask.dayIndex} 天`, `Day ${today.currentTask.dayIndex}`)} · ${compactDateTime(today.currentTask.scheduledAt)} · ${today.currentTask.roleLabel ?? ""}` : scheduleLabel(currentNode)}</p></div><button type="button" className="quiet-button" onClick={onShowItinerary}><List />{pick("完整行程", "Full trip")}</button></header>
     <div className="today-map"><TripDecisionMap nodes={nodes} activeNodeId={currentNode?.nodeId} onFocusNode={() => {}} mobility={plan?.mobility} tripId={trip?.tripId} staticMapAvailable={plan?.mapPreviewAvailable === true} label={pick("今日地点和路线地图", "Today's places and routes map")} locale={locale} /></div>
     <article className="today-current-card">{currentNode?.media?.[0] ? <img src={currentNode.media[0].url} alt={currentNode.media[0].title || `${currentNode.title} ${pick("实景图", "photo")}`} /> : null}<div><small>{pick("现在", "Now")}</small><strong>{currentNode?.title}</strong><p>{currentNode?.location?.address || currentNode?.location?.label || currentNode?.operability?.arrivalRouteAnchor?.label || currentNode?.operability?.arrivalPlace?.label || pick("位置资料待核验", "Location still needs checking")}</p>{recommended ? <span>{MOBILITY_MODE_LABELS[today.route.recommendedMode] || today.route.recommendedMode}，{locale === "en" ? `about ${recommended.totalMinutes} min` : `约 ${recommended.totalMinutes} 分钟`}{recommended.walkingMeters != null ? (locale === "en" ? `, ${Math.round(recommended.walkingMeters)} m walking` : `，步行 ${Math.round(recommended.walkingMeters)} 米`) : ""}</span> : <span>{pick("城市路线仍待核验", "City route still needs checking")}</span>}</div></article>
-    {nextNode ? <div className="today-next-card"><span><Clock /></span><div><small>{pick("下一步", "Next")}</small><strong>{nextNode.title}</strong><p>{scheduleLabel(nextNode)}</p></div><NavigationArrow /></div> : null}
+    {today.nextTask ? <div className="today-next-card"><span><Clock /></span><div><small>{pick("下一步", "Next")}</small><strong>{today.nextTask.title || nextNode?.title}</strong><p>{today.nextTask.scheduledAt ? `${pick(`第 ${today.nextTask.dayIndex} 天`, `Day ${today.nextTask.dayIndex}`)} · ${compactDateTime(today.nextTask.scheduledAt)} · ${today.nextTask.roleLabel ?? ""}` : scheduleLabel(nextNode)}</p></div><NavigationArrow /></div> : null}
     {today.attentionItems?.length ? <section className="today-attention"><strong>{pick("出发前再看一眼", "Check before leaving")}</strong>{today.attentionItems.map((rawItem) => { const item = localizedReadinessItem(rawItem, locale); return <span key={item.itemId}><WarningCircle weight="fill" />{item.title}: {(locale === "en" ? READINESS_STATUS_LABELS_EN : READINESS_STATUS_LABELS)[item.status]}</span>; })}</section> : null}
     <section className="today-change"><div><strong>{pick("事情有变化？", "Something changed?")}</strong><small>{pick("只调整受影响部分，不重做整趟旅行。", "Only update the affected part, not the whole trip.")}</small></div><div>{(locale === "en" ? [["Flight or train delayed", "Transport delay"], ["It started raining", "Rain"], ["A traveler's energy changed", "Energy change"], ["A place closed unexpectedly", "Place closed"]] : [["航班或火车延误", "航班或火车延误"], ["开始下雨", "开始下雨"], ["同行人体力变化", "同行人体力变化"], ["地点临时关闭", "地点临时关闭"]]).map(([label, context]) => <button key={label} type="button" onClick={() => onPrefill(locale === "en" ? `Something changed: ${label}. Keep confirmed plans that are not affected, give me one reliable alternative, and explain the impact.` : `事情有变化：${label}。请保留不受影响的已确认安排，只给我一个可靠替代并说明影响。`, context)}>{label}</button>)}</div></section>
     <p className="today-freshness">{pick("路线为查询时估算，不是实时到站或即时车费；电梯、卫生间等设施资料需现场确认。", "Routes are query-time estimates, not live arrivals or final fares. Elevators, toilets and other facilities must be confirmed on site.")}</p>
@@ -1385,12 +1432,17 @@ function TodayPanel({ trip, plan, nodes, onShowItinerary, onPrefill }) {
 function MobileTrialMapPanel({ trip, plan, acceptedItems, previewModel, onKeep, onAdopt, onPreviewNode, onOptimize, loading }) {
   const { locale, pick } = useUiLocale();
   const [expanded, setExpanded] = useState(false);
+  const [modeOverrides, setModeOverrides] = useState({});
   const dragStartRef = useRef(null);
   const dragHandledRef = useRef(false);
   const { preview, previewStatus, previewIsCurrent, routeNodes, routeMobility } = previewModel;
-  const rows = routeTimeline(routeMobility, routeNodes);
-  const delta = previewIsCurrent ? preview?.impact?.deltaFromConfirmed : null;
-  const routeRecommendations = (routeMobility?.legs ?? []).map((leg) => leg.alternatives?.find((alternative) => alternative.mode === leg.recommendedMode)).filter(Boolean);
+  useEffect(() => setModeOverrides({}), [preview?.previewId]);
+  const displayMobility = useMemo(() => mobilityWithModeOverrides(routeMobility, modeOverrides), [routeMobility, modeOverrides]);
+  const rows = routeTimeline(displayMobility, routeNodes, preview?.itinerary);
+  const route = routeTotals(displayMobility);
+  const baselineRoute = previewIsCurrent ? preview?.impact?.baseline?.route ?? null : null;
+  const delta = baselineRoute ? { totalMinutes: route.totalMinutes - baselineRoute.totalMinutes, walkingMeters: route.walkingMeters - baselineRoute.walkingMeters, estimatedFareCny: route.estimatedFareCny - baselineRoute.estimatedFareCny } : null;
+  const routeRecommendations = (displayMobility?.legs ?? []).map((leg) => leg.alternatives?.find((alternative) => alternative.mode === leg.recommendedMode)).filter(Boolean);
   const maxWalking = routeRecommendations.reduce((maximum, alternative) => Math.max(maximum, Number(alternative.walkingMeters ?? 0)), 0);
   const walkingTarget = routeMobility?.travelerFit?.planningWalkingTarget;
   const impactParts = delta || preview?.impact?.budgetDelta ? [
@@ -1400,9 +1452,9 @@ function MobileTrialMapPanel({ trip, plan, acceptedItems, previewModel, onKeep, 
     preview?.impact?.budgetDelta?.estimated ? { label: `${pick("整趟", "Trip")} Δ ${preview.impact.budgetDelta.estimated > 0 ? "+" : "−"}¥${Math.abs(Math.round(preview.impact.budgetDelta.estimated))}`, tone: preview.impact.budgetDelta.estimated > 0 ? "up" : "down" } : null,
   ].filter(Boolean) : [];
   return <section className={`mobile-trial-map-panel ${expanded ? "expanded" : "compact"}`} aria-label={pick("地图试排", "Map preview")}>
-    <div className="mobile-trial-map-canvas"><TripDecisionMap nodes={routeNodes} comparisonNodes={acceptedItems} mobility={routeMobility} comparisonMobility={plan?.mobility} activeNodeId={null} onFocusNode={() => {}} tripId={trip?.tripId} staticMapAvailable={plan?.mapPreviewAvailable === true} label={pick("当前与试排路线地图", "Current and draft route map")} locale={locale} /><div className="mobile-route-legend"><span><i className="trial" />{pick("试排路线", "Draft route")}</span><span><i className="current" />{pick("当前路线", "Current route")}</span></div></div>
-    <section className="mobile-route-sheet"><button type="button" className="mobile-route-grip" onClick={() => { if (dragHandledRef.current) { dragHandledRef.current = false; return; } setExpanded((current) => !current); }} onPointerDown={(event) => { dragHandledRef.current = false; dragStartRef.current = event.clientY; event.currentTarget.setPointerCapture?.(event.pointerId); }} onPointerUp={(event) => { const start = dragStartRef.current; dragStartRef.current = null; if (start == null) return; const deltaY = event.clientY - start; if (deltaY < -36) { dragHandledRef.current = true; setExpanded(true); } else if (deltaY > 36) { dragHandledRef.current = true; setExpanded(false); } }} onPointerCancel={() => { dragStartRef.current = null; dragHandledRef.current = false; }} aria-label={expanded ? pick("收起路线详情", "Collapse route details") : pick("展开路线详情", "Expand route details")} aria-expanded={expanded}><span /></button><div className="mobile-route-impact"><strong>{pick("试排影响", "Draft impact")}</strong>{previewStatus === "loading" ? <span>{pick("重算中…", "Recalculating…")}</span> : impactParts.length ? impactParts.map((part) => <span key={part.label} className={part.tone}>{part.label}</span>) : <span>{pick("等待核验", "Waiting")}</span>}{walkingTarget != null ? <em className={maxWalking > walkingTarget ? "warning" : "ok"}>{pick("体力", "Effort")} {Math.round(maxWalking)}/{walkingTarget}m</em> : null}</div>{expanded && rows.length > 2 ? <button type="button" className="mobile-route-optimize" onClick={() => onOptimize?.(`${pick("请比较当前试排的站序并给一个更省时间、更少步行的顺序：", "Compare the current drafted stop order and suggest a faster order with less walking: ")} ${routeNodes.map((node) => node.title).join(" → ")}`, pick("优化站序", "Optimize stop order"))}><Sparkle weight="fill" />{pick("让 AI 优化站序", "Optimize order with AI")}</button> : null}<div className="mobile-route-stops">{rows.map(({ node, place, leg }, index) => { const recommended = leg?.alternatives?.find((alternative) => alternative.mode === leg.recommendedMode); return <button type="button" key={`${place?.nodeId ?? place?.label}-${index}`} onClick={() => node && onPreviewNode(node.nodeId)}><span>{index + 1}</span><span><strong>{place?.label || node?.title}</strong><small>{recommended ? `${MOBILITY_MODE_LABELS[leg.recommendedMode] || leg.recommendedMode} ${recommended.totalMinutes} ${pick("分钟", "min")}` : scheduleLabel(node)}</small></span><time>{node?.time ? compactDateTime(node.time).split(" ").at(-1) : ""}</time></button>; })}</div></section>
-    <footer className="mobile-trial-confirm"><button type="button" onClick={onKeep}>{pick("保持当前", "Keep current")}</button><button type="button" className="primary" disabled={loading || previewStatus !== "ready" || previewModel.routeHasUnresolvedChoices} onClick={onAdopt}>{loading || previewStatus === "loading" ? <CircleNotch className="spin" /> : null}{pick("采用此方案", "Use this option")}</button></footer>
+    <div className="mobile-trial-map-canvas"><TripDecisionMap nodes={routeNodes} comparisonNodes={acceptedItems} mobility={displayMobility} comparisonMobility={plan?.mobility} activeNodeId={null} onFocusNode={() => {}} tripId={trip?.tripId} staticMapAvailable={plan?.mapPreviewAvailable === true} label={pick("当前与试排路线地图", "Current and draft route map")} locale={locale} /><div className="mobile-route-legend"><span><i className="trial" />{pick("试排路线", "Draft route")}</span><span><i className="current" />{pick("当前路线", "Current route")}</span></div></div>
+    <section className="mobile-route-sheet"><button type="button" className="mobile-route-grip" onClick={() => { if (dragHandledRef.current) { dragHandledRef.current = false; return; } setExpanded((current) => !current); }} onPointerDown={(event) => { dragHandledRef.current = false; dragStartRef.current = event.clientY; event.currentTarget.setPointerCapture?.(event.pointerId); }} onPointerUp={(event) => { const start = dragStartRef.current; dragStartRef.current = null; if (start == null) return; const deltaY = event.clientY - start; if (deltaY < -36) { dragHandledRef.current = true; setExpanded(true); } else if (deltaY > 36) { dragHandledRef.current = true; setExpanded(false); } }} onPointerCancel={() => { dragStartRef.current = null; dragHandledRef.current = false; }} aria-label={expanded ? pick("收起路线详情", "Collapse route details") : pick("展开路线详情", "Expand route details")} aria-expanded={expanded}><span /></button><div className="mobile-route-impact"><strong>{pick("试排影响", "Draft impact")}</strong>{previewStatus === "loading" ? <span>{pick("重算中…", "Recalculating…")}</span> : impactParts.length ? impactParts.map((part) => <span key={part.label} className={part.tone}>{part.label}</span>) : previewIsCurrent && preview?.impact?.baseline?.kind === "none" ? <span>{pick(`首次试排 ${Math.round(route.totalMinutes)} 分钟 · 约 ¥${Math.round(route.estimatedFareCny)}`, `First draft ${Math.round(route.totalMinutes)} min · about CNY ${Math.round(route.estimatedFareCny)}`)}</span> : <span>{pick("等待核验", "Waiting")}</span>}{walkingTarget != null ? <em className={maxWalking > walkingTarget ? "warning" : "ok"}>{pick("体力", "Effort")} {Math.round(maxWalking)}/{walkingTarget}m</em> : null}</div>{expanded && rows.length > 2 ? <button type="button" className="mobile-route-optimize" onClick={() => onOptimize?.(`${pick("请根据这份按天试排，比较是否有更省时间、更少步行的顺序，并先解释再给可撤销建议：", "Review this day-by-day draft for a faster order with less walking. Explain first and return a reversible suggestion: ")} ${rows.map((row) => `${row.schedule?.date ?? ""} ${row.schedule?.startAt ?? "时间待核验"} ${row.schedule?.role ?? ""} ${row.node?.title ?? row.place?.label}`).join(" → ")}`, pick("询问更优顺序", "Ask about a better order"))}><Sparkle weight="fill" />{pick("向 AI 询问更优顺序", "Ask AI about a better order")}</button> : null}<div className="mobile-route-stops">{rows.map(({ node, place, leg, schedule }, index) => { const recommended = leg?.alternatives?.find((alternative) => alternative.mode === leg.recommendedMode); return <div className="mobile-route-stop" key={schedule?.stopId ?? `${place?.nodeId ?? place?.label}-${index}`}><button type="button" onClick={() => node && onPreviewNode(node.nodeId)}><span>{index + 1}</span><span><strong>{schedule?.role === "intercity_arrival" ? place?.label : node?.title || place?.label}</strong><small>{schedule ? itineraryStopLabel(schedule, pick) : scheduleLabel(node)}</small></span><time>{schedule?.startAt ? compactDateTime(schedule.startAt).split(" ").at(-1) : ""}</time></button>{expanded && leg?.alternatives?.length ? <div className="mobile-route-modes">{leg.alternatives.map((alternative) => <button type="button" key={alternative.mode} className={alternative.mode === leg.recommendedMode ? "active" : ""} onClick={() => setModeOverrides((current) => ({ ...current, [leg.legId]: alternative.mode }))}>{MOBILITY_MODE_LABELS[alternative.mode] || alternative.mode}<small>{alternative.totalMinutes} min · {Math.round(alternative.walkingMeters ?? 0)}m{alternative.estimatedFareCny != null ? ` · ¥${Math.round(alternative.estimatedFareCny)}` : ""}</small></button>)}</div> : null}</div>; })}</div></section>
+    {previewModel.routeBlocker ? <p className="mobile-route-blocker" role="alert"><WarningCircle weight="fill" />{previewModel.routeBlocker}</p> : null}<footer className="mobile-trial-confirm"><button type="button" onClick={onKeep}>{pick("保持当前", "Keep current")}</button><button type="button" className="primary" disabled={loading || previewStatus !== "ready" || previewModel.routeHasUnresolvedChoices || !previewModel.routeCanConfirm} onClick={onAdopt}>{loading || previewStatus === "loading" ? <CircleNotch className="spin" /> : null}{previewModel.routeBlocker ? pick("暂不能采用", "Cannot use yet") : pick("采用此方案", "Use this option")}</button></footer>
   </section>;
 }
 
@@ -1455,9 +1507,11 @@ function PlanCanvas({ conversation, trip, plan, tripRecovery, dataUnavailable, o
   useEffect(() => {
     if (detailNodeId && !workspaceNodes.some((node) => node.nodeId === detailNodeId)) setDetailNodeId(null);
   }, [workspaceNodes, detailNodeId]);
-  const detailNode = workspaceNodes.find((node) => node.nodeId === detailNodeId) ?? null;
+  const baseDetailNode = workspaceNodes.find((node) => node.nodeId === detailNodeId) ?? null;
+  const previewDetailNode = previewModel.preview?.selectedNodes?.find((node) => node.nodeId === detailNodeId) ?? null;
+  const detailNode = baseDetailNode && previewDetailNode ? { ...baseDetailNode, ...previewDetailNode, operability: { ...(baseDetailNode.operability ?? {}), ...(previewDetailNode.operability ?? {}) } } : baseDetailNode;
   return <section className={`trip-workspace mobile-mode-${activeMobileView}`} id="trip-plan-canvas">
-    {trip && activeMobileView === "map" ? previewModel.selectedCount ? <MobileTrialMapPanel trip={trip} plan={plan} acceptedItems={items} previewModel={previewModel} onKeep={() => setSelections({})} onAdopt={() => proposal?.proposalId && onAcceptProposal(proposal.proposalId, previewModel.activeSelections, { partial: true })} onPreviewNode={setDetailNodeId} onOptimize={onPrefill} loading={loading} /> : <TodayPanel trip={trip} plan={plan} nodes={items} onShowItinerary={() => onMobileViewChange("itinerary")} onPrefill={onPrefill} /> : !trip ? tripRecovery ? <div className="workspace-empty recovery-launchpad">
+    {trip && activeMobileView === "map" ? previewModel.selectedCount ? <MobileTrialMapPanel trip={trip} plan={plan} acceptedItems={items} previewModel={previewModel} onKeep={() => setSelections({})} onAdopt={() => proposal?.proposalId && onAcceptProposal(proposal.proposalId, previewModel.activeSelections, { partial: true, previewId: previewModel.previewId, baseRevision: plan?.revision })} onPreviewNode={setDetailNodeId} onOptimize={onPrefill} loading={loading} /> : <TodayPanel trip={trip} plan={plan} nodes={items} onShowItinerary={() => onMobileViewChange("itinerary")} onPrefill={onPrefill} /> : !trip ? tripRecovery ? <div className="workspace-empty recovery-launchpad">
       <div className="recovery-card"><span className="recovery-icon"><ArrowsClockwise weight="bold" /></span><h2>{pick("旅行要求还在，草案需要重新建立", "Your requirements are safe; the trip draft needs rebuilding")}</h2><p>{pick("这段历史对话保存完整，但原来的旅行草案已经丢失。重新建立后，助手会沿用你说过的目的地、同行人和偏好，不需要从头填写。", "The conversation is intact, but its trip draft is missing. Rebuilding will reuse the destination, travelers and preferences you already shared.")}</p><button className="button primary" type="button" onClick={onRecoverTrip} disabled={loading}>{loading ? <CircleNotch className="spin" /> : <ArrowsClockwise />}{pick("恢复并继续规划", "Restore and continue")}</button><small>{pick("不会自动确认、购买或覆盖其他旅行。", "This will not confirm, purchase or overwrite another trip.")}</small></div>
       <div className="launchpad-preview"><div className="launch-domain-grid">{DOMAIN_ITEMS.map(({ key, icon: Icon }) => <div key={key}><Icon weight="duotone" /><strong>{domainLabel(key, locale)}</strong><span>{key === "transport" ? pick("路线与换乘", "Routes and transfers") : key === "stay" ? pick("位置与住宿", "Location and stays") : key === "food" ? pick("本地餐饮", "Local food") : pick("体验与节奏", "Experiences and pace")}</span></div>)}</div><p><MapTrifold />{pick("地图、地点图片、路线和设施会与候选一起出现。", "Maps, place photos, routes and facilities appear with the options.")}</p></div>
     </div> : loading ? <PlanningWorkspaceSkeleton /> : <TripWorkspaceEmpty hasMessages={Boolean(conversation?.messages?.length)} /> : <>
@@ -1715,17 +1769,21 @@ function TravelEditor({ session, onLogout, onRequestLogin }) {
       if (result.multimodal?.status === "completed") setMediaStatus({ notice: pick("图片已在本轮参与理解、核验和规划；原图未保存。", "The image was used for this planning turn and was not saved.") });
     } catch (error) { if (requestSequence === requestSequenceRef.current) { setPendingText(""); setDraft(clean); setImageAttachment(attachment); setStatus({ error: messageError(error) }); } }
   };
-  const acceptProposal = async (proposalId, selections, { partial = false } = {}) => {
+  const acceptProposal = async (proposalId, selections, { partial = false, previewId = undefined, baseRevision = undefined } = {}) => {
     if (!trip?.tripId || status.loading) return;
     setStatus({ loading: true });
     try {
-      const result = await api.accept(trip.tripId, proposalId, selections, partial);
+      const result = await api.accept(trip.tripId, proposalId, selections, partial, previewId, baseRevision);
       if (result.status !== "committed") throw Object.assign(new Error(result.status), { code: result.validation?.reason ?? result.status });
       await loadTrip(trip.tripId);
-      setStatus({ loading: true, activities: [{ toolName: "accept_trip_change", status: "committed" }, { toolName: "refresh_trip_mobility", status: "running" }] });
-      const mobility = await api.refreshMobility(trip.tripId);
-      await loadTrip(trip.tripId);
-      setStatus({ activities: [{ toolName: "accept_trip_change", status: "committed" }, { toolName: "refresh_trip_mobility", status: mobility.status }] });
+      if (["completed", "partial"].includes(result.mobility?.status)) {
+        setStatus({ activities: [{ toolName: "accept_trip_change", status: "committed" }, { toolName: "refresh_trip_mobility", status: result.mobility.status }] });
+      } else {
+        setStatus({ loading: true, activities: [{ toolName: "accept_trip_change", status: "committed" }, { toolName: "refresh_trip_mobility", status: "running" }] });
+        const mobility = await api.refreshMobility(trip.tripId);
+        await loadTrip(trip.tripId);
+        setStatus({ activities: [{ toolName: "accept_trip_change", status: "committed" }, { toolName: "refresh_trip_mobility", status: mobility.status }] });
+      }
     } catch (error) { setStatus({ error: messageError(error) }); }
   };
   const rejectProposal = async (proposalId) => {
@@ -1798,7 +1856,7 @@ function TravelEditor({ session, onLogout, onRequestLogin }) {
       <section className={`conversation-panel ${mobileView !== "conversation" ? "mobile-hidden" : ""}`}>
         <header className="conversation-header"><div><h2>{tripRecovery ? pick("恢复这趟旅行", "Recover this trip") : pick("和旅行助手对话", "Talk with the Travel Agent")}</h2><small className="conversation-header-sub">{pick("从一句话开始", "Start with one sentence")}</small></div><div className="conversation-header-actions">{trip ? <span className="draft-state"><CheckCircle weight="fill" />{pick("已记住旅行要求", "Requirements saved")}</span> : tripRecovery ? <span className="draft-state recovery"><ArrowsClockwise />{pick("草案需恢复", "Draft needs recovery")}</span> : <span className="draft-state muted">{pick("从一句话开始", "Start with one sentence")}</span>}<button className="conversation-collapse-button" type="button" onClick={() => setConversationCollapsed(true)} aria-label={pick("收起旅行对话", "Collapse trip conversation")}><CaretDown /><span>{pick("收起", "Collapse")}</span></button></div></header>
         {status.error && <div className="chat-error" role="alert"><WarningCircle />{status.error}<button onClick={() => setStatus({})}>{pick("关闭提示", "Dismiss")}</button></div>}
-        <div className="message-scroller" ref={scrollerRef}>{!conversation?.messages?.length ? pendingText && status.loading ? <><article className="chat-message user pending"><div className="message-avatar">你</div><div className="message-copy"><MessageBody text={pendingText} /><time>正在发送</time></div></article><ThinkingMessage /></> : <ConversationIntro onPrompt={(prompt) => submitMessage(prompt)} /> : <>{conversation.messages.map((message) => <MessageBubble key={message.messageId} message={message} />)}{status.loading && <ThinkingMessage />}<ActivityStrip activities={status.activities} /></>}</div>
+        <div className="message-scroller" ref={scrollerRef}>{!conversation?.messages?.length ? pendingText && status.loading ? <><article className="chat-message user pending"><div className="message-avatar">你</div><div className="message-copy"><MessageBody text={pendingText} /><time>正在发送</time></div></article><ThinkingMessage hasPlan={Boolean(trip)} onBackground={() => { setConversationCollapsed(true); setMobileView("itinerary"); }} /></> : <ConversationIntro onPrompt={(prompt) => submitMessage(prompt)} /> : <>{conversation.messages.map((message) => <MessageBubble key={message.messageId} message={message} />)}{status.loading && <ThinkingMessage hasPlan={Boolean(trip)} onBackground={() => { setConversationCollapsed(true); setMobileView("itinerary"); }} />}<ActivityStrip activities={status.activities} /></>}</div>
         {trip && quickReplies.length ? <div className="quick-replies" aria-label="快捷调整旅行要求">{quickReplies.map((reply) => <button key={reply.label} type="button" disabled={status.loading} onClick={() => reply.prefill ? prepareDraft(reply.prefill, reply.label) : submitMessage(reply.text)}>{reply.label}</button>)}</div> : null}
         {mediaStatus.error || mediaStatus.notice ? <div className={`media-notice ${mediaStatus.error ? "error" : ""}`} role={mediaStatus.error ? "alert" : "status"}>{mediaStatus.error || mediaStatus.notice}<button type="button" onClick={() => setMediaStatus({})}>{pick("关闭", "Dismiss")}</button></div> : null}
         <Composer value={draft} onChange={updateDraft} onSubmit={submitMessage} loading={status.loading} inputRef={composerRef} contextLabel={draftContext} onClearContext={() => { setDraft(""); setDraftContext(""); composerRef.current?.focus(); }} onInspectImage={inspectImage} imageAttachment={imageAttachment} onRemoveImage={() => { setImageAttachment(null); setMediaStatus({}); composerRef.current?.focus(); }} imageLoading={mediaStatus.loading} onLinkPrompt={() => prepareDraft(locale === "en" ? "I want to import a travel share link:\n\nIf this link cannot be read safely, do not guess its content. Tell me the next verifiable step." : "我想导入一个旅行分享链接：\n\n如果当前无法安全读取这个链接，请不要猜测内容；告诉我可以核验的下一步。", pick("旅行分享链接", "Travel share link"))} />

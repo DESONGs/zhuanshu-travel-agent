@@ -123,6 +123,8 @@ export function registerTravelBusinessRuntime(pi: ExtensionAPI, { service = crea
         play: Type.Optional(Type.String()), food: Type.Optional(Type.String()), stay: Type.Optional(Type.String()), transport: Type.Optional(Type.String()),
       }, { additionalProperties: false })),
       partial: Type.Optional(Type.Boolean()),
+      previewId: Type.Optional(Type.String({ maxLength: 128 })),
+      baseRevision: Type.Optional(Type.Integer({ minimum: 0 })),
     }), run: (params) => service.acceptTripChange(params),
   });
   register(pi, {

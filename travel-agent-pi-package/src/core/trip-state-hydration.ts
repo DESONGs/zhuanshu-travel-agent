@@ -89,10 +89,24 @@ export function hydrateStoredTripState(value: unknown): TripState {
     entities: optionalArray(evidence.entities),
   };
   const environment = optionalObject(next.environment);
+  const mobility = environment.mobility == null ? null : optionalObject(environment.mobility);
+  const mobilityCoverage = mobility ? optionalObject(mobility.coverage) : {};
   next.environment = {
     ...environment,
     weather: environment.weather ?? null,
-    mobility: environment.mobility ?? null,
+    mobility: mobility ? {
+      ...mobility,
+      coverage: {
+        ...mobilityCoverage,
+        routedNodeIds: optionalArray(mobilityCoverage.routedNodeIds),
+        unresolvedNodeIds: optionalArray(mobilityCoverage.unresolvedNodeIds),
+        routedStopIds: optionalArray(mobilityCoverage.routedStopIds),
+        unresolvedStopIds: optionalArray(mobilityCoverage.unresolvedStopIds),
+        unscheduled: mobilityCoverage.unscheduled !== false,
+      },
+      itinerary: mobility.itinerary ?? null,
+      feasibility: mobility.feasibility ?? null,
+    } : null,
     updatedAt: environment.updatedAt ?? null,
   };
   const readiness = optionalObject(next.readiness);
