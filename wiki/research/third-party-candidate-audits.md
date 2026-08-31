@@ -63,6 +63,10 @@ Web 地图渲染的补充审计：`leaflet@1.9.4` 的 npm 包无运行依赖；�
 
 只有 `isolatedSmoke: passed_read_only_isolated` 和 `adoption: eligible` 才可以把 Provider 从 Registry 的 `blocked` 改为可用。
 
+## 2026-08-31 Evidence Companion E1 采用说明
+
+E1 没有下载、安装或合入新的第三方仓库。公开链接读取器、Evidence projection 与 UI 均为项目内实现；只复用现有已审计 Provider 和浏览器标准能力。因此本轮没有新增可标记为 `eligible` 的社交 Worker 候选。E4 继续保持 blocked，直到专用账号、平台条款、固定 SHA 静态审计与 `passed_read_only_isolated` 真实 smoke 全部具备。
+
 ## 已采用 Provider 审计摘要
 
 ```json

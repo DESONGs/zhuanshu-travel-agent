@@ -2,7 +2,7 @@
 
 > 版本：Technical Proposal v0.2
 >
-> 状态：技术调研已收敛。下一阶段先形成地图 baseline，再按 E1–E4 分段实施；本文不授权在当前未提交地图改动上直接叠加开发。
+> 状态：技术调研已收敛；E0 baseline 与 E1 无账号证据核心链路已实现。E2–E4 仍按本文前置门分段实施，未获得桌面壳或社交自动发现的完成结论。
 >
 > 记录基线：`29e7a11d69ef393338b15c2f233c584089e1801f`。地图、跨端和前端改动已完成验证但截至本次复核仍在工作区；本文没有修改或覆盖这些文件。
 >
@@ -532,3 +532,25 @@ E0 baseline
 - Projection 可重新生成，不需要迁移 TripState；
 - 所有新增事实引用继续落在现有 ContentItem/Claim/Entity；
 - 平台 Adapter 只负责获取和展示，不复制 Agent、Mobility 和提交规则。
+
+## 17. 2026-08-31 实施记录
+
+### E0
+
+- 分层地图提交：`afa83a6`；文档 baseline：`2dd9a73`。
+- HTTP Guest 过期判断改用注入时钟，关闭审核 §8.1 的定时炸弹；没有改变生产 TTL。
+
+### E1
+
+- 单一 TypeBox 展示合同：`EvidencePresentationBundle`；`ContentItem` 仅增加小型引用元数据，既有 TripState 读取保持向后兼容。
+- 新增可过期 Evidence projection repository（JSON 0600 原子文件 / PostgreSQL），缓存键包含内容哈希、目标语言和 extractor 版本；翻译是侧车，不写 Claim 或 TripState。
+- 公开链接 Adapter 实现固定平台、HTTPS、DNS 私网阻断、逐跳校验、超时、响应上限、挑战识别和敏感 query 清理。公开媒体固定为 `source_only`；Provider 图片只有明确展示权时进入 UI，未引入通用图片代理。
+- HTTP 暴露按节点读取、公开链接解析、bundle 读取和翻译四类成员受控入口；翻译有每用户配额、输入上限和 token 审计。
+- Web 在现有 Candidate / Place Detail / Map Workspace 中完成证据阅读、快速翻译和路线 CTA，没有新建第二套全屏详情或状态源。
+
+### 完成证据与未完成项
+
+- 聚焦合同/SSRF/TTL/翻译测试与完整 `npm run check` 均通过，最终完整测试为 192/192。
+- 真实 Web 自然请求、真实 DeepSeek 翻译、三类候选 5 段 Trial、393×852 响应式与 console error=0 已验证；Trial 期间 revision 与 selected nodes 不变。
+- 当前公开社交链接可得性仍取决于平台登录墙和挑战；E1 的可靠来源是用户链接公开部分、现有 Provider/官方资料与未来的创作者授权资料。
+- E2 前仍需 D26、current/06 正式修订、桌面 OAuth/deep link/Bearer 会话、高德 JS Key 与自定义 origin live smoke；E4 仍需专用账号、条款与固定版本隔离审计。

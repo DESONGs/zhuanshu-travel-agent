@@ -177,3 +177,15 @@ E1 的"公开分享链接 Adapter"意味着**服务端按用户提交的 URL 发
 ### 8.2 对 E0 结论的修正
 
 E0 出口不能只是"提交 + 重跑黄金路径"：当前 check 是红的，baseline 提交前必须先修 §8.1。这与三份文档"地图改动已完成验证"的表述不矛盾（该失败与地图无关），但说明上一轮验证没有跑到全量 check，或跑时真实日期尚未触雷——恰好印证了审计 §11"存在性验收"的提醒：**只有全量 check 在提交当天重新跑绿，baseline 才算形成**。
+
+## 9. 2026-08-31 实施后复核
+
+本节只记录审核项的后续状态，不改写 §1–§8 的当时证据。
+
+- **E0 已关闭：** `guest_trip_expired` 使用同一注入 `clock`，地图与文档分别形成 `afa83a6`、`2dd9a73` baseline；最终完整 `npm run check` 192/192 通过。
+- **ContentItem / 侧车已拍板：** ContentItem 只增加 title/language/access；完整展示、翻译与缓存进入可过期 Evidence projection，不迁移为第二份 TripState。
+- **SSRF 已关闭：** 固定平台 HTTPS 白名单、DNS 私网阻断、逐跳重定向复核、8 秒 deadline、1 MB 上限、challenge/login wall 和 query token 清理均有负向测试。
+- **媒体边界已关闭：** 已知 Provider 展示图标记 `provider_display`，公开分享图固定 `source_only`，未知权利隐藏；没有引入通用媒体代理。
+- **翻译门已关闭：** 每用户配额、8k 字符上限、模型 token 审计、原文保留和失败降级已进入服务与测试。
+- **真实路径：** Web 自然请求取得真实候选，Evidence 阅读与 DeepSeek 英译可见，住宿 + 外滩 + 本帮菜生成 5 段路线 Trial；393px 无横向溢出，console 无 error，TripState revision/selected nodes 未变化。
+- **仍未关闭：** E2 的 D26/current06 最终修订、桌面登录、高德 JS 自定义 origin live smoke；E4 的专用账号、条款、固定 SHA 与隔离只读 smoke。不能把 E1 交付解释为 Electron 或社交自动发现已经可用。

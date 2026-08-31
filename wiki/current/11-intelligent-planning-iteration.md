@@ -284,3 +284,21 @@ V3 前端方案（`wiki/research/archive/2026-08-29-ui-component-sources-and-fir
 ### 真实验收
 
 2026-08-30 的上海家庭旅行真实浏览器路径中，DeepSeek 生成“夜间抵达先入住，次日博物馆→本帮菜→返回住宿”的计划；AMap/Checker 得到 5 段、79 分钟、0 米步行、0 次换乘、估算 ¥283。393px 端把机场段改成公交后，服务端因 1145 米步行超过 600 米上限禁用确认；切回打车后确认成功，revision 1→2，`planningSource=model_plan`。完整反证与边界见审计文档 §13。
+
+## 14. Evidence Companion E0 / E1 实施状态（2026-08-31）
+
+### 已进入真实链路
+
+- `ContentItem` 只增加 `title / originalLanguage / access` 等小型引用元数据；完整展示使用单一 `EvidencePresentationBundle`，存放在可过期的 JSON / PostgreSQL 侧车，不创建第二份 TripState 或 Evidence Graph。
+- 候选卡先给一行来源摘要，地点详情在同一个 Overlay 内切换到 Evidence 模式；原文、快速翻译、Claim、同源聚类提示、适配理由、来源与核验时间保持分层，未知媒体权利不代理显示。
+- 用户粘贴的小红书、抖音或微信文章链接只经过固定 HTTPS 域名、DNS 私网阻断、逐跳重定向复核、8 秒超时和 1 MB 上限的公开读取器；不发送 Cookie，不接受任意 URL，不执行页面脚本，也不下载原始媒体。
+- 翻译复用当前服务端模型 resolver，按用户限流、限制输入长度并记录 token 用量；翻译失败保留原文，不把译文提升为新的地点事实。
+- Evidence 中的“加入路线试排”复用现有 Candidate Trial、地图与影响条；确认前仍不修改 TripState。
+
+### 验证证据与边界
+
+- 完整 `npm run check` 通过：严格 TypeScript、192 项测试、Web production build、微信/支付宝 native contract。
+- 真实浏览器自然请求取得吃住行玩候选后，住宿、外滩与本帮菜三类候选共同形成 5 段试排；页面显示 67 分钟、3523 米、约 ¥21，并继续标为“快速试排，不是 AI 优化站序”。试排前后 `trip_5b568d1b` 保持 revision 1、0 个 selected node、0 条持久化 itinerary stop。
+- DeepSeek 英文快速翻译在真实页面返回，原文可展开；393×852 下证据面板无横向溢出，路线 CTA 可见，浏览器 console 无 error。
+- 本次 E1 浏览器用例是两人、少走路目标，不替代 §13 已完成的父亲 600 米硬约束路径。当前真实候选只有一个独立来源时，界面明确显示 1 个来源，不伪造“多来源多数”。
+- E2 Electron、桌面登录、高德 JS 自定义 origin、E3 原页阅读和 E4 专用账号 Worker 均未启动；对应前置门见 06 与本期技术审核。

@@ -26,6 +26,18 @@
 5. 当前不引入 Flutter、React Native、Electron、Tauri 或 Taro 依赖。
 6. “全平台复用”优先共享合同、API Client、View Model、i18n、设计 Token 和验收场景，不强迫所有平台共享同一 DOM。
 
+### Evidence Companion 桌面壳前置门（E2 尚未启动）
+
+2026-08-31 的 Evidence Companion 调研把 Electron 作为桌面深度阅读候选，不代表本节技术方案已经切换。当前仍不引入 Electron 或 Tauri 依赖；只有以下条件同时满足，才能排期 E2 安全 Spike：
+
+1. 在 `10-v2-implementation-decisions.md` 新增 D26，完成 Electron 与 Tauri 2 的当前需求比较、采用结论和回滚方式；
+2. 同步修订本文件的桌面交付职责，避免研究文档与现行规范并存两套结论；
+3. 真实验证系统浏览器 OAuth、deep link 回传、Bearer 会话与跨源 API；
+4. 配置独立高德 Web Key / security code，并在候选桌面 origin 完成浏览器 live smoke；
+5. Electron/Tauri 及打包依赖完成固定版本 `third-party-audit-v1`。
+
+任一条件未满足时，Evidence Companion 继续使用现有 Web/PWA 证据摘要、快速翻译和系统浏览器跳转；不得用桌面壳页面或构建产物冒充登录、地图或原页阅读已经可用。
+
 ## 数据与同步
 
 生产运行设置 `DATABASE_URL`，由 `PostgresTripRepository` 将每个 `trip-control-state-v1` 以 JSONB snapshot 持久化，并在 `storage_version` 条件更新中拒绝并发覆盖。`trip_states` 的迁移由 `npm run db:migrate` 执行。

@@ -287,3 +287,10 @@ Leaflet 在迁移期继续作为 fallback：高德 JS API 未配置、加载失�
 - 动态路线分钟、估价与库存只代表当次查询快照；设施存在不等于实时运行，仍需现场确认。
 
 因此，本轮可称为“分层地图核心链路与 Web 降级路径已实现”，不能称为“所有地图 Provider 与六端设备均已上线验证”。
+
+### 13.4 E0 baseline 已形成
+
+- 地图与跨端核心链路提交为 `afa83a6`（`Implement tiered route map experience`）。
+- 本期 Evidence Companion 文档入口与 baseline 记录提交为 `2dd9a73`（`Document Evidence Companion iteration baseline`）。
+- `guest_trip_expired` 定时炸弹通过向 HTTP 成员校验注入同一 `clock` 修复，没有放宽 Guest 过期规则；baseline 当天完整 `npm run check` 通过。
+- E1 在该 baseline 之后独立落地，不回写 `RouteMapScene`、Mobility、Proposal 或 TripState 的事实所有权。
