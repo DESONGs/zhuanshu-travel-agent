@@ -3,6 +3,8 @@ import test from "node:test";
 import { AmapTravelResearchProvider } from "../src/providers/amap-travel-research.mjs";
 import { normalizeTripMobility } from "../travel-agent-pi-package/src/contracts/public.ts";
 
+const point = (longitude, latitude) => ({ longitude, latitude, coordinateSystem: "GCJ-02" });
+
 test("AMap mobility turns selected places into bounded walking, transit and taxi alternatives without claiming real-time arrival", async () => {
   const calls = [];
   const fetchImpl = async (url) => {
@@ -55,6 +57,29 @@ test("AMap mobility turns selected places into bounded walking, transit and taxi
   const recommended = mobility.legs[0].alternatives.find((item) => item.mode === mobility.legs[0].recommendedMode);
   const map = await provider.renderStaticMap({ points: mobility.legs.flatMap((leg) => [leg.origin, leg.destination]), paths: [recommended.polyline] });
   assert.equal(map.contentType, "image/png");
+});
+
+test("AMap transit preserves railway and segment geometry without synthesizing endpoint lines", async () => {
+  const fetchImpl = async (url) => {
+    const parsed = new URL(url);
+    if (parsed.pathname === "/v3/geocode/geo") return new Response(JSON.stringify({ status: "1", infocode: "10000", geocodes: [{ citycode: "021", adcode: "310000", location: "121.47,31.23" }] }));
+    if (parsed.pathname === "/v5/direction/transit/integrated") return new Response(JSON.stringify({ status: "1", infocode: "10000", route: { transits: [{ distance: "5000", walking_distance: "100", cost: { duration: "1200", transit_fee: "4" }, segments: [{ railway: { name: "地铁 2 号线", departure_stop: { name: "人民广场" }, arrival_stop: { name: "陆家嘴" }, time: "900", distance: "4500", steps: [{ polyline: "121.4700,31.2300;121.4900,31.2400" }] } }] }] } }));
+    if (parsed.pathname === "/v5/direction/driving") return new Response(JSON.stringify({ status: "1", infocode: "10000", route: { paths: [{ distance: "5000", cost: { duration: "800", taxi: "25" }, steps: [] }] } }));
+    if (parsed.pathname === "/v5/direction/walking") return new Response(JSON.stringify({ status: "1", infocode: "10000", route: { paths: [{ distance: "2200", cost: { duration: "1800" }, steps: [] }] } }));
+    throw new Error(`unexpected path ${parsed.pathname}`);
+  };
+  const provider = new AmapTravelResearchProvider({ apiKey: "test-key", fetchImpl, requestIntervalMs: 0, rateLimitRetryMs: 0 });
+  const mobility = normalizeTripMobility(await provider.planMobility({
+    brief: { destination: "上海" },
+    selectedNodes: [
+      { nodeId: "a", domain: "stay", title: "A", selected: true, location: { citycode: "021", coordinates: point(121.47, 31.23) } },
+      { nodeId: "b", domain: "play", title: "B", selected: true, location: { citycode: "021", coordinates: point(121.49, 31.24) } },
+    ],
+  }));
+  const transit = mobility.legs[0].alternatives.find((item) => item.mode === "transit");
+  assert.equal(transit.polyline.length, 2);
+  assert.equal(transit.steps[0].line, "地铁 2 号线");
+  assert.equal(transit.steps[0].polyline.length, 2);
 });
 
 test("AMap mobility rejects an otherwise short route with mapped stairs for a traveler who must avoid them", async () => {

@@ -434,6 +434,10 @@ export const AccessibilityFeatureSchema = Type.Object({
   guidance: Type.Union([Type.String(), Type.Null()]),
 }, { additionalProperties: false });
 
+const MobilityCoordinatesSchema = Type.Object({
+  longitude: Type.Number(), latitude: Type.Number(), coordinateSystem: Type.Literal("GCJ-02"),
+}, { additionalProperties: false });
+
 export const MobilityStepSchema = Type.Object({
   kind: Type.String(),
   instruction: Type.String(),
@@ -442,6 +446,7 @@ export const MobilityStepSchema = Type.Object({
   destination: Type.Union([Type.String(), Type.Null()]),
   distanceMeters: Type.Union([Type.Number({ minimum: 0 }), Type.Null()]),
   durationMinutes: Type.Union([Type.Number({ minimum: 0 }), Type.Null()]),
+  polyline: Type.Optional(Type.Array(MobilityCoordinatesSchema)),
   walkType: Type.Union([Type.Object({
     code: Type.String(),
     kind: Type.String(),
@@ -449,10 +454,6 @@ export const MobilityStepSchema = Type.Object({
   }, { additionalProperties: false }), Type.Null()]),
   accessibilityFeatures: Type.Array(AccessibilityFeatureSchema),
 }, { additionalProperties: true });
-
-const MobilityCoordinatesSchema = Type.Object({
-  longitude: Type.Number(), latitude: Type.Number(), coordinateSystem: Type.Literal("GCJ-02"),
-}, { additionalProperties: false });
 
 export const ItineraryStopRoleSchema = Type.String({ enum: ["intercity_arrival", "bag_drop", "stay_check_in", "stay_departure", "stay_return", "meal", "activity", "local_transport"] });
 export type ItineraryStopRole = Static<typeof ItineraryStopRoleSchema>;

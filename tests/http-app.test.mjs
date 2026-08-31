@@ -17,9 +17,10 @@ async function httpFixture({ conversationAgent, service: suppliedService, conver
   const rootDir = await mkdtemp(join(tmpdir(), "travel-http-"));
   const store = new TripStore({ rootDir });
   store.mode = "file";
-  const service = suppliedService ?? new TravelService({ store, clock: () => new Date("2026-08-24T12:00:00.000Z") });
+  const clock = () => new Date("2026-08-24T12:00:00.000Z");
+  const service = suppliedService ?? new TravelService({ store, clock });
   const conversationRepository = suppliedConversationRepository ?? new FileConversationRepository({ rootDir: join(rootDir, "conversations") });
-  const app = createHttpApp({ travelService: service, conversationRepository, conversationAgent, sessionStore: new InMemorySessionStore({ clock: () => new Date("2026-08-24T12:00:00.000Z") }), developmentAuthEnabled: true });
+  const app = createHttpApp({ travelService: service, conversationRepository, conversationAgent, sessionStore: new InMemorySessionStore({ clock }), developmentAuthEnabled: true, clock });
   const server = http.createServer(app);
   server.listen(0, "127.0.0.1");
   await once(server, "listening");

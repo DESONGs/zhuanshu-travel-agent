@@ -139,6 +139,9 @@ function step(input: unknown, index: number, field: string) {
     destination: text(value.destination, `${field}.${index}.destination`, { optional: true, max: 160 }),
     durationMinutes: nonNegativeNumber(value.durationMinutes, `${field}.${index}.durationMinutes`, { optional: true }),
     distanceMeters: nonNegativeNumber(value.distanceMeters, `${field}.${index}.distanceMeters`, { optional: true }),
+    polyline: Array.isArray(value.polyline)
+      ? value.polyline.map((point, pointIndex) => coordinates(point, `${field}.${index}.polyline.${pointIndex}`)).filter((point) => point !== null).slice(0, 300)
+      : [],
     walkType,
     accessibilityFeatures: suppliedFeatures.length ? suppliedFeatures : accessibilityFeaturesForWalkType(walkType),
   };

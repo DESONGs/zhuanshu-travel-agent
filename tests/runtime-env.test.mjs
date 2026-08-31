@@ -13,6 +13,10 @@ test("runtime env loader accepts only explicit Travel Agent keys and preserves k
     "MOONSHOT_API_KEY=example-kimi-key",
     "AMAP_API_KEY=example-amap-key",
     "AMAP_API_SECRET=example-amap-secret",
+    "AMAP_JS_API_KEY=example-amap-js-key",
+    "AMAP_JS_SECURITY_CODE=example-amap-js-security-code",
+    "TRAVEL_AGENT_AMAP_JS_RENDERER_ENABLED=false",
+    "TRAVEL_AGENT_AMAP_JS_SMOKE_STATUS=passed_live_smoke",
     "TRAVEL_AGENT_FLYAI_ENABLED=true",
     "FLYAI_API_KEY=example-flyai-key",
     "TRAVEL_AGENT_FLYAI_SMOKE_STATUS=passed_read_only_isolated",
@@ -41,6 +45,10 @@ test("runtime env loader accepts only explicit Travel Agent keys and preserves k
   assert.equal(values.MOONSHOT_API_KEY, "example-kimi-key");
   assert.equal(values.AMAP_API_KEY, "example-amap-key");
   assert.equal(values.AMAP_API_SECRET, "example-amap-secret");
+  assert.equal(values.AMAP_JS_API_KEY, "example-amap-js-key");
+  assert.equal(values.AMAP_JS_SECURITY_CODE, "example-amap-js-security-code");
+  assert.equal(values.TRAVEL_AGENT_AMAP_JS_RENDERER_ENABLED, "false");
+  assert.equal(values.TRAVEL_AGENT_AMAP_JS_SMOKE_STATUS, "passed_live_smoke");
   assert.equal(values.FLYAI_API_KEY, "example-flyai-key");
   assert.equal(values.TUNIU_API_KEY, "example-tuniu-key");
   assert.equal(values.TRAVEL_AGENT_PUBLIC_ORIGIN, "https://travel.example.com");

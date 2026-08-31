@@ -1,5 +1,10 @@
 const apiBaseUrl = String(import.meta.env.VITE_TRAVEL_API_BASE_URL ?? "").trim().replace(/\/$/, "");
 
+export function apiPublicUrl(path) {
+  if (!apiBaseUrl) return new URL(path, window.location.origin).toString();
+  return new URL(path, `${apiBaseUrl}/`).toString();
+}
+
 async function request(path, { method = "GET", body, token, signal } = {}) {
   const response = await fetch(`${apiBaseUrl}${path}`, {
     method,

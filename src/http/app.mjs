@@ -8,6 +8,7 @@ import { createConversationRepository } from "../persistence/conversation-reposi
 import { providerStatusSummary } from "../providers/provider-status.mjs";
 import { authenticatedUserId, developmentUserId, guestUserId, GUEST_SESSION_TTL_MS, InMemorySessionStore, SignedSessionStore } from "./session.mjs";
 import { createAuthService, oauthNonceCookieName } from "./auth-providers.mjs";
+import { createAmapJsSecurityProxy } from "./amap-js-security-proxy.mjs";
 import { httpError, sendError } from "./http-errors.mjs";
 
 function cookieValue(request, name) {
@@ -83,6 +84,7 @@ export function createHttpApp({
   developmentAuthEnabled = process.env.NODE_ENV !== "production" && process.env.TRAVEL_AGENT_ALLOW_DEVELOPMENT_AUTH === "true",
   allowedOrigins = parseAllowedOrigins(process.env.TRAVEL_AGENT_CORS_ORIGINS),
   runtimeEnv = process.env,
+  clock = () => new Date(),
 } = {}) {
   travelService = assertTravelServicePort(travelService ?? createTravelService(runtimeEnv));
   conversationRepository ??= createConversationRepository({
@@ -119,6 +121,10 @@ export function createHttpApp({
     if (request.method === "OPTIONS") return response.status(204).end();
     return next();
   });
+  app.use("/_AMapService", createAmapJsSecurityProxy({
+    publicKey: String(runtimeEnv.TRAVEL_AGENT_AMAP_JS_RENDERER_ENABLED ?? "true").trim().toLowerCase() === "false" ? undefined : runtimeEnv.AMAP_JS_API_KEY,
+    securityCode: String(runtimeEnv.TRAVEL_AGENT_AMAP_JS_RENDERER_ENABLED ?? "true").trim().toLowerCase() === "false" ? undefined : runtimeEnv.AMAP_JS_SECURITY_CODE,
+  }));
 
   const currentSession = (request) => sessionStore.read(sessionTokenFromRequest(request));
   const publicSession = (session, extra = {}) => ({
@@ -146,7 +152,7 @@ export function createHttpApp({
     if (!state) throw httpError("trip_not_found", 404, { tripId });
     const members = state.collaboration?.memberUserIds;
     if (members && !members.includes(session.userId)) throw httpError("trip_access_denied", 403, { tripId });
-    if (session.provider === "guest" && state.collaboration?.guestExpiresAt && new Date(state.collaboration.guestExpiresAt).getTime() <= Date.now()) {
+    if (session.provider === "guest" && state.collaboration?.guestExpiresAt && new Date(state.collaboration.guestExpiresAt).getTime() <= clock().getTime()) {
       throw httpError("guest_trip_expired", 410, { tripId });
     }
     return session;

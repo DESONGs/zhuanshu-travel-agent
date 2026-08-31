@@ -425,6 +425,7 @@ function routeStep({ item, kind, instruction, line = null, origin = null, destin
     destination,
     durationMinutes: secondsToMinutes(duration),
     distanceMeters: numberOrNull(distance),
+    polyline: polylinePoints(item?.polyline),
     walkType,
     accessibilityFeatures: accessibilityFeaturesForWalkType(walkType),
   };
@@ -488,6 +489,7 @@ function normalizeDrivingAlternative(payload, origin, destination) {
     destination: null,
     durationMinutes: secondsToMinutes(item?.cost?.duration ?? item?.duration),
     distanceMeters: numberOrNull(item?.step_distance ?? item?.distance),
+    polyline: polylinePoints(item?.polyline),
   }));
   const taxiFare = numberOrNull(path?.cost?.taxi ?? path?.cost?.taxi_fee ?? payload?.route?.taxi_cost);
   return {
@@ -512,6 +514,7 @@ function normalizeTransitAlternative(payload, origin, destination) {
   const polylines = [];
   let transitLineCount = 0;
   for (const segment of array(transit.segments)) {
+    const segmentPolylineCount = polylines.length;
     for (const walking of array(segment?.walking)) {
       for (const item of array(walking?.steps)) {
         steps.push(routeStep({ item, kind: "walk", instruction: text(item?.instruction, 500) || "步行衔接", duration: item?.duration, distance: item?.distance }));
@@ -532,6 +535,7 @@ function normalizeTransitAlternative(payload, origin, destination) {
           destination: destinationName,
           durationMinutes: secondsToMinutes(line?.duration),
           distanceMeters: numberOrNull(line?.distance),
+          polyline: polylinePoints(line?.polyline),
         });
         if (line?.polyline) polylines.push(line.polyline);
       }
@@ -547,9 +551,37 @@ function normalizeTransitAlternative(payload, origin, destination) {
         destination: text(railway?.arrival_stop?.name, 160) || null,
         durationMinutes: secondsToMinutes(railway?.time),
         distanceMeters: numberOrNull(railway?.distance),
+        polyline: polylinePoints([
+          railway?.polyline,
+          railway?.path,
+          ...array(railway?.steps).map((item) => item?.polyline),
+        ]),
       });
+      if (railway?.polyline) polylines.push(railway.polyline);
+      if (railway?.path) polylines.push(railway.path);
+      for (const item of array(railway?.steps)) if (item?.polyline) polylines.push(item.polyline);
     }
+    for (const taxi of array(segment?.taxi)) {
+      steps.push({
+        kind: "taxi",
+        instruction: [text(taxi?.startname, 160), text(taxi?.endname, 160)].filter(Boolean).length
+          ? `打车从${text(taxi?.startname, 160) || "上车点"}前往${text(taxi?.endname, 160) || "下车点"}`
+          : "打车衔接",
+        line: null,
+        origin: text(taxi?.startname, 160) || null,
+        destination: text(taxi?.endname, 160) || null,
+        durationMinutes: secondsToMinutes(taxi?.drivetime),
+        distanceMeters: numberOrNull(taxi?.distance),
+        polyline: polylinePoints(taxi?.polyline),
+      });
+      if (taxi?.polyline) polylines.push(taxi.polyline);
+    }
+    // V5 may return the drawable transit geometry on the segment instead of
+    // the nested bus/railway object. Use it only when that segment yielded no
+    // detailed geometry; never synthesize a line from its endpoints.
+    if (polylines.length === segmentPolylineCount && segment?.polyline) polylines.push(segment.polyline);
   }
+  if (!polylines.length && transit?.polyline) polylines.push(transit.polyline);
   const walkingMeters = numberOrNull(transit.walking_distance)
     ?? steps.filter((item) => item.kind === "walk").reduce((sum, item) => sum + Number(item.distanceMeters ?? 0), 0);
   return withRouteAccessibility({

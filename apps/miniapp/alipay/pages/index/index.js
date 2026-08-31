@@ -38,6 +38,35 @@ function mobilityModel(mobility) {
   };
 }
 
+const ROUTE_MODE_LABELS = { walk: "步行", transit: "公交 / 地铁", taxi: "打车" };
+const ROUTE_MODE_COLORS = { walk: "#2c8053", transit: "#2268c7", taxi: "#c9443b" };
+
+function miniRouteScene(mobility, { activeDay, activeLegId, routeModes = {} } = {}) {
+  if (!mobility || !["completed", "partial"].includes(mobility.status)) return { activeDay: null, availableDays: [], activeLegId: null, markers: [], polylines: [], legs: [], nextLeg: null, drawable: false };
+  const itinerary = mobility.itinerary || {};
+  const availableDays = [...new Set([...(itinerary.days || []).map((day) => Number(day.dayIndex)), ...(mobility.legs || []).map((leg) => Number(leg.origin && leg.origin.dayIndex || leg.destination && leg.destination.dayIndex))].filter((day) => Number.isInteger(day) && day > 0))].sort((left, right) => left - right);
+  const selectedDay = availableDays.includes(Number(activeDay)) ? Number(activeDay) : availableDays[0] || null;
+  const visibleLegs = (mobility.legs || []).filter((leg) => selectedDay == null || Number(leg.origin && leg.origin.dayIndex || leg.destination && leg.destination.dayIndex) === selectedDay);
+  const legs = visibleLegs.map((leg) => {
+    const requestedMode = routeModes[leg.legId];
+    const mode = (leg.alternatives || []).some((alternative) => alternative.mode === requestedMode) ? requestedMode : leg.recommendedMode;
+    const alternative = (leg.alternatives || []).find((item) => item.mode === mode) || {};
+    const points = (alternative.polyline || []).filter((point) => Number.isFinite(Number(point.longitude)) && Number.isFinite(Number(point.latitude))).map((point) => ({ longitude: Number(point.longitude), latitude: Number(point.latitude) }));
+    return { ...leg, mode, modeLabel: ROUTE_MODE_LABELS[mode] || mode, minutes: alternative.totalMinutes, walkingMeters: alternative.walkingMeters, transfers: mode === "transit" ? alternative.transfers : null, estimatedFareCny: alternative.estimatedFareCny, points, drawable: points.length >= 2, modeOptions: (leg.alternatives || []).map((item) => ({ mode: item.mode, label: ROUTE_MODE_LABELS[item.mode] || item.mode, minutes: item.totalMinutes, walkingMeters: item.walkingMeters, transfers: item.transfers, estimatedFareCny: item.estimatedFareCny })), steps: alternative.steps || [] };
+  });
+  const selectedLegId = legs.some((leg) => leg.legId === activeLegId) ? activeLegId : legs[0] && legs[0].legId || null;
+  const places = legs.flatMap((leg) => [leg.origin, leg.destination]).filter((place) => place && place.coordinates);
+  const markers = [...new Map(places.map((place) => [place.nodeId || place.stopId || place.label, place])).values()].map((place, index) => ({ id: index + 1, longitude: Number(place.coordinates.longitude), latitude: Number(place.coordinates.latitude), title: place.label, width: 24, height: 32 }));
+  const polylines = legs.filter((leg) => leg.drawable).map((leg) => ({ points: leg.points, color: leg.legId === selectedLegId ? ROUTE_MODE_COLORS[leg.mode] || "#2268c7" : "#7d8f9b", width: leg.legId === selectedLegId ? 7 : 4, dottedLine: false, arrowLine: true }));
+  return { activeDay: selectedDay, availableDays, activeLegId: selectedLegId, markers, polylines, legs, nextLeg: legs.find((leg) => leg.legId === selectedLegId) || legs[0] || null, drawable: legs.length > 0 && legs.every((leg) => leg.drawable) };
+}
+
+function selectedNodeIds(proposalDomains, accepted) {
+  const selected = Object.fromEntries((proposalDomains || []).map((domain) => [domain.key, domain.candidates.find((candidate) => candidate.selected)?.nodeId]).filter((entry) => entry[1]));
+  if (Object.keys(selected).length) return selected;
+  return Object.fromEntries((accepted || []).map((node) => [node.domain, node.nodeId]).filter((entry) => entry[0] && entry[1]));
+}
+
 function priceModel(candidate) {
   const source = candidate && candidate.price;
   const legacy = Number(candidate && candidate.cost);
@@ -81,11 +110,13 @@ function planModel(plan) {
     latitude: candidate.location.coordinates.latitude,
     title: candidate.title,
   }));
-  return { proposal, proposalDomains, activeDomainKey: proposalDomains[0] ? proposalDomains[0].key : "transport", markers, accepted, mobility: mobilityModel(plan && plan.mobility), planBudget: budgetModel(plan && plan.budget) };
+  const mobility = mobilityModel(plan && plan.mobility);
+  const routeScene = miniRouteScene(mobility);
+  return { proposal, proposalDomains, activeDomainKey: proposalDomains[0] ? proposalDomains[0].key : "transport", markers: routeScene.markers.length ? routeScene.markers : markers, polylines: routeScene.polylines, accepted, mobility, routeLegs: routeScene.legs, nextLeg: routeScene.nextLeg, activeLegId: routeScene.activeLegId, activeDay: routeScene.activeDay, routeDays: routeScene.availableDays, routeDrawable: routeScene.drawable, routePreviewId: null, routeModes: {}, routeSwitchBlocked: false, planRevision: plan && plan.revision, planBudget: budgetModel(plan && plan.budget) };
 }
 
 Page({
-  data: { signedIn: false, loading: false, conversations: [], conversation: null, input: "", trip: null, proposal: null, proposalDomains: [], planBudget: null, markers: [], accepted: [], mobility: null, activeView: "conversation", activeDomainKey: "transport", modelOptions: [], modelIndex: 0, selectedModelId: "deepseek-v4-flash", notice: "登录后直接说出旅行想法，不需要先创建行程。" },
+  data: { signedIn: false, loading: false, conversations: [], conversation: null, input: "", trip: null, proposal: null, proposalDomains: [], planBudget: null, markers: [], polylines: [], accepted: [], mobility: null, routeLegs: [], nextLeg: null, activeLegId: null, activeDay: null, routeDays: [], routeDrawable: false, routePreviewId: null, routeModes: {}, routeSwitching: false, routeSwitchBlocked: false, planRevision: null, activeView: "conversation", activeDomainKey: "transport", modelOptions: [], modelIndex: 0, selectedModelId: "deepseek-v4-flash", notice: "登录后直接说出旅行想法，不需要先创建行程。" },
   signIn() {
     this.setData({ loading: true });
     my.getAuthCode({
@@ -168,7 +199,41 @@ Page({
   selectCandidate(event) {
     const { domain, nodeId } = event.currentTarget.dataset;
     const proposalDomains = this.data.proposalDomains.map((item) => item.key === domain ? { ...item, candidates: item.candidates.map((candidate) => ({ ...candidate, selected: candidate.nodeId === nodeId })) } : item);
-    this.setData({ proposalDomains: proposalDomains.map((domainItem) => ({ ...domainItem, hasSelection: domainItem.candidates.some((candidate) => candidate.selected) })) });
+    this.setData({ proposalDomains: proposalDomains.map((domainItem) => ({ ...domainItem, hasSelection: domainItem.candidates.some((candidate) => candidate.selected) })), routePreviewId: null, routeModes: {}, routeSwitchBlocked: false });
+  },
+  selectRouteDay(event) {
+    const scene = miniRouteScene(this.data.mobility, { activeDay: Number(event.currentTarget.dataset.day), activeLegId: null, routeModes: this.data.routeModes });
+    this.setData({ activeDay: scene.activeDay, activeLegId: scene.activeLegId, routeLegs: scene.legs, nextLeg: scene.nextLeg, markers: scene.markers, polylines: scene.polylines, routeDrawable: scene.drawable });
+  },
+  selectRouteLeg(event) {
+    const scene = miniRouteScene(this.data.mobility, { activeDay: this.data.activeDay, activeLegId: event.currentTarget.dataset.legId, routeModes: this.data.routeModes });
+    this.setData({ activeLegId: scene.activeLegId, routeLegs: scene.legs, nextLeg: scene.nextLeg, polylines: scene.polylines });
+  },
+  async selectRouteMode(event) {
+    if (!this.data.trip || this.data.routeSwitching) return;
+    const { legId, mode } = event.currentTarget.dataset;
+    const selections = selectedNodeIds(this.data.proposalDomains, this.data.accepted);
+    if (!Object.keys(selections).length) return this.setData({ notice: "先选择或确认地点，才能比较真实路线。" });
+    const nextModes = { ...this.data.routeModes, [legId]: mode };
+    this.setData({ routeSwitching: true, routeSwitchBlocked: false });
+    try {
+      let previewId = this.data.routePreviewId;
+      if (!previewId) {
+        const initial = await app.request(`/api/trips/${encodeURIComponent(this.data.trip.tripId)}/mobility/preview`, { method: "POST", data: { baseRevision: this.data.planRevision, selections } });
+        if (!initial.previewId) throw { code: initial.reason || "route_preview_unavailable" };
+        previewId = initial.previewId;
+      }
+      const result = await app.request(`/api/trips/${encodeURIComponent(this.data.trip.tripId)}/mobility/preview`, { method: "POST", data: { baseRevision: this.data.planRevision, previewId, routeModes: nextModes } });
+      const mobility = mobilityModel(result.mobility);
+      const scene = miniRouteScene(mobility, { activeDay: this.data.activeDay, activeLegId: legId, routeModes: nextModes });
+      if (result.feasibility && result.feasibility.canConfirm !== true) throw { code: "route_infeasible", details: result.feasibility.primaryBlocker };
+      if (!scene.nextLeg || !scene.nextLeg.drawable || !scene.drawable) throw { code: "route_geometry_unavailable" };
+      this.setData({ mobility, routePreviewId: result.previewId, routeModes: nextModes, activeLegId: scene.activeLegId, routeLegs: scene.legs, nextLeg: scene.nextLeg, markers: scene.markers, polylines: scene.polylines, routeDrawable: scene.drawable, routeSwitchBlocked: false, notice: `已核验${scene.nextLeg.modeLabel}方案；时间、步行、换乘和费用已同步。` });
+    } catch (error) {
+      this.setData({ routeSwitchBlocked: true, notice: error && error.details || (error && error.code === "route_geometry_unavailable" ? "这条方式没有返回可绘制路线，已保留上一条路线。" : "这条方式没有通过核验，已保留上一条路线。") });
+    } finally {
+      this.setData({ routeSwitching: false });
+    }
   },
   async acceptProposal() {
     if (!this.data.proposal || !this.data.trip || this.data.loading) return;
@@ -176,10 +241,18 @@ Page({
       this.setData({ notice: "请先选择一个想确认的候选；其他领域可以稍后再决定。" });
       return;
     }
+    if (this.data.routeSwitchBlocked) {
+      this.setData({ notice: "当前路线切换没有通过核验，请保留上一条路线或重新选择。" });
+      return;
+    }
+    if (this.data.routePreviewId && !this.data.routeDrawable) {
+      this.setData({ notice: "当前日仍有路段缺少真实折线，暂不能确认这次路线调整。" });
+      return;
+    }
     const selections = Object.fromEntries(this.data.proposalDomains.map((domain) => [domain.key, domain.candidates.find((candidate) => candidate.selected)?.nodeId]).filter((item) => item[1]));
     this.setData({ loading: true });
     try {
-      await app.request(`/api/trips/${encodeURIComponent(this.data.trip.tripId)}/proposals/${encodeURIComponent(this.data.proposal.proposalId)}/accept`, { method: "POST", data: { selections, partial: true } });
+      await app.request(`/api/trips/${encodeURIComponent(this.data.trip.tripId)}/proposals/${encodeURIComponent(this.data.proposal.proposalId)}/accept`, { method: "POST", data: { selections, partial: true, ...(this.data.routePreviewId ? { previewId: this.data.routePreviewId, baseRevision: this.data.planRevision, routeModes: this.data.routeModes } : {}) } });
       await app.request(`/api/trips/${encodeURIComponent(this.data.trip.tripId)}/mobility/refresh`, { method: "POST" });
       await this.loadTrip(this.data.trip.tripId);
       this.setData({ notice: "已确认所选候选；其他领域仍可继续比较。", activeView: "itinerary" });

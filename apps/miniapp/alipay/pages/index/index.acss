@@ -42,3 +42,20 @@
 .budget-rows text:first-child { font-weight:700; }
 .budget-rows text:nth-child(2) { text-align:right; font-weight:700; }
 .budget-rows text:last-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#758188; font-size:20rpx; }
+.route-day-tabs { margin:18rpx 24rpx 12rpx; display:flex; gap:10rpx; overflow-x:auto; }
+.route-day-tabs button { min-width:112rpx; height:64rpx; margin:0; padding:0 18rpx; border:1rpx solid #d7e0e5; border-radius:16rpx; color:#596a73; background:#fff; font-size:22rpx; font-weight:700; line-height:64rpx; }
+.route-day-tabs button.active { color:#fff; border-color:#2268c7; background:#2268c7; }
+.next-route { margin-top:0; }
+.next-route .card-title { margin-top:10rpx; font-size:29rpx; line-height:1.35; }
+.route-mode-options { margin-top:20rpx; display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10rpx; }
+.route-mode-options button { min-width:0; min-height:92rpx; margin:0; padding:10rpx 6rpx; display:grid; align-content:center; gap:4rpx; border:1rpx solid #d9e1e5; border-radius:14rpx; color:#56656d; background:#fff; font-size:22rpx; line-height:1.25; }
+.route-mode-options button.active { color:#215f3f; border-color:#8bc2a1; background:#eef8f1; }
+.route-mode-options button text:last-child { color:#718087; font-size:18rpx; }
+.route-steps { margin-top:18rpx; padding:16rpx; display:grid; gap:10rpx; border-radius:14rpx; background:#f4f7f8; }
+.route-steps>text { color:#4f6069; font-size:21rpx; line-height:1.5; }
+.route-warning { display:block; margin-top:16rpx; padding:14rpx; border-radius:12rpx; color:#7b4818; background:#fff4e7; font-size:21rpx; line-height:1.5; }
+.day-route-list button { width:100%; min-height:78rpx; margin:10rpx 0 0; padding:12rpx 16rpx; display:flex; align-items:center; justify-content:space-between; gap:14rpx; border:1rpx solid #e0e6e9; border-radius:14rpx; color:#40515b; background:#fff; font-size:21rpx; line-height:1.4; text-align:left; }
+.day-route-list button.active { color:#205b76; border-color:#91b8ca; background:#eef7fb; }
+.day-route-list button text:first-child { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:700; }
+.day-route-list button text:last-child { flex:none; color:#6e7c84; }
+.map-source-note { display:block; margin:-8rpx 32rpx 24rpx; color:#6d7a82; font-size:20rpx; line-height:1.5; }

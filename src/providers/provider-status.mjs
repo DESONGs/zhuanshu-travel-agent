@@ -77,6 +77,8 @@ function authChannelStates(env) {
 }
 
 export function providerStatusSummary(env = process.env) {
+  const amapJsRendererEnabled = String(env.TRAVEL_AGENT_AMAP_JS_RENDERER_ENABLED ?? "true").trim().toLowerCase() !== "false";
+  const amapJsRendererConfigured = amapJsRendererEnabled && configured(env.AMAP_JS_API_KEY) && configured(env.AMAP_JS_SECURITY_CODE);
   const fliggyFlyAi = flyaiState(env);
   const tuniuOfficialMcp = tuniuState(env);
   const authorizedInventory = inventoryState(fliggyFlyAi, tuniuOfficialMcp);
@@ -107,6 +109,19 @@ export function providerStatusSummary(env = process.env) {
       socialReadWorker: "blocked_pending_isolated_worker",
       railway: authorizedInventory,
       flightsAndHotels: authorizedInventory,
+    },
+    mapRenderer: {
+      preferred: amapJsRendererConfigured ? "amap_js" : "leaflet",
+      amapJs: {
+        status: !amapJsRendererEnabled
+          ? "amap_js_renderer_disabled"
+          : amapJsRendererConfigured
+          ? liveState(env, "TRAVEL_AGENT_AMAP_JS_SMOKE_STATUS", "configured_pending_browser_smoke")
+          : "amap_js_renderer_not_configured",
+        publicKey: amapJsRendererConfigured ? env.AMAP_JS_API_KEY : null,
+        securityServicePath: amapJsRendererConfigured ? "/_AMapService" : null,
+      },
+      fallback: "leaflet_or_static_map",
     },
     channels: authChannelStates(env),
   };
