@@ -4,18 +4,18 @@
 
 | 入口 | 工程 | 共享能力 | 当前可验证边界 |
 | --- | --- | --- | --- |
-| Web / PWA | React + Vite | HTTP API、旅行状态、路线详情、离线 shell | 已构建，可本地真实交互；当前只缓存 App Shell，不等于旅行离线执行。 |
+| Web / PWA | React + Vite | HTTP API、旅行状态、路线详情、分层地图、离线 shell | 已构建，可本地真实交互；高德 JS 薄渲染器与 Leaflet/静态图降级均已接线，但高德 JS 仍需独立 Web Key 与浏览器 live smoke。 |
 | iOS | Capacitor | 同一 Web bundle 与 HTTPS API | 工程已生成并可 copy；本机缺完整 Xcode/CocoaPods 时不声称已编译。 |
 | Android | Capacitor | 同一 Web bundle 与 HTTPS API | 工程已生成并完成 asset copy；签名与 SDK 构建由发布环境完成。 |
-| 微信小程序 | 官方原生小程序工程 | HTTP API、`wx.login` 授权码交换、旅行读取 | 客户端与服务端交换已实现；真实 AppID、域名白名单和账号 smoke 仍需发布主体完成。 |
-| 支付宝小程序 | 官方原生小程序工程 | HTTP API、`my.getAuthCode` 授权码交换、旅行读取 | 客户端与 RSA2 服务端交换/验签已实现；真实 AppID、密钥和账号 smoke 仍需发布主体完成。 |
+| 微信小程序 | 官方原生小程序工程 | HTTP API、`wx.login` 授权码交换、当天原生地图与路线试排 | 当天 marker/polyline、下一段、方式切换和失败保留已进入真实页面代码；真实 AppID、域名白名单、开发工具与真机 smoke 仍需发布主体完成。 |
+| 支付宝小程序 | 官方原生小程序工程 | HTTP API、`my.getAuthCode` 授权码交换、当天原生地图与路线试排 | 当天 marker/polyline、下一段、方式切换和失败保留已进入真实页面代码；真实 AppID、RSA2、开发工具与真机 smoke 仍需发布主体完成。 |
 | MCP | Node stdio | `TravelService` 业务合同 | 可本地调用，不维护第二份状态。 |
 
 桌面与大屏折叠屏使用响应式 Web；不维护与 Web 竞争的独立桌面业务代码。
 
 ## 已锁定技术方案
 
-第一阶段采用 **React Web Core + PWA + 现有 Capacitor iOS/Android + 轻量微信/支付宝原生小程序**。技术调研见 [TREK 技术栈与全平台方案](../research/2026-08-20-trek-technical-stack-and-cross-platform-options.md)。
+第一阶段采用 **React Web Core + PWA + 现有 Capacitor iOS/Android + 轻量微信/支付宝原生小程序**。技术调研见 [TREK 技术栈与全平台方案](../research/archive/2026-08-20-trek-technical-stack-and-cross-platform-options.md)。
 
 实施边界：
 
@@ -48,10 +48,10 @@ Web 首次价值不要求登录。`POST /api/auth/guest-session` 签发随机 Gu
 
 ## V2 端侧职责
 
-- 桌面 Web：对话可折叠；Trip 工作区先显示四域当前选择，按当前焦点展开一组替代项，地图、时间轴与影响保持同屏。单地点完整详情按需展开；容器窄于约 900px 时才改单列，持久化栏宽不能把结果区压成不可读窄栏。
-- 移动 Web / 原生壳：固定 Chat / Trip / Map 三入口；确认地点后 Map 显示 Today、当前/下一步、准备缺口和变化恢复。
+- 桌面 Web：对话可折叠；Trip 工作区先显示四域当前选择，按当前焦点展开一组替代项，地图、时间轴与影响保持同屏。地图默认按 Day 展示，每一段路线与卡片共享焦点、方式、分钟和查询时影响；同一酒店多次到访保留多个序号。单地点完整详情按需展开；容器窄于约 900px 时才改单列。
+- 移动 Web / 原生壳：固定 Chat / Trip / Map 三入口；确认地点后 Map 显示 Today、当前/下一步、准备缺口和变化恢复。地图使用双指缩放、单指拖动与可见缩放控件，仍共用 Web Core 的路线投影。
 - 英文：根据浏览器语言自动选择，并提供中英切换。当前核心执行外壳已本地化；地点英文别名、地址转写和 Provider 长文本仍待统一归一。
-- 小程序：复用上述服务状态并采用轻量 Today，不复制桌面比较工作台；真实扫码授权、域名白名单和设备回跳仍是发布门。
+- 小程序：复用上述服务状态并采用轻量 Today，只绘制当前 Day、当前方式和 active leg，并在地图下直接显示“下一段怎么走”；切换方式仍由服务端 Mobility Preview 核验，不复制桌面比较工作台。真实扫码授权、域名白名单、开发工具和真机回跳仍是发布门。
 
 ## 离线边界
 
@@ -73,5 +73,8 @@ Web 首次价值不要求登录。`POST /api/auth/guest-session` 签发随机 Gu
 - `DATABASE_URL`：生产 PostgreSQL，不进入 Web bundle、Prompt、日志或 artifact。
 - `TRAVEL_AGENT_PUBLIC_ORIGIN`：生产站点唯一 HTTPS Origin；四个平台的回调地址均从这里生成。
 - `TRAVEL_AGENT_SESSION_SECRET`、`TRAVEL_AGENT_AUTH_STATE_SECRET`：两个独立的随机服务端密钥，至少 32 字符。
+- `AMAP_JS_API_KEY`：高德 Web 平台的浏览器可见 JS Key；不等同于服务端 `AMAP_API_KEY`。
+- `AMAP_JS_SECURITY_CODE`：高德 JS 安全密钥，只由固定 `/_AMapService` 服务端代理使用，不进入浏览器响应。
+- `TRAVEL_AGENT_AMAP_JS_RENDERER_ENABLED`：地图渲染器开关；关闭时保持 Leaflet/静态图降级，不改变路线事实。
 
 平台侧 AppID 为空时只能完成工程构建，不能提审或上线；不得填入演示 AppID 冒充可发布配置。

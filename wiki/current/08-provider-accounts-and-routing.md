@@ -47,7 +47,7 @@ DeepSeek V4 Flash 与 Pro 继续承担普通文字轮；Flash 速度与成本更
 
 普通 DeepSeek 文字路线、DeepSeek Vision、Kimi 视觉路线以及高德、飞猪、途牛均完成无敏感真实调用。Kimi 直接 Pi Child 与最新双 lane 结构化 fallback smoke 均已通过；DeepSeek 最新三 lane 也完整通过。2026-08-26 最新诊断中，高德 POI v5/v3、地理编码、天气、公交、驾车、步行和静态地图成功，本轮自然确认缺陷不是高德错误。航班、票价、余位和酒店 Offer 属于动态库存，只能展示本次 `checkedAt` 快照；例如相邻两次 live fusion 的班次与价格已经变化。Provider smoke 与直接 Service 组合不能替代 Parent Agent 验收；指定的“已购票 → stay-only → 接驳”路径已另以 Safari、真实 HTTP 与 TripState 复测通过。
 
-高德服务组、POI v3/v5 字段差异、IP 诊断、动态地图与路线采用顺序见[高德数据能力全景与 Travel Agent 采用报告](../research/2026-08-16-amap-data-capability-landscape.md)。城市移动的旅行者路径、代码审计、Mobility Gate 与对抗验收见[高德城市移动与产品代码审计](../research/2026-08-16-amap-city-mobility-product-and-code-audit.md)。
+高德服务组、POI v3/v5 字段差异、IP 诊断、动态地图与路线采用顺序见[高德数据能力全景与 Travel Agent 采用报告](../research/archive/2026-08-16-amap-data-capability-landscape.md)。城市移动的旅行者路径、代码审计、Mobility Gate 与对抗验收见[高德城市移动与产品代码审计](../research/archive/2026-08-16-amap-city-mobility-product-and-code-audit.md)。
 
 ```bash
 npm run smoke:models

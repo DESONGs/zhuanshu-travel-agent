@@ -3,7 +3,7 @@
 - 日期：2026-08-27
 - 角色：产品迭代规划（PM），承接真实使用反馈、双份代码层诊断与「要 agentic 不要 workflow」的方向拍板
 - 状态：方向已确认；Agent Runtime/Skills/并行状态一致性底座与旅行行程 Plan–Check–Repair Harness 已落地，出行总账与主动补缺仍按本文 M1/M2 继续实施
-- 证据基础：`wiki/research/2026-08-26-user-golden-path-provider-fusion-bug-audit.md`、`2026-08-27-visible-planning-workbench-and-route-preview-qa.md`、Agent 编排层与 Provider 数据层代码诊断（行号见 §3）
+- 证据基础：`wiki/research/archive/2026-08-26-user-golden-path-provider-fusion-bug-audit.md`、`wiki/research/archive/2026-08-27-visible-planning-workbench-and-route-preview-qa.md`、Agent 编排层与 Provider 数据层代码诊断（行号见 §3）
 
 ## 1. 用户反馈与核心判断
 
@@ -229,7 +229,7 @@
 
 ## 11. 合并交付路线图（与 V3 前端方案合并，2026-08-29）
 
-V3 前端方案（`wiki/research/2026-08-29-ui-component-sources-and-first-principles-redesign.md`）是呈现层，本文档是智能层；两者按下表合并交付，后续开发由 codex 主线程执行：
+V3 前端方案（`wiki/research/archive/2026-08-29-ui-component-sources-and-first-principles-redesign.md`）是呈现层，本文档是智能层；两者按下表合并交付，后续开发由 codex 主线程执行：
 
 | 阶段 | 内容 | 依赖 |
 | --- | --- | --- |
@@ -244,7 +244,7 @@ V3 前端方案（`wiki/research/2026-08-29-ui-component-sources-and-first-princ
 
 注：Agent Runtime/Skills/并行一致性底座（[文档 12](./12-agent-runtime-and-parallelism-architecture.md) 范围）已先行落地，B 阶段的决策循环与工具面在其上继续，不重复建设。
 
-2026-08-29 真实使用审计（[审计与 Fix Checklist](../research/2026-08-29-real-user-product-audit-and-fix-checklist.md)，归因分析见其 §11）证明行程时间正确性是地基而非增强：原 C 阶段「按天动线」的数据基础（dayIndex/date/role）随 A0 提前落地，C 阶段只做顺路性检查与按天视图。审计归因结论：主因是领域建模缺口（时间与可执行性模型缺失），并行改动是放大器，另有承诺-能力一致性产品约束（§4 第 6 条）。
+2026-08-29 真实使用审计（[审计与 Fix Checklist](../research/archive/2026-08-29-real-user-product-audit-and-fix-checklist.md)，归因分析见其 §11）证明行程时间正确性是地基而非增强：原 C 阶段「按天动线」的数据基础（dayIndex/date/role）随 A0 提前落地，C 阶段只做顺路性检查与按天视图。审计归因结论：主因是领域建模缺口（时间与可执行性模型缺失），并行改动是放大器，另有承诺-能力一致性产品约束（§4 第 6 条）。
 
 ## 12. 2026-08-29 实施状态
 

@@ -33,7 +33,7 @@
 | `AMAP-ML/MobilityBench@c05a…` | 只借鉴 | 路线调用、结果有效性和回放沙箱有价值；许可明确前不复制。 |
 | GroupTravelBench | 只借鉴 | 多人偏好获取、冲突协调与公平可作为验收维度。 |
 | `borski/travel-hacking-toolkit@593dd…` | 只借鉴 | Tool/Reference Skill、来源优先级与失败回退模式可参考。 |
-| `liketrek/TREK@e60427f813dc35f688d5d9169b79ac8c43974719` | 排除代码依赖；允许产品研究 | AGPL-3.0，与项目第三方边界不兼容。只借鉴地图工作台、候选/日程状态和离线/协作产品思想，不复制代码、Schema、数据或资产。详见 [TREK 调研](./2026-08-20-trek-workbench-product-research.md)。 |
+| `liketrek/TREK@e60427f813dc35f688d5d9169b79ac8c43974719` | 排除代码依赖；允许产品研究 | AGPL-3.0，与项目第三方边界不兼容。只借鉴地图工作台、候选/日程状态和离线/协作产品思想，不复制代码、Schema、数据或资产。详见 [TREK 调研](./archive/2026-08-20-trek-workbench-product-research.md)。 |
 | `trvl` | 排除 | 非商业许可。 |
 | `yzfly/douyin-mcp-server` | 排除 | 已归档，且含下载/再分发风险。 |
 

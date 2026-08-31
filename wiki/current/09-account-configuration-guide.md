@@ -68,12 +68,12 @@ API 会自动读取项目根目录的 `env_travel.local`。该文件已被 Git �
 
 绝对不能放进浏览器或小程序的字段包括：
 
-- 所有 `*_SECRET`、API Key、平台 access token；
+- 所有 `*_SECRET`、服务端 Provider API Key、平台 access token；
 - `DATABASE_URL`；
 - RSA 私钥、Apple `.p8`；
 - Session 和 OAuth state 密钥。
 
-`VITE_*` 只允许公开地址、公开地图瓦片模板和署名，不能承载任何 Secret。
+`VITE_*` 只允许公开地址、公开地图瓦片模板和署名，不能承载任何 Secret。高德 Web 平台 JS Key 按官方机制本来就会在浏览器载入脚本时可见；它由认证后的 Provider Status 返回，不写入 `VITE_*`。配套 `securityJsCode` 始终留在服务端。
 
 ## 4. 本地开发
 
@@ -229,14 +229,30 @@ npm run smoke:amap
 
 ### 浏览器互动底图
 
-开发模式未配置底图时可使用带署名的 OpenStreetMap 公共瓦片做本地 QA；生产不会默认依赖该公共服务。生产互动底图必须使用有商业授权、域名限制和 SLA 的供应方：
+中国境内桌面 Web/PWA/Capacitor 的首选互动底图是高德 JS API 2.0。需要在高德控制台另建 **Web 端（JS API）** Key，不能复用服务端 WebService Key：
+
+```dotenv
+AMAP_JS_API_KEY=
+AMAP_JS_SECURITY_CODE=
+TRAVEL_AGENT_AMAP_JS_RENDERER_ENABLED=true
+TRAVEL_AGENT_AMAP_JS_SMOKE_STATUS=not_run
+```
+
+- `AMAP_JS_API_KEY` 是浏览器可见的 Web JS Key；
+- `AMAP_JS_SECURITY_CODE` 只由同源 `/_AMapService` 固定代理追加，代理会覆盖客户端传入的 `key/jscode`，不能转发任意域名；
+- 在控制台配置生产域名白名单，并分别验证 Web/PWA 与 Capacitor 来源；
+- 真实浏览器成功载入、点击路线、缩放和切换方式后，才能把 smoke 状态改为 `passed_live_smoke`。
+
+官方入口：[准备与创建 Web 端 Key](https://lbs.amap.com/api/javascript-api-v2/prerequisites)、[安全密钥与服务端代理](https://lbs.amap.com/api/javascript-api-v2/guide/abc/jscode)。
+
+开发模式未配置高德 JS 时可使用带署名的 OpenStreetMap 公共瓦片做本地 QA；生产不会默认依赖该公共服务。需要替代底图时可配置：
 
 ```dotenv
 VITE_TRAVEL_MAP_TILE_URL=
 VITE_TRAVEL_MAP_ATTRIBUTION=
 ```
 
-未配置生产互动底图时，界面回退到服务端高德静态地图。不要把 `AMAP_API_KEY` 放进 `VITE_*`。
+高德 JS 未配置或加载失败时，界面先诚实降级到 Leaflet；生产没有合规瓦片时再回退到服务端高德静态地图。不要把 `AMAP_API_KEY` 或 `AMAP_JS_SECURITY_CODE` 放进 `VITE_*`。
 
 ### 天气
 
@@ -470,7 +486,7 @@ npm run smoke:inventory
 - 在 Google、微信、支付宝和 Apple 控制台创建并审核应用；
 - 配置微信/支付宝小程序真实 AppID、服务器域名和发布主体；
 - 提供高德、飞猪、途牛和生产天气的商业账号或授权；
-- 选择合规的生产互动底图；
+- 创建高德 Web JS Key、安全码与域名白名单，并完成真实浏览器/Capacitor smoke；
 - 在目标 Windows、macOS、iOS、Android、微信和支付宝设备完成真实验收。
 
 在这些人工门槛关闭前，可以说明“代码与配置入口已完成”，不能说明“生产渠道已经上线”。

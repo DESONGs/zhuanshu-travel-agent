@@ -25,8 +25,8 @@
 
 纠正前证据：
 
-- [空白咨询入口](../../design/audit-consultation-before/02-empty-chat.png)
-- [对话后只有空草案](../../design/audit-consultation-before/03-empty-draft-after-chat.png)
+- [空白咨询入口](../../../design/audit-consultation-before/02-empty-chat.png)
+- [对话后只有空草案](../../../design/audit-consultation-before/03-empty-draft-after-chat.png)
 
 ## 已实施纠正
 
@@ -41,11 +41,11 @@
 
 纠正后证据：
 
-- [只问一个关键问题，未创建空旅行](../../design/audit-consultation-after/01-targeted-question.png)
-- [桌面候选与逐域选择](../../design/audit-consultation-after/02-selectable-proposal-fixture.png)（显式 QA Fixture，仅证明界面和合同）
-- [确认后写入共享计划](../../design/audit-consultation-after/03-confirmed-plan-fixture.png)（显式 QA Fixture）
-- [移动端对话单列](../../design/audit-consultation-after/04-mobile-chat-top.png)
-- [移动端候选与粘性确认动作](../../design/audit-consultation-after/05-mobile-proposal.png)（显式 QA Fixture）
+- [只问一个关键问题，未创建空旅行](../../../design/audit-consultation-after/01-targeted-question.png)
+- [桌面候选与逐域选择](../../../design/audit-consultation-after/02-selectable-proposal-fixture.png)（显式 QA Fixture，仅证明界面和合同）
+- [确认后写入共享计划](../../../design/audit-consultation-after/03-confirmed-plan-fixture.png)（显式 QA Fixture）
+- [移动端对话单列](../../../design/audit-consultation-after/04-mobile-chat-top.png)
+- [移动端候选与粘性确认动作](../../../design/audit-consultation-after/05-mobile-proposal.png)（显式 QA Fixture）
 
 ## 仍然阻塞的产品能力
 

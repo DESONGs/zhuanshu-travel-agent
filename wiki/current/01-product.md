@@ -1,6 +1,6 @@
 # Travel Agent V2 产品定义与用户体验
 
-> 状态：V2 当前产品定义，随用户决策持续修订。本文已吸收入境中国市场验证、Brainstorm V2、既有 V1 产品约束与当前代码实况；研究数字和来源继续只在[市场验证基准](../research/2026-08-20-inbound-china-market-validation.md)维护，产品推演见[Brainstorm V2](../research/2026-08-20-next-iteration-product-brainstorm-v2.md)。
+> 状态：V2 当前产品定义，随用户决策持续修订。本文已吸收入境中国市场验证、Brainstorm V2、既有 V1 产品约束与当前代码实况；研究数字和来源继续只在[市场验证基准](../research/archive/2026-08-20-inbound-china-market-validation.md)维护，产品推演见[Brainstorm V2](../research/archive/2026-08-20-next-iteration-product-brainstorm-v2.md)。
 
 ## 产品结论
 

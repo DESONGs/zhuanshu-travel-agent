@@ -1,7 +1,7 @@
 # Travel Agent 前端组件调研与第一性原理 V3 设计方案
 
 - 日期：2026-08-29
-- 状态：调研与 PM/Design 审查完成，审查修改已并入本文；交付顺序以[智能规划能力产品迭代文档 §11 合并路线图](../current/11-intelligent-planning-iteration.md)为准，后续开发由 codex 主线程执行
+- 状态：调研与 PM/Design 审查完成，审查修改已并入本文；交付顺序以[智能规划能力产品迭代文档 §11 合并路线图](../../current/11-intelligent-planning-iteration.md)为准，后续开发由 codex 主线程执行
 - 范围：Beautiful UI、beUI、Rare UI、Transitions.dev、shadcn/ui，以及当前 Travel Agent Web、移动端与小程序工作区
 - 约束：保留 Chat-first、共享 TripState、吃住行玩联动、地图主导、试排不落盘与用户确认边界；不做全面重写，不引入 Tailwind 迁移或通用 UI 平台
 
@@ -180,7 +180,7 @@ Chat 表达意图
 #### Decision Spine
 
 - 默认是按旅行时间顺序排列的决定行：抵达、住宿、餐饮、游玩、返程或额外接驳。
-- 每行显示名称、时间窗、状态、**价格槽**、一个关键取舍和“另有 N 个选择”。价格槽不允许为版面干净而省略：实价显示金额与查询时间，参考价标 `≈`，估算标 `~` 并给口径（如“3 人 3 天”），未知标“待核验”（三级价格体系见[智能规划能力产品迭代文档 §5.1](../current/11-intelligent-planning-iteration.md)）。
+- 每行显示名称、时间窗、状态、**价格槽**、一个关键取舍和“另有 N 个选择”。价格槽不允许为版面干净而省略：实价显示金额与查询时间，参考价标 `≈`，估算标 `~` 并给口径（如“3 人 3 天”），未知标“待核验”（三级价格体系见[智能规划能力产品迭代文档 §5.1](../../current/11-intelligent-planning-iteration.md)）。
 - 点击一行在原位进入 Focused Compare，不打开新 modal，也不铺开四个候选池。
 - 候选比较统一回答：价格性质、路线差异、时间差、同行人适配、**跨域影响**（换住宿对餐饮动线、体力分配与预算的联动 Δ）以及证据与未知。
 
@@ -319,7 +319,7 @@ stale / superseded（涉及动态旅行资料时）
 
 ### Changeset 2：桌面决策主循环
 
-前置依赖：与[智能规划能力产品迭代文档](../current/11-intelligent-planning-iteration.md) M1 同车交付——AgentProgressRail 的阶段必须来自真实 Agent 循环的工具调用，ImpactBar 的预算格需要分域账本，OptionCompareList 的价格性质需要三级价格体系；M1 落地前这些组件只显示真实已有的数据，不先上壳后填数。
+前置依赖：与[智能规划能力产品迭代文档](../../current/11-intelligent-planning-iteration.md) M1 同车交付——AgentProgressRail 的阶段必须来自真实 Agent 循环的工具调用，ImpactBar 的预算格需要分域账本，OptionCompareList 的价格性质需要三级价格体系；M1 落地前这些组件只显示真实已有的数据，不先上壳后填数。
 
 - 用 AgentProgressRail 取代分散 loading 文案；
 - 将整趟安排收敛为 Decision Spine；
@@ -428,6 +428,6 @@ stale / superseded（涉及动态旅行资料时）
 
 本文件已经给出生产级设计方向和分步落地方案，但按 preserve-mode 不直接进入代码实施。用户确认后，实施应严格按 Changeset 0 → 5 推进，每个 changeset 保持可运行，并用真实桌面与移动黄金路径验收。
 
-2026-08-29 PM/Design 审查结论已并入本文（决定行价格槽、Focused Compare 跨域影响、1180px 以下 Chat Rail 规则、CS2/CS4 与 M1 依赖、智能真实性验收）。交付顺序以[智能规划能力产品迭代文档 §11 合并路线图](../current/11-intelligent-planning-iteration.md)为准；后续开发由 codex 主线程按该路线图执行。
+2026-08-29 PM/Design 审查结论已并入本文（决定行价格槽、Focused Compare 跨域影响、1180px 以下 Chat Rail 规则、CS2/CS4 与 M1 依赖、智能真实性验收）。交付顺序以[智能规划能力产品迭代文档 §11 合并路线图](../../current/11-intelligent-planning-iteration.md)为准；后续开发由 codex 主线程按该路线图执行。
 
-同日开发实施已完成 M0/A/B 的纵向闭环并经过真实浏览器验收：决定行价格槽、六候选渐进比较、分域预算、跨域试排 Δ、真实 activity、1180px Chat 折叠、本地可访问 Overlay、393px MapRouteSheet 和小程序局部确认已进入代码。具体完成与未关闭范围以[迭代文档 §12](../current/11-intelligent-planning-iteration.md)为准；C/D 中的按天出行总账、执行事件、真机 OAuth 与完整端侧验收没有被提前写成完成。
+同日开发实施已完成 M0/A/B 的纵向闭环并经过真实浏览器验收：决定行价格槽、六候选渐进比较、分域预算、跨域试排 Δ、真实 activity、1180px Chat 折叠、本地可访问 Overlay、393px MapRouteSheet 和小程序局部确认已进入代码。具体完成与未关闭范围以[迭代文档 §12](../../current/11-intelligent-planning-iteration.md)为准；C/D 中的按天出行总账、执行事件、真机 OAuth 与完整端侧验收没有被提前写成完成。

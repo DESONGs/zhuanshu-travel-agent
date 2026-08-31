@@ -1,7 +1,7 @@
 # Travel Agent 下一迭代产品方向 Brainstorm V2
 
 > 日期：2026-08-20
-> 状态：产品方向已被采纳；现行产品真相源为 [`wiki/current/01-product.md`](../current/01-product.md)。
+> 状态：产品方向已被采纳；现行产品真相源为 [`wiki/current/01-product.md`](../../current/01-product.md)。
 > 版本说明：本文保留完整推演和待验证假设；代码仍需按现行 PRD 增量迁移，不能因方向采纳而声称 V2 已实现。
 > 研究基准：[入境中国 Travel Agent：市场验证与产品闭环基准](./2026-08-20-inbound-china-market-validation.md)
 > 历史版本：[Brainstorm V1](./2026-08-20-next-iteration-product-brainstorm.md)
