@@ -400,7 +400,14 @@ export const EvidenceClaimInputSchema = Type.Object({
 }, { $id: "EvidenceClaimInput", additionalProperties: false });
 export type EvidenceClaimInput = Static<typeof EvidenceClaimInputSchema>;
 
-const ContentItemSchema = Type.Object({
+export const EvidenceAccessSchema = Type.Union([
+  Type.Literal("public"),
+  Type.Literal("login_required"),
+  Type.Literal("unavailable"),
+], { $id: "EvidenceAccess" });
+export type EvidenceAccess = Static<typeof EvidenceAccessSchema>;
+
+export const ContentItemSchema = Type.Object({
   contentItemId: IdentifierSchema,
   provider: Type.String(),
   sourceType: Type.String(),
@@ -409,7 +416,11 @@ const ContentItemSchema = Type.Object({
   documentationUrl: NullableStringSchema,
   independenceGroup: Type.String(),
   commercialBias: Type.String(),
-}, { additionalProperties: false });
+  title: Type.Optional(Type.Union([Type.String({ maxLength: 500 }), Type.Null()])),
+  originalLanguage: Type.Optional(Type.Union([Type.String({ maxLength: 24 }), Type.Null()])),
+  access: Type.Optional(EvidenceAccessSchema),
+}, { $id: "ContentItem", additionalProperties: false });
+export type ContentItem = Static<typeof ContentItemSchema>;
 
 const EvidenceEntitySchema = Type.Object({
   entityId: IdentifierSchema,
@@ -424,6 +435,102 @@ export const EvidenceGraphSchema = Type.Object({
   entities: Type.Array(EvidenceEntitySchema),
 }, { $id: "EvidenceGraph", additionalProperties: false });
 export type EvidenceGraph = Static<typeof EvidenceGraphSchema>;
+
+export const EvidenceMediaRightsSchema = Type.Union([
+  Type.Literal("provider_display"),
+  Type.Literal("source_only"),
+  Type.Literal("unknown"),
+], { $id: "EvidenceMediaRights" });
+export type EvidenceMediaRights = Static<typeof EvidenceMediaRightsSchema>;
+
+export const EvidencePresentationBundleSchema = Type.Object({
+  schemaVersion: Type.Literal("evidence-presentation-bundle-v1"),
+  bundleId: IdentifierSchema,
+  tripId: IdentifierSchema,
+  nodeId: Type.Union([IdentifierSchema, Type.Null()]),
+  entityId: Type.Union([IdentifierSchema, Type.Null()]),
+  targetLanguage: Type.String({ minLength: 2, maxLength: 24 }),
+  contentHash: Type.String({ minLength: 16, maxLength: 128 }),
+  extractorVersion: Type.String({ minLength: 1, maxLength: 80 }),
+  createdAt: IsoTimestampSchema,
+  expiresAt: IsoTimestampSchema,
+  stale: Type.Boolean(),
+  status: Type.Union([
+    Type.Literal("ready"),
+    Type.Literal("partial"),
+    Type.Literal("login_required"),
+    Type.Literal("source_changed"),
+    Type.Literal("unavailable"),
+  ]),
+  translationStatus: Type.Union([
+    Type.Literal("original_only"),
+    Type.Literal("translated"),
+    Type.Literal("translation_unavailable"),
+  ]),
+  translationAudit: Type.Optional(Type.Object({
+    provider: Type.String({ minLength: 1, maxLength: 120 }),
+    model: Type.String({ minLength: 1, maxLength: 160 }),
+    checkedAt: IsoTimestampSchema,
+    inputCharacters: Type.Integer({ minimum: 0, maximum: 8_000 }),
+    tokenUsage: Type.Object({
+      input: Type.Integer({ minimum: 0 }),
+      output: Type.Integer({ minimum: 0 }),
+      total: Type.Integer({ minimum: 0 }),
+    }, { additionalProperties: false }),
+  }, { additionalProperties: false })),
+  sources: Type.Array(Type.Object({
+    contentItemId: IdentifierSchema,
+    provider: Type.String({ minLength: 1, maxLength: 120 }),
+    sourceType: Type.String({ minLength: 1, maxLength: 120 }),
+    sourceUrl: Type.Union([Type.String({ maxLength: 2_000 }), Type.Null()]),
+    title: Type.Union([Type.String({ maxLength: 500 }), Type.Null()]),
+    authorDisplay: Type.Union([Type.String({ maxLength: 160 }), Type.Null()]),
+    publishedAt: Type.Union([IsoTimestampSchema, Type.Null()]),
+    checkedAt: Type.Union([IsoTimestampSchema, Type.Null()]),
+    originalLanguage: Type.Union([Type.String({ maxLength: 24 }), Type.Null()]),
+    access: EvidenceAccessSchema,
+    independenceGroup: Type.String({ maxLength: 240 }),
+    commercialBias: Type.String({ maxLength: 120 }),
+  }, { additionalProperties: false }), { maxItems: 24 }),
+  media: Type.Array(Type.Object({
+    mediaId: IdentifierSchema,
+    kind: Type.Union([Type.Literal("image"), Type.Literal("video_cover")]),
+    displayUrl: Type.Union([Type.String({ maxLength: 2_000 }), Type.Null()]),
+    sourceUrl: Type.Union([Type.String({ maxLength: 2_000 }), Type.Null()]),
+    alt: Type.String({ maxLength: 500 }),
+    source: Type.String({ maxLength: 120 }),
+    rights: EvidenceMediaRightsSchema,
+    claimRefs: Type.Array(IdentifierSchema, { maxItems: 24 }),
+  }, { additionalProperties: false }), { maxItems: 12 }),
+  sections: Type.Array(Type.Object({
+    sectionId: IdentifierSchema,
+    label: Type.String({ minLength: 1, maxLength: 120 }),
+    originalText: Type.String({ minLength: 1, maxLength: 8_000 }),
+    translatedText: Type.Union([Type.String({ maxLength: 8_000 }), Type.Null()]),
+    originalLanguage: Type.Union([Type.String({ maxLength: 24 }), Type.Null()]),
+    targetLanguage: Type.Union([Type.String({ maxLength: 24 }), Type.Null()]),
+    claimRefs: Type.Array(IdentifierSchema, { maxItems: 24 }),
+  }, { additionalProperties: false }), { maxItems: 16 }),
+  claimGroups: Type.Array(Type.Object({
+    groupId: IdentifierSchema,
+    kind: Type.String({ minLength: 1, maxLength: 120 }),
+    summary: Type.String({ minLength: 1, maxLength: 1_000 }),
+    claimRefs: Type.Array(IdentifierSchema, { maxItems: 32 }),
+    sourceRefs: Type.Array(IdentifierSchema, { maxItems: 32 }),
+    independentSourceCount: Type.Integer({ minimum: 0 }),
+    repeatedSourceCount: Type.Integer({ minimum: 0 }),
+  }, { additionalProperties: false }), { maxItems: 16 }),
+  decisionFit: Type.Object({
+    summary: Type.String({ maxLength: 1_000 }),
+    routeEligible: Type.Boolean(),
+    routeReason: Type.String({ maxLength: 500 }),
+    travelerImpacts: Type.Array(Type.String({ maxLength: 500 }), { maxItems: 12 }),
+    unknowns: Type.Array(Type.String({ maxLength: 500 }), { maxItems: 12 }),
+    claimRefs: Type.Array(IdentifierSchema, { maxItems: 32 }),
+  }, { additionalProperties: false }),
+  caveats: Type.Array(Type.String({ maxLength: 500 }), { maxItems: 16 }),
+}, { $id: "EvidencePresentationBundle", additionalProperties: false });
+export type EvidencePresentationBundle = Static<typeof EvidencePresentationBundleSchema>;
 
 export const AccessibilityFeatureSchema = Type.Object({
   kind: Type.String(),

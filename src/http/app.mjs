@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import express from "express";
 import { assertTravelServicePort } from "../../travel-agent-pi-package/src/core/index.ts";
 import { createTravelService } from "../api/create-travel-service.mjs";
+import { EvidenceCompanionService } from "../api/evidence-companion-service.mjs";
 import { TravelConversationAgent } from "../agent/travel-conversation-agent.mjs";
 import { createConversationRepository } from "../persistence/conversation-repository.mjs";
 import { providerStatusSummary } from "../providers/provider-status.mjs";
@@ -80,6 +81,7 @@ export function createHttpApp({
   conversationAgent,
   sessionStore,
   authService,
+  evidenceCompanionService,
   webRoot = resolve(process.cwd(), "dist"),
   developmentAuthEnabled = process.env.NODE_ENV !== "production" && process.env.TRAVEL_AGENT_ALLOW_DEVELOPMENT_AUTH === "true",
   allowedOrigins = parseAllowedOrigins(process.env.TRAVEL_AGENT_CORS_ORIGINS),
@@ -96,6 +98,7 @@ export function createHttpApp({
     ? new SignedSessionStore({ secret: runtimeEnv.TRAVEL_AGENT_SESSION_SECRET })
     : new InMemorySessionStore();
   authService ??= createAuthService({ env: runtimeEnv });
+  evidenceCompanionService ??= new EvidenceCompanionService({ travelService, env: runtimeEnv, clock });
   const travelConversationAgent = conversationAgent ?? new TravelConversationAgent({ travelService, conversationRepository, env: runtimeEnv });
   const app = express();
   app.disable("x-powered-by");
@@ -316,6 +319,22 @@ export function createHttpApp({
   app.get("/api/trips/:tripId/plan", asyncRoute(async (request, response) => {
     await requireTripMember(request, request.params.tripId);
     response.json(await travelService.getTripPlanView(request.params.tripId));
+  }));
+  app.get("/api/trips/:tripId/evidence/nodes/:nodeId", asyncRoute(async (request, response) => {
+    await requireTripMember(request, request.params.tripId);
+    response.json(await evidenceCompanionService.presentationForNode({ tripId: request.params.tripId, nodeId: request.params.nodeId, targetLanguage: request.query.targetLanguage }));
+  }));
+  app.post("/api/trips/:tripId/evidence/resolve", asyncRoute(async (request, response) => {
+    await requireTripMember(request, request.params.tripId);
+    response.status(201).json(await evidenceCompanionService.resolveShareLink({ tripId: request.params.tripId, nodeId: request.body?.nodeId ?? null, url: request.body?.url, targetLanguage: request.body?.targetLanguage }));
+  }));
+  app.get("/api/trips/:tripId/evidence/:bundleId", asyncRoute(async (request, response) => {
+    await requireTripMember(request, request.params.tripId);
+    response.json(await evidenceCompanionService.getBundle({ tripId: request.params.tripId, bundleId: request.params.bundleId }));
+  }));
+  app.post("/api/trips/:tripId/evidence/:bundleId/translate", asyncRoute(async (request, response) => {
+    const session = await requireTripMember(request, request.params.tripId);
+    response.json(await evidenceCompanionService.translateBundle({ tripId: request.params.tripId, bundleId: request.params.bundleId, targetLanguage: request.body?.targetLanguage, userId: session.userId }));
   }));
   app.post("/api/trips/:tripId/readiness", asyncRoute(async (request, response) => {
     await requireTripMember(request, request.params.tripId);

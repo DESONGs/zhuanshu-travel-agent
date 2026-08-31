@@ -280,11 +280,34 @@ function visitFeedbackSummary(node, sharedFeedback = []) {
   };
 }
 
+function evidenceSummaryForNode(node, evidence = {}) {
+  const claimIds = new Set(node?.claimRefs ?? []);
+  const sourceIds = new Set(node?.sourceRefs ?? []);
+  const claims = (evidence?.claims ?? []).filter((claim) => claimIds.has(claim.claimId) || claim.nodeId === node?.nodeId);
+  for (const claim of claims) for (const sourceRef of claim.sourceRefs ?? []) sourceIds.add(sourceRef);
+  const sources = (evidence?.contentItems ?? []).filter((item) => sourceIds.has(item.contentItemId));
+  if (!claims.length && !sources.length) return null;
+  const independenceGroups = sources.map((item) => item.independenceGroup || item.contentItemId).filter(Boolean);
+  const independentSourceCount = new Set(independenceGroups).size;
+  const checkedAt = sources.map((item) => item.checkedAt).filter(Boolean).sort().at(-1) ?? null;
+  const hasLocalVoice = sources.some((item) => /social|community|review|visit|traveler|ugc/i.test(`${item.sourceType} ${item.provider}`));
+  return {
+    headline: claims.sort((left, right) => Number(right.confidence ?? 0) - Number(left.confidence ?? 0))[0]?.statement ?? node?.summary ?? "",
+    sourceCount: sources.length,
+    independentSourceCount,
+    repeatedSourceCount: Math.max(0, sources.length - independentSourceCount),
+    hasLocalVoice,
+    checkedAt,
+    access: sources.some((item) => item.access === "login_required") ? "login_required" : sources.some((item) => item.access === "unavailable") ? "unavailable" : "public",
+  };
+}
+
 function proposalView(proposal, sharedFeedback = []) {
   const byDomain = Object.fromEntries(FOUR_DOMAINS.map((domain) => [domain, []]));
   for (const operation of proposal.operations ?? []) {
     if (!["add_candidate", "select"].includes(operation.kind) || !FOUR_DOMAINS.includes(operation.node?.domain)) continue;
     const feedback = visitFeedbackSummary(operation.node, sharedFeedback);
+    const evidenceSummary = evidenceSummaryForNode(operation.node, proposal.evidenceBundle);
     byDomain[operation.node.domain].push({
       nodeId: operation.nodeId,
       domain: operation.node.domain,
@@ -302,6 +325,7 @@ function proposalView(proposal, sharedFeedback = []) {
       media: operation.node.media ?? [],
       operability: operation.node.operability ?? {},
       ...(feedback ? { visitFeedback: feedback } : {}),
+      ...(evidenceSummary ? { evidenceSummary } : {}),
     });
   }
   return {
@@ -331,6 +355,7 @@ function proposalView(proposal, sharedFeedback = []) {
 function planView(state, { mapPreviewAvailable = false, sharedFeedback = [], clock } = {}) {
   const nodeView = (node) => {
     const feedback = visitFeedbackSummary(node, sharedFeedback);
+    const evidenceSummary = evidenceSummaryForNode(node, state.evidence);
     return {
       nodeId: node.nodeId,
       title: node.title,
@@ -350,6 +375,7 @@ function planView(state, { mapPreviewAvailable = false, sharedFeedback = [], clo
       claimRefs: node.claimRefs,
       operability: node.operability,
       ...(feedback ? { visitFeedback: feedback } : {}),
+      ...(evidenceSummary ? { evidenceSummary } : {}),
     };
   };
   const byDomain = Object.fromEntries(
@@ -670,7 +696,7 @@ function buildResearchProposal(state, providerResult, criteria) {
     },
   });
   });
-  const contentItems = [...new Map(candidateEntries.flatMap(({ evidenceItems }) => evidenceItems.map((item) => [item.sourceId, {
+  const contentItems = [...new Map(candidateEntries.flatMap(({ evidenceItems, candidate }) => evidenceItems.map((item) => [item.sourceId, {
     contentItemId: item.sourceId,
     provider: item.source.provider,
     sourceType: item.source.sourceType,
@@ -679,6 +705,9 @@ function buildResearchProposal(state, providerResult, criteria) {
     documentationUrl: item.source.documentationUrl,
     independenceGroup: item.source.independenceGroup,
     commercialBias: item.source.commercialBias,
+    title: candidate.title ?? null,
+    originalLanguage: candidate.operability?.originalLanguage ?? "zh-CN",
+    access: "public",
   }]))).values()];
   const entities = [...new Map(candidateEntries.flatMap(({ evidenceItems }) => evidenceItems.map((item) => [item.entity.entityId, item.entity]))).values()];
   const claims = candidateEntries.flatMap(({ evidenceItems, nodeId }) => evidenceItems.map((item) => ({ ...item.claim, claimId: item.proposalClaimId, nodeId })));

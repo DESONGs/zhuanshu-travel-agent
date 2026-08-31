@@ -20,7 +20,7 @@ async function httpFixture({ conversationAgent, service: suppliedService, conver
   const clock = () => new Date("2026-08-24T12:00:00.000Z");
   const service = suppliedService ?? new TravelService({ store, clock });
   const conversationRepository = suppliedConversationRepository ?? new FileConversationRepository({ rootDir: join(rootDir, "conversations") });
-  const app = createHttpApp({ travelService: service, conversationRepository, conversationAgent, sessionStore: new InMemorySessionStore({ clock }), developmentAuthEnabled: true, clock });
+  const app = createHttpApp({ travelService: service, conversationRepository, conversationAgent, sessionStore: new InMemorySessionStore({ clock }), developmentAuthEnabled: true, runtimeEnv: { NODE_ENV: "test", TRAVEL_AGENT_EVIDENCE_DATA_DIR: join(rootDir, "evidence-presentations") }, clock });
   const server = http.createServer(app);
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -53,6 +53,7 @@ function transitProposal(tripId) {
         selected: true,
         sourceStatus: "user_input",
         sourceRefs: ["amap_web_service:transport_http"],
+        claimRefs: ["claim_transport_http"],
         operability: {
           transitSegment: {
             segmentId: "segment_http",
@@ -73,6 +74,11 @@ function transitProposal(tripId) {
         },
       },
     }],
+    evidenceBundle: {
+      contentItems: [{ contentItemId: "amap_web_service:transport_http", provider: "amap_web_service", sourceType: "official_map_provider", providerRef: "transport_http", checkedAt: "2026-08-24T12:00:00.000Z", documentationUrl: "https://lbs.amap.com/", independenceGroup: "amap_transport_http", commercialBias: "provider_ranking_unknown", title: "从酒店前往外滩", originalLanguage: "zh-CN", access: "public" }],
+      entities: [{ entityId: "entity_transport_http", kind: "route", canonicalName: "酒店至外滩", providerRefs: ["amap_web_service:transport_http"] }],
+      claims: [{ claimId: "claim_transport_http", entityId: "entity_transport_http", nodeId: "transport_http", kind: "route", statement: "路线需要在出发前重新核验。", sourceRefs: ["amap_web_service:transport_http"], sourceIndependence: "official_provider", commercialBias: "provider_ranking_unknown", confidence: 0.9 }],
+    },
   };
 }
 
@@ -127,6 +133,10 @@ test("HTTP API authenticates development sessions, enforces trip membership, and
     assert.equal(plan.value.transitSegments[0].nodeId, "transport_http");
     assert.equal(plan.value.transitSegments[0].segment.segmentId, "segment_http");
     assert.equal(plan.value.transitSegments[0].segment.steps[0].detail, null);
+    const evidence = await request("/api/trips/trip_http/evidence/nodes/transport_http?targetLanguage=zh-CN", { token: ownerToken });
+    assert.equal(evidence.response.status, 200);
+    assert.equal(evidence.value.schemaVersion, "evidence-presentation-bundle-v1");
+    assert.equal(evidence.value.claimGroups[0].claimRefs[0], "claim_transport_http");
     const mobility = await request("/api/trips/trip_http/mobility/refresh", { method: "POST", token: ownerToken });
     assert.equal(mobility.response.status, 200);
     assert.equal(mobility.value.status, "provider_unavailable");

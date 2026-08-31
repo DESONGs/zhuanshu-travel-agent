@@ -38,6 +38,17 @@ CREATE TABLE IF NOT EXISTS travel_conversations (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS travel_conversations_user_updated_at_idx ON travel_conversations (user_id, updated_at DESC);
+CREATE TABLE IF NOT EXISTS evidence_presentations (
+  bundle_id TEXT PRIMARY KEY,
+  cache_key TEXT NOT NULL UNIQUE,
+  trip_id TEXT NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  bundle_json JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS evidence_presentations_trip_idx ON evidence_presentations (trip_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS evidence_presentations_expiry_idx ON evidence_presentations (expires_at);
 `;
 
 export class PostgresTripRepository {

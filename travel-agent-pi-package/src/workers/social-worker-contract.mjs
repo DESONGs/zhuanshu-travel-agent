@@ -1,8 +1,14 @@
 import { SOCIAL_ERROR_CODES } from "../contracts/public.ts";
 
-export const PLATFORM_HOSTS = Object.freeze({
+export const PUBLIC_SHARE_HOSTS = Object.freeze({
   xiaohongshu: ["xiaohongshu.com", "xhslink.com", "rednote.com"],
   douyin: ["douyin.com", "iesdouyin.com"],
+  wechat: ["mp.weixin.qq.com"],
+});
+
+export const PLATFORM_HOSTS = Object.freeze({
+  xiaohongshu: PUBLIC_SHARE_HOSTS.xiaohongshu,
+  douyin: PUBLIC_SHARE_HOSTS.douyin,
 });
 
 export const SOCIAL_READ_OPERATIONS = Object.freeze(["search_social_content", "read_social_content", "resolve_social_share_url"]);
@@ -17,6 +23,20 @@ function isAllowedHost(platform, rawUrl) {
   }
   if (url.protocol !== "https:" || url.username || url.password) return false;
   return (PLATFORM_HOSTS[platform] ?? []).some((host) => url.hostname === host || url.hostname.endsWith(`.${host}`));
+}
+
+export function publicSharePlatform(rawUrl) {
+  for (const platform of Object.keys(PUBLIC_SHARE_HOSTS)) {
+    let url;
+    try {
+      url = new URL(rawUrl);
+    } catch {
+      continue;
+    }
+    if (url.protocol !== "https:" || url.username || url.password) continue;
+    if (PUBLIC_SHARE_HOSTS[platform].some((host) => url.hostname === host || url.hostname.endsWith(`.${host}`))) return platform;
+  }
+  return null;
 }
 
 function normalizeSourceUrl(rawUrl) {

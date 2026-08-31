@@ -167,7 +167,21 @@ function PriceSlot({ candidate, compact = false }) {
 }
 
 function consumerProviderLabel(value) {
-  const cleaned = String(value ?? "")
+  const raw = String(value ?? "").trim();
+  const known = {
+    amap_web_service: "Amap 高德地图",
+    amap_routes_v5: "Amap 高德路线",
+    fliggy_flyai: "Fliggy 飞猪",
+    flyai: "Fliggy 飞猪",
+    tuniu: "Tuniu 途牛",
+    tuniu_official_mcp: "Tuniu 途牛",
+    traveler_visit_feedback: "到访者反馈",
+    xiaohongshu: "小红书",
+    douyin: "抖音",
+    wechat: "微信文章",
+  }[raw.toLowerCase()];
+  if (known) return known;
+  const cleaned = raw
     .replace(/\s*AI\s*开放平台/gi, "")
     .replace(/\s*官方\s*MCP/gi, "")
     .replace(/\s*MCP/gi, "")
@@ -700,17 +714,125 @@ function VisitFeedbackSection({ node, onSubmit }) {
   </section>;
 }
 
-function PlaceDetailSheet({ node, plan, tripId, onClose, onSubmitFeedback }) {
+function EvidenceCompanionPanel({ bundle, loading, error, node, shareUrl, onShareUrlChange, onResolveShare, onReloadNodeEvidence, onTranslate, translating, resolvingShare, onTrialCandidate }) {
+  const { locale, pick } = useUiLocale();
+  if (loading) return <section className="evidence-companion-state" role="status"><CircleNotch className="spin" /><div><strong>{pick("正在整理可追溯证据", "Preparing traceable evidence")}</strong><p>{pick("只读取当前候选已有资料，不会把来源内容当作 Agent 指令。", "Only existing candidate evidence is read; source content is never treated as Agent instructions.")}</p></div></section>;
+  if (!bundle) return <section className="evidence-companion-state error" role="alert"><WarningCircle weight="fill" /><div><strong>{pick("暂时无法打开图文证据", "Evidence is temporarily unavailable")}</strong><p>{error || pick("地点详情仍可继续使用，稍后可以重试。", "Place details remain available; try again later.")}</p><button type="button" onClick={onReloadNodeEvidence}><ArrowsClockwise />{pick("重试", "Retry")}</button></div></section>;
+  const isShareBundle = bundle.sources?.some((source) => source.sourceType === "user_supplied_public_share_link");
+  const languageKey = (value) => String(value || "").toLowerCase().split("-")[0];
+  const desiredLanguage = locale === "en" ? "en" : "zh";
+  const translationNeeded = bundle.sections?.some((section) => section.originalLanguage && languageKey(section.originalLanguage) !== desiredLanguage);
+  const translatedToDesired = bundle.translationStatus === "translated" && languageKey(bundle.targetLanguage) === desiredLanguage;
+  const localizedSectionLabel = (label) => locale === "en" ? ({ 地点概览: "Place overview", 来源事实: "Source facts", 位置与到达: "Location and access", 价格线索: "Price evidence", 营业时间: "Opening hours", 排队与等待: "Queues and waits", 当地特色: "Local character", 设施与可达性: "Facilities and accessibility", 路线与移动: "Routes and mobility", 事实线索: "Evidence note", 公开可见内容: "Publicly visible content" }[label] ?? label) : label;
+  const localizedFixedEvidenceCopy = (value) => {
+    if (locale !== "en") return value;
+    const exact = {
+      "地点坐标已归一化，可以加入现有路线试排。": "The place has normalized coordinates and can enter the current route draft.",
+      "缺少可靠坐标，暂不能进入路线试排。": "Reliable coordinates are missing, so this cannot enter the route draft yet.",
+      "当前实体尚未取得可用于路线试排的可靠坐标。": "This place does not yet have coordinates reliable enough for route drafting.",
+      "当前只有来源资料，尚未形成可追溯的事实 Claim。": "Only source material is available; no traceable factual claim has been formed yet.",
+      "外宾住宿资格仍待酒店或授权平台确认。": "Foreign-guest eligibility still needs confirmation from the hotel or an authorized platform.",
+      "公开内容不代表来源独立、无商业倾向或当前仍有效。": "Public content does not prove source independence, lack of commercial bias or current validity.",
+      "受限正文未读取。": "Restricted body text was not read.",
+      "来源资料按核验时间展示；价格、营业、设施和可预订性仍以来源页或现场为准。": "Evidence is shown with its checked time; price, opening, facilities and bookability still depend on the source page or on-site confirmation.",
+      "分享内容是不可信输入，不会作为 Agent 指令，也不会自动写入旅行事实。": "Shared content is untrusted input. It never becomes an Agent instruction or an automatic trip fact.",
+      "来源图片仅提供回到原页面查看，不在产品内二次展示。": "Source-only images remain on the original page and are not republished here.",
+      "少走路": "Less walking",
+    }[value];
+    return exact ?? value;
+  };
+  const translatedDecisionSummary = bundle.sections?.find((section) => section.translatedText && section.claimRefs?.some((claimRef) => bundle.decisionFit?.claimRefs?.includes(claimRef)))?.translatedText
+    ?? bundle.sections?.find((section) => section.translatedText)?.translatedText
+    ?? null;
+  const decisionSummary = translatedToDesired && translatedDecisionSummary ? translatedDecisionSummary : localizedFixedEvidenceCopy(bundle.decisionFit?.summary);
+  const evidenceCheckedAt = (value) => { const date = new Date(value); return Number.isNaN(date.getTime()) ? pick("核验时间待补", "Check time pending") : `${new Intl.DateTimeFormat(locale === "en" ? "en-US" : "zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(date)} ${pick("核验", "checked")}`; };
+  const sourceOnlyMedia = bundle.media?.filter((media) => !media.displayUrl && media.sourceUrl) ?? [];
+  const displayMedia = bundle.media?.filter((media) => media.displayUrl) ?? [];
+  const canTrial = bundle.decisionFit?.routeEligible && !node.selected;
+  return <div className="evidence-companion-panel">
+    {error ? <div className="evidence-companion-inline-error" role="alert"><WarningCircle weight="fill" /><span>{error}</span></div> : null}
+    <section className={`evidence-companion-summary ${bundle.status}`}>
+      <span><Globe weight="duotone" /></span><div><small>{pick("图文证据伴侣", "Evidence companion")}</small><h2>{bundle.sources?.[0]?.title || node.title}</h2><p>{decisionSummary}</p></div>
+      <em>{bundle.status === "ready" ? pick("可追溯", "Traceable") : bundle.status === "login_required" ? pick("需登录来源", "Source login needed") : pick("部分资料", "Partial")}</em>
+    </section>
+    {displayMedia.length ? <figure className={`evidence-media-grid count-${Math.min(displayMedia.length, 4)}`}>{displayMedia.slice(0, 4).map((media) => <img key={media.mediaId} src={media.displayUrl} alt={media.alt} loading="lazy" referrerPolicy="no-referrer" />)}<figcaption>{pick("仅展示已有显示授权的来源图片", "Only source images with display permission are shown")}</figcaption></figure> : null}
+    <section className="evidence-companion-section evidence-reading">
+      <header><div><Sparkle weight="duotone" /></div><span><strong>{pick("快速看懂", "Quick read")}</strong><small>{pick("原文、翻译和事实线索分层展示", "Original text, translation and claims stay distinct")}</small></span>{translationNeeded && !translatedToDesired ? <button type="button" onClick={onTranslate} disabled={translating}>{translating ? <CircleNotch className="spin" /> : <Globe />}{locale === "en" ? "Translate to English" : "翻译为中文"}</button> : translatedToDesired ? <em className="evidence-translated-state"><CheckCircle weight="fill" />{pick("已翻译", "Translated")}</em> : null}</header>
+      {bundle.translationStatus === "translation_unavailable" ? <p className="evidence-inline-warning"><WarningCircle weight="fill" />{pick("翻译暂时不可用，原文已保留。", "Translation is unavailable; the original text is preserved.")}</p> : null}
+      {bundle.sections?.length ? <div className="evidence-sections">{bundle.sections.map((section) => <article key={section.sectionId}><small>{localizedSectionLabel(section.label)}</small>{section.translatedText ? <><p className="translated">{section.translatedText}</p><details><summary>{pick("查看原文", "View original")}</summary><p>{section.originalText}</p></details></> : <p>{section.originalText}</p>}</article>)}</div> : <p className="evidence-empty-copy">{pick("当前公开页面没有可读取正文；不会绕过登录或风控。", "No public body text is available; login or platform controls will not be bypassed.")}</p>}
+    </section>
+    {bundle.claimGroups?.length ? <section className="evidence-companion-section evidence-claims"><header><div><CheckCircle weight="duotone" /></div><span><strong>{pick("哪些信息有依据", "What the evidence supports")}</strong><small>{pick("同源转载不会被算成多数", "Reposts from the same source are not counted as a majority")}</small></span></header><div>{bundle.claimGroups.map((group) => { const translatedClaims = group.claimRefs.map((claimRef) => bundle.sections.find((section) => section.claimRefs?.includes(claimRef))?.translatedText).filter(Boolean); const summary = translatedClaims.length ? translatedClaims.join("; ") : group.summary; return <article key={group.groupId}><span><strong>{summary}</strong><small>{pick(`${group.independentSourceCount} 个独立来源`, `${group.independentSourceCount} independent source${group.independentSourceCount === 1 ? "" : "s"}`)}</small></span>{group.repeatedSourceCount ? <em>{pick(`${group.repeatedSourceCount} 条可能同源`, `${group.repeatedSourceCount} possibly repeated`)}</em> : null}</article>; })}</div></section> : null}
+    <section className="evidence-companion-section evidence-decision-fit"><header><div><MapTrifold weight="duotone" /></div><span><strong>{pick("对这趟旅行有什么用", "How this helps this trip")}</strong><small>{localizedFixedEvidenceCopy(bundle.decisionFit.routeReason)}</small></span></header>{bundle.decisionFit.travelerImpacts?.length ? <ul>{bundle.decisionFit.travelerImpacts.map((impact) => <li key={impact}><Heart weight="fill" />{localizedFixedEvidenceCopy(impact)}</li>)}</ul> : null}{bundle.decisionFit.unknowns?.length ? <div className="evidence-unknowns">{bundle.decisionFit.unknowns.map((unknown) => <p key={unknown}><WarningCircle weight="fill" />{localizedFixedEvidenceCopy(unknown)}</p>)}</div> : null}<button type="button" className="button primary evidence-trial-action" onClick={onTrialCandidate} disabled={!canTrial}><MapTrifold />{node.selected ? pick("已在当前旅行中", "Already in this trip") : canTrial ? pick("加入路线试排", "Add to route draft") : pick("暂不能加入路线", "Not route-ready")}</button></section>
+    <section className="evidence-companion-section evidence-sources"><header><div><LinkSimple weight="duotone" /></div><span><strong>{pick("来源与新鲜度", "Sources and freshness")}</strong><small>{pick("每条资料都保留访问边界和核验时间", "Each source keeps its access boundary and checked time")}</small></span></header><div>{bundle.sources?.map((source) => <article key={source.contentItemId}><span><strong>{source.title || consumerProviderLabel(source.provider)}</strong><small>{consumerProviderLabel(source.provider)} · {evidenceCheckedAt(source.checkedAt)}</small></span>{source.sourceUrl ? <a href={source.sourceUrl} target="_blank" rel="noreferrer">{source.sourceType === "user_supplied_public_share_link" ? pick("打开原文", "Open original") : pick("来源说明", "Source notes")}<NavigationArrow /></a> : <em>{source.access === "login_required" ? pick("来源要求登录", "Login required") : pick("无公开跳转", "No public link")}</em>}</article>)}</div>{sourceOnlyMedia.length ? <p className="evidence-source-only"><ImageSquare />{pick("来源图片因显示权限制未在此处复制；请回到原页面查看。", "Source images are not copied here because display rights are not available; view them on the source page.")}</p> : null}</section>
+    <section className="evidence-share-link"><div><LinkSimple weight="duotone" /><span><strong>{pick("补充一条你看到的旅行分享", "Add a travel share link")}</strong><small>{pick("只读取公开可见部分，不使用你的 Cookie 或平台账号。", "Only public content is read; your cookies and platform account are never used.")}</small></span></div><form onSubmit={onResolveShare}><input type="url" required value={shareUrl} onChange={(event) => onShareUrlChange(event.target.value)} placeholder={pick("粘贴小红书、抖音或微信文章链接", "Paste a Xiaohongshu, Douyin or WeChat article link")} /><button type="submit" disabled={resolvingShare}>{resolvingShare ? <CircleNotch className="spin" /> : <NavigationArrow />}{pick("读取公开部分", "Read public part")}</button></form>{isShareBundle ? <button type="button" className="quiet-action evidence-return-node" onClick={onReloadNodeEvidence}><ArrowCounterClockwise />{pick("返回地点已有证据", "Return to place evidence")}</button> : null}</section>
+    <footer className="evidence-companion-caveats">{bundle.caveats?.map((caveat) => <p key={caveat}><Info weight="fill" />{localizedFixedEvidenceCopy(caveat)}</p>)}</footer>
+  </div>;
+}
+
+function PlaceDetailSheet({ node, plan, tripId, onClose, onSubmitFeedback, onTrialCandidate }) {
+  const { locale, pick } = useUiLocale();
   const closeRef = useRef(null);
   const scrollRef = useRef(null);
+  const detailScrollTopRef = useRef(0);
   const [summaryExpanded, setSummaryExpanded] = useState(false);
+  const [view, setView] = useState("detail");
+  const [evidence, setEvidence] = useState(null);
+  const [evidenceState, setEvidenceState] = useState({ loading: false, error: null, translating: false, resolvingShare: false });
+  const [shareUrl, setShareUrl] = useState("");
   useEffect(() => {
     if (!node) return undefined;
     setSummaryExpanded(false);
+    setView("detail");
+    setEvidence(null);
+    setEvidenceState({ loading: false, error: null, translating: false, resolvingShare: false });
+    setShareUrl("");
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
     return undefined;
   }, [node?.nodeId]);
   if (!node) return null;
+  const evidenceLanguage = locale === "en" ? "en" : "zh-CN";
+  const loadEvidence = async () => {
+    setEvidenceState((current) => ({ ...current, loading: true, error: null }));
+    try {
+      setEvidence(await api.evidenceForNode(tripId, node.nodeId, evidenceLanguage));
+      setEvidenceState((current) => ({ ...current, loading: false, error: null }));
+    } catch (error) {
+      setEvidenceState((current) => ({ ...current, loading: false, error: error?.code === "evidence_node_not_found" ? pick("这个候选已经更新，请关闭后重新打开。", "This option changed; close and reopen it.") : pick("证据服务暂时不可用，请稍后重试。", "Evidence is temporarily unavailable. Try again later.") }));
+    }
+  };
+  const openEvidence = () => {
+    detailScrollTopRef.current = scrollRef.current?.scrollTop ?? 0;
+    setView("evidence");
+    if (!evidence && !evidenceState.loading) void loadEvidence();
+  };
+  const returnToDetail = () => {
+    setView("detail");
+    requestAnimationFrame(() => { if (scrollRef.current) scrollRef.current.scrollTop = detailScrollTopRef.current; });
+  };
+  const translateEvidence = async () => {
+    if (!evidence) return;
+    setEvidenceState((current) => ({ ...current, translating: true, error: null }));
+    try {
+      setEvidence(await api.translateEvidenceBundle(tripId, evidence.bundleId, evidenceLanguage));
+    } catch {
+      setEvidenceState((current) => ({ ...current, error: pick("翻译暂时没有完成，原文仍可查看。", "Translation did not complete; the original remains available.") }));
+    } finally {
+      setEvidenceState((current) => ({ ...current, translating: false }));
+    }
+  };
+  const resolveShare = async (event) => {
+    event.preventDefault();
+    setEvidenceState((current) => ({ ...current, resolvingShare: true, error: null }));
+    try {
+      setEvidence(await api.resolveEvidenceShareLink(tripId, node.nodeId, shareUrl, evidenceLanguage));
+      setShareUrl("");
+    } catch (error) {
+      const copy = error?.code === "TERMS_BLOCKED" ? pick("该链接不在当前支持的公开来源范围内。", "This link is outside the supported public sources.") : error?.code === "RATE_LIMITED" ? pick("来源当前限流，请稍后再试。", "The source is rate-limited. Try again later.") : pick("没有读取到可核验的公开内容；不会绕过登录或风控。", "No verifiable public content was available; login or platform controls will not be bypassed.");
+      setEvidenceState((current) => ({ ...current, error: copy }));
+    } finally {
+      setEvidenceState((current) => ({ ...current, resolvingShare: false }));
+    }
+  };
   const detail = node.operability ?? {};
   const meta = domainMeta(node.domain);
   const facilities = detail.mappedFacilities ?? [];
@@ -736,16 +858,19 @@ function PlaceDetailSheet({ node, plan, tripId, onClose, onSubmitFeedback }) {
   const sourceLabel = consumerProviderLabel(detail.sourceLabel || detail.bookingProviderLabel || "旅行资料来源");
   const longSummary = String(node.summary ?? "").length > 320;
   return <OverlaySurface overlayClassName="place-detail-overlay" surfaceClassName="place-detail-sheet" labelledBy="place-detail-title" onClose={onClose} initialFocusRef={closeRef}>
-      <header className="place-detail-header"><div><span className="detail-domain"><meta.icon weight="duotone" />{meta.label}的详情</span><small>{sourceLabel} · {formatCheckedAt(detail.checkedAt)}</small></div><button ref={closeRef} type="button" className="icon-button" onClick={onClose} aria-label="关闭地点详情"><X /></button></header>
+      <header className={`place-detail-header ${view === "evidence" ? "evidence-mode" : ""}`}><div>{view === "evidence" ? <button type="button" className="evidence-back" onClick={returnToDetail}><NavigationArrow />{pick("地点详情", "Place details")}</button> : null}<span className="detail-domain">{view === "evidence" ? <Globe weight="duotone" /> : <meta.icon weight="duotone" />}{view === "evidence" ? pick("图文证据", "Evidence") : `${meta.label}的详情`}</span><small>{view === "evidence" ? pick("原文、来源、翻译与旅行适配", "Original, source, translation and trip fit") : `${sourceLabel} · ${formatCheckedAt(detail.checkedAt)}`}</small></div><button ref={closeRef} type="button" className="icon-button" onClick={onClose} aria-label="关闭地点详情"><X /></button></header>
       <div ref={scrollRef} className="place-detail-scroll">
+        {view === "evidence" ? <EvidenceCompanionPanel bundle={evidence} loading={evidenceState.loading} error={evidenceState.error} node={node} shareUrl={shareUrl} onShareUrlChange={setShareUrl} onResolveShare={resolveShare} onReloadNodeEvidence={loadEvidence} onTranslate={translateEvidence} translating={evidenceState.translating} resolvingShare={evidenceState.resolvingShare} onTrialCandidate={onTrialCandidate} /> : <>
         {node.media?.length ? <figure className={`place-gallery count-${Math.min(node.media.length, 4)}`}>{node.media.slice(0, 4).map((media, index) => <img key={`${media.url}-${index}`} src={media.url} alt={media.title || `${node.title}实景图 ${index + 1}`} loading="eager" referrerPolicy="no-referrer" />)}<figcaption>{node.media.length === 1 ? "当前来源返回 1 张实景图" : `当前来源返回 ${node.media.length} 张实景图`}</figcaption></figure> : <div className="detail-media-missing"><MapPin weight="duotone" /><span><strong>当前来源没有返回图片</strong><small>不会用通用风景图替代这个地点。</small></span></div>}
         <section className="place-detail-intro"><span className="detail-domain"><meta.icon weight="duotone" />{meta.label}</span><h2 id="place-detail-title">{node.title}</h2><p className={summaryExpanded ? "expanded" : ""}>{node.summary || "当前来源只返回了地点名称和位置。"}</p>{longSummary ? <button type="button" className="detail-text-toggle" onClick={() => setSummaryExpanded((current) => !current)}>{summaryExpanded ? "收起介绍" : "展开完整介绍"}<CaretDown className={summaryExpanded ? "expanded" : ""} /></button> : null}</section>
         {facts.length ? <section className="detail-facts" aria-label="地点关键信息">{facts.map((fact) => <div key={fact.label}><small>{fact.label}</small><strong>{fact.value}</strong></div>)}</section> : null}
         {node.domain === "transport" ? <section className="detail-section transport-detail"><header><div><Train weight="duotone" /></div><span><strong>班次、到达点与票价</strong><small>跨城库存来自 OTA；市内接驳由高德路线补齐</small></span></header><TransportSnapshot detail={detail} /></section> : null}
         <section className="detail-section location-detail"><header><div><MapTrifold weight="duotone" /></div><span><strong>{node.domain === "transport" ? "到达点与地图" : "位置与地图"}</strong><small>{node.domain === "transport" ? detail.arrivalPlace?.label || detail.arrivalRouteAnchor?.label || "到达点待核验" : location}</small></span></header><TripDecisionMap nodes={[mappedNode]} activeNodeId={node.nodeId} onFocusNode={() => {}} tripId={tripId} staticMapAvailable={false} label={`${node.title}的位置地图`} /><p className="detail-map-scope">{mapUrl ? "这里只显示当前地点；候选之间的完整路线请回到方案工作台查看。" : "当前实体尚未解析出可靠坐标；地址会保留，但不会据此声称位置方便。"}</p>{mapUrl ? <a className="detail-primary-link" href={mapUrl} target="_blank" rel="noreferrer"><NavigationArrow />在高德查看这个地点</a> : null}</section>
         <section className="detail-section facilities-detail"><header><div><Elevator weight="duotone" /></div><span><strong>设施与可达性</strong><small>{facilities.length ? "地图资料，非实时，建议现场确认" : "当前来源尚未返回设施资料"}</small></span></header>{detail.requestedFacilityNeeds?.length ? <div className="facility-evidence-status"><span><b>这次旅行需要</b>{detail.requestedFacilityNeeds.join("；")}</span><span><b>当前已取得</b>{facilities.length ? facilities.map((facility) => facility.label).join("、") : "尚无可用设施记录"}</span><span><b>到场前仍要确认</b>设施是否开放、正常运行，以及是否能形成连续无台阶路线</span></div> : null}<FacilityReferences facilities={facilities} emptyText={node.domain === "stay" ? `当前酒店来源只返回了图片、位置和${detailPrice.quality === "firm" ? "本次报价快照" : detailPrice.quality === "reference" ? "参考价格" : "价格线索"}；电梯、停车、早餐、卫生间等设施仍需核验。` : "当前来源没有返回卫生间、电梯、坡道或储物设施；不代表现场没有，出发前仍需核验。"} />{detail.indoorMap || detail.indoor ? <p className="facility-note">已取得室内或楼层相关资料；入口、楼层和开放情况仍以现场为准。</p> : null}{detail.bookingUrl ? <a className="detail-primary-link" href={detail.bookingUrl} target="_blank" rel="noreferrer"><NavigationArrow />在{detail.bookingProviderLabel || "供应方"}查看完整图片与设施</a> : node.domain === "stay" ? <p className="detail-handoff-unavailable">当前只能比较这份住宿资料，尚未取得可用的库存详情或预订交接链接。</p> : null}</section>
+        <button type="button" className="detail-evidence-entry" onClick={openEvidence}><span><Globe weight="duotone" /></span><span><strong>{pick("查看图文证据与快速翻译", "View evidence and quick translation")}</strong><small>{pick("看来源怎么说、哪些信息能支持这次旅行，再决定是否试排。", "See what sources support and how it fits this trip before drafting the route.")}</small></span><NavigationArrow /></button>
         {["food", "play", "stay"].includes(node.domain) ? <VisitFeedbackSection node={node} onSubmit={onSubmitFeedback} /> : null}
         <section className="detail-source-note"><WarningCircle weight="fill" /><p>{acceptedSourceLabel(node)}。图片、价格、房态、营业状态和设施信息以跳转页或现场为准。</p></section>
+        </>}
       </div>
   </OverlaySurface>;
 }
@@ -1108,13 +1233,14 @@ function PlanningChoiceCard({ candidate, domain, confirmed = false, trial = fals
       {details.length ? <div className="planning-choice-meta">{details.map((item) => <span key={item}>{item}</span>)}</div> : null}
       {differenceCues.length ? <div className="candidate-difference-chips">{differenceCues.map((cue) => <span key={cue.label} className={cue.tone}>{cue.label}</span>)}</div> : null}
       {reasonChips.length ? <div className="candidate-reason-chips" aria-label={pick("推荐依据", "Recommendation evidence")}>{reasonChips.map((reason) => <span key={reason}><CheckCircle weight="fill" />{reason}</span>)}</div> : null}
+      {candidate.evidenceSummary ? <button type="button" className="candidate-evidence-summary" onClick={onPreview}><span><Globe weight="duotone" /><strong>{candidate.evidenceSummary.hasLocalVoice ? pick("当地人怎么说", "What visitors say") : pick("资料怎么说", "What sources say")}</strong></span><p>{candidate.evidenceSummary.headline}</p><small>{pick(`${candidate.evidenceSummary.independentSourceCount} 个独立来源`, `${candidate.evidenceSummary.independentSourceCount} independent source${candidate.evidenceSummary.independentSourceCount === 1 ? "" : "s"}`)}{candidate.evidenceSummary.repeatedSourceCount ? pick(` · ${candidate.evidenceSummary.repeatedSourceCount} 条可能同源`, ` · ${candidate.evidenceSummary.repeatedSourceCount} possibly repeated`) : ""}<NavigationArrow /></small></button> : null}
       {localEvidencePending ? <p className="candidate-evidence-pending"><WarningCircle weight="fill" />{pick("当地特色仍待独立内容或到访证据核验", "Local character still needs independent content or visit evidence")}</p> : null}
       {trial && domain === "stay" && (routeDelta || budgetDelta) ? <p className="cross-domain-impact"><ArrowsClockwise />{pick("住宿变化已联动重算餐饮、游玩动线与整趟预算。", "This stay change has recalculated food, activity routes and the whole-trip budget.")}</p> : null}
       {stayAnchorFits.length ? <div className="stay-anchor-fits" aria-label={pick("住宿到目标区域的实际动线", "Actual routes from this stay to target areas")}>{stayAnchorFits.map((fit) => <span key={fit.area}><strong>{pick(`到${fit.area}`, `To ${fit.area}`)}</strong>{fit.alternatives.map((alternative) => <small key={alternative.mode}>{MOBILITY_MODE_LABELS[alternative.mode] || alternative.mode} {alternative.totalMinutes} min{alternative.walkingMeters != null ? ` · ${Math.round(alternative.walkingMeters)}m` : ""}{alternative.estimatedFareCny != null ? ` · ¥${Math.round(alternative.estimatedFareCny)}` : ""}</small>)}</span>)}</div> : null}
       <small>{acceptedSourceLabel({ ...candidate, domain })}{checkedAt ? ` · ${formatCheckedAt(checkedAt)}` : ""}</small>
       <div className="planning-choice-actions">
         {!confirmed || replacing ? <button type="button" className={`planning-choice-select ${trial ? "trial-active" : ""}`} onClick={onChoose}>{comparisonMode ? trial ? pick("取消试排", "Cancel draft") : pick("试排", "Preview") : trial ? (replacing ? pick("取消替换", "Cancel replacement") : pick("已加入试排", "Added to draft")) : replacing ? pick("试试替换", "Try replacement") : pick("加入路线试排", "Add to route draft")}</button> : null}
-        <button type="button" className="planning-choice-detail" onClick={onPreview}>{pick("图片、地图与详情", "Photos, map and details")}<NavigationArrow /></button>
+        <button type="button" className="planning-choice-detail" onClick={onPreview}>{pick("图片、地图与证据", "Photos, map and evidence")}<NavigationArrow /></button>
       </div>
     </div>
   </article>;
@@ -1589,7 +1715,11 @@ function PlanCanvas({ conversation, trip, plan, agentTrial, planningRequestActiv
         </> : dataUnavailable ? <div className="canvas-empty blocked-research"><WarningCircle weight="duotone" /><h3>{pick("暂时找不到实时地点资料", "Live place data is temporarily unavailable")}</h3><p>{pick("你的旅行要求已经记住了。等资料恢复后再继续查找，之前说过的内容不用重来。", "Your requirements are saved. Continue when the source recovers; you will not need to repeat what you shared.")}</p><button className="button retry" onClick={onRetryResearch} disabled={loading}><ArrowsClockwise />{pick("重新查找旅行方案", "Try research again")}</button></div> : <div className="canvas-empty"><Sparkle weight="duotone" /><h3>{pick("还差一点旅行信息", "A little more trip context is needed")}</h3><p>{pick("继续在对话中补充。助手只会追问真正影响方案的问题。", "Continue in chat. The Agent only asks questions that can change the plan.")}</p></div>}
       </section>
     </>}
-    <PlaceDetailSheet node={detailNode} plan={plan} tripId={trip?.tripId} onClose={() => setDetailNodeId(null)} onSubmitFeedback={(input) => onSubmitFeedback(detailNode, input)} />
+    <PlaceDetailSheet node={detailNode} plan={plan} tripId={trip?.tripId} onClose={() => setDetailNodeId(null)} onSubmitFeedback={(input) => onSubmitFeedback(detailNode, input)} onTrialCandidate={() => {
+      if (!detailNode || detailNode.selected) return;
+      selectCandidate(detailNode.domain, detailNode.nodeId);
+      setDetailNodeId(null);
+    }} />
     {conversation?.messages?.some((message) => message.role === "status" && message.kind?.includes("model")) && <div className="canvas-warning workspace-warning"><WarningCircle weight="fill" /><div><strong>旅行助手暂时无法回应</strong><p>你的需求会保留，服务恢复后可以从这里继续。</p></div></div>}
   </section>;
 }
