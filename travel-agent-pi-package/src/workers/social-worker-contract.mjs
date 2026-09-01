@@ -1,10 +1,7 @@
 import { SOCIAL_ERROR_CODES } from "../contracts/public.ts";
+import SOCIAL_HOSTS from "./social-worker-hosts.json" with { type: "json" };
 
-export const PUBLIC_SHARE_HOSTS = Object.freeze({
-  xiaohongshu: ["xiaohongshu.com", "xhslink.com", "rednote.com"],
-  douyin: ["douyin.com", "iesdouyin.com"],
-  wechat: ["mp.weixin.qq.com"],
-});
+export const PUBLIC_SHARE_HOSTS = Object.freeze(Object.fromEntries(Object.entries(SOCIAL_HOSTS).map(([platform, hosts]) => [platform, Object.freeze([...hosts])])));
 
 export const PLATFORM_HOSTS = Object.freeze({
   xiaohongshu: PUBLIC_SHARE_HOSTS.xiaohongshu,
@@ -41,7 +38,14 @@ export function publicSharePlatform(rawUrl) {
 
 function normalizeSourceUrl(rawUrl) {
   for (const platform of Object.keys(PLATFORM_HOSTS)) {
-    if (isAllowedHost(platform, rawUrl)) return rawUrl;
+    if (isAllowedHost(platform, rawUrl)) {
+      const url = new URL(rawUrl);
+      url.hash = "";
+      for (const key of [...url.searchParams.keys()]) {
+        if (/token|auth|session|cookie|signature|access[_-]?key|xsec|code/i.test(key) || /^utm_/i.test(key)) url.searchParams.delete(key);
+      }
+      return url.toString();
+    }
   }
   return null;
 }

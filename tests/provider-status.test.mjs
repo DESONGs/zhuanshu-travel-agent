@@ -70,7 +70,15 @@ test("channel status is derived from the implemented auth contract without expos
     alipay: "blocked_missing_secure_session",
     apple: "blocked_missing_secure_session",
   });
-  assert.equal(status.data.socialReadWorker, "blocked_pending_isolated_worker");
+  assert.equal(status.data.socialReadWorker, "blocked_by_configuration");
+});
+
+test("social worker status advances only through explicit audit, terms, account and isolated-smoke gates", () => {
+  assert.equal(providerStatusSummary({ TRAVEL_AGENT_SOCIAL_WORKER_ENABLED: "true" }).data.socialReadWorker, "blocked_pending_static_audit");
+  assert.equal(providerStatusSummary({ TRAVEL_AGENT_SOCIAL_WORKER_ENABLED: "true", TRAVEL_AGENT_SOCIAL_WORKER_AUDIT_STATUS: "passed_static_audit" }).data.socialReadWorker, "blocked_pending_terms_review");
+  assert.equal(providerStatusSummary({ TRAVEL_AGENT_SOCIAL_WORKER_ENABLED: "true", TRAVEL_AGENT_SOCIAL_WORKER_AUDIT_STATUS: "passed_static_audit", TRAVEL_AGENT_SOCIAL_WORKER_TERMS_STATUS: "approved_read_only" }).data.socialReadWorker, "blocked_missing_dedicated_account");
+  assert.equal(providerStatusSummary({ TRAVEL_AGENT_SOCIAL_WORKER_ENABLED: "true", TRAVEL_AGENT_SOCIAL_WORKER_AUDIT_STATUS: "passed_static_audit", TRAVEL_AGENT_SOCIAL_WORKER_TERMS_STATUS: "approved_read_only", TRAVEL_AGENT_SOCIAL_WORKER_ACCOUNT_PROFILE: "dedicated-profile" }).data.socialReadWorker, "blocked_pending_isolated_smoke");
+  assert.equal(providerStatusSummary({ TRAVEL_AGENT_SOCIAL_WORKER_ENABLED: "true", TRAVEL_AGENT_SOCIAL_WORKER_AUDIT_STATUS: "passed_static_audit", TRAVEL_AGENT_SOCIAL_WORKER_TERMS_STATUS: "approved_read_only", TRAVEL_AGENT_SOCIAL_WORKER_ACCOUNT_PROFILE: "dedicated-profile", TRAVEL_AGENT_SOCIAL_WORKER_SMOKE_STATUS: "passed_read_only_isolated" }).data.socialReadWorker, "worker_ready_pending_provider_routing");
 });
 
 test("configured login adapters remain pending until a real account smoke passes", () => {

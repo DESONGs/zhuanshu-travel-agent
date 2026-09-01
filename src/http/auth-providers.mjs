@@ -11,6 +11,7 @@ import {
 import { readFile } from "node:fs/promises";
 
 const WEB_PROVIDERS = Object.freeze(["google", "wechat", "alipay", "apple"]);
+const AUTH_CLIENTS = new Set(["web", "desktop"]);
 const STATE_TTL_MS = 10 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 12_000;
 
@@ -53,7 +54,7 @@ function stateSignature(body, secret) {
   return createHmac("sha256", secret).update(body).digest("base64url");
 }
 
-function createState({ provider, origin, returnTo, secret, clock }) {
+function createState({ provider, origin, returnTo, client = "web", secret, clock }) {
   const nonce = randomBytes(24).toString("base64url");
   const issuedAt = clock().getTime();
   const body = Buffer.from(JSON.stringify({
@@ -61,6 +62,7 @@ function createState({ provider, origin, returnTo, secret, clock }) {
     provider,
     origin,
     returnTo: safeReturnTo(returnTo),
+    client: AUTH_CLIENTS.has(client) ? client : "web",
     nonce,
     issuedAt,
     expiresAt: issuedAt + STATE_TTL_MS,
@@ -83,7 +85,9 @@ function verifyState({ state, provider, nonce, secret, clock }) {
   if (!Number.isFinite(payload.expiresAt) || payload.expiresAt <= clock().getTime()) throw authError("auth_state_expired", 400);
   const origin = normalizedOrigin(payload.origin);
   if (!origin) throw authError("auth_state_invalid", 400);
-  return { ...payload, origin, returnTo: safeReturnTo(payload.returnTo) };
+  const client = payload.client == null ? "web" : payload.client;
+  if (!AUTH_CLIENTS.has(client)) throw authError("auth_state_invalid", 400);
+  return { ...payload, client, origin, returnTo: safeReturnTo(payload.returnTo) };
 }
 
 function callbackUrl(origin, provider) {
@@ -393,15 +397,17 @@ export function createAuthService({ env = process.env, fetchImpl = globalThis.fe
       };
     },
 
-    beginWeb({ provider, origin, returnTo = "/" }) {
+    beginWeb({ provider, origin, returnTo = "/", client = "web" }) {
       if (!WEB_PROVIDERS.includes(provider)) throw authError("unsupported_auth_provider", 400, { provider });
+      if (!AUTH_CLIENTS.has(client)) throw authError("unsupported_auth_client", 400, { client });
       const config = providerConfiguration(env, provider, origin);
       if (!config.available) throw authError("auth_provider_not_configured", 503, { provider, reason: config.reason });
-      const { state, nonce } = createState({ provider, origin: config.origin, returnTo, secret: config.stateSecret, clock });
+      const { state, nonce } = createState({ provider, origin: config.origin, returnTo, client, secret: config.stateSecret, clock });
       return {
         authorizationUrl: webAuthorizationUrl(provider, config, state, nonce),
         state,
         nonce,
+        client,
         cookieSameSite: provider === "apple" ? "none" : "lax",
         cookieSecure: provider === "apple" || config.origin.startsWith("https://"),
         cookieMaxAge: STATE_TTL_MS,
@@ -421,7 +427,7 @@ export function createAuthService({ env = process.env, fetchImpl = globalThis.fe
       else if (provider === "wechat") identity = await exchangeWechatWeb({ config, code, fetchImpl });
       else if (provider === "alipay") identity = await exchangeAlipay({ config, code, fetchImpl, readFileImpl, clock });
       else identity = await exchangeApple({ config, code, nonce: verifiedState.nonce, fetchImpl, readFileImpl, clock });
-      return { identity, returnTo: verifiedState.returnTo };
+      return { identity, returnTo: verifiedState.returnTo, client: verifiedState.client };
     },
 
     async exchangePlatform({ provider, authorizationCode }) {
@@ -451,4 +457,8 @@ export function createAuthService({ env = process.env, fetchImpl = globalThis.fe
 
 export function oauthNonceCookieName(provider) {
   return `travel_oauth_nonce_${provider}`;
+}
+
+export function oauthClientCookieName(provider) {
+  return `travel_oauth_client_${provider}`;
 }

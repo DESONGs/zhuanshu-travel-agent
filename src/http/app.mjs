@@ -7,8 +7,8 @@ import { EvidenceCompanionService } from "../api/evidence-companion-service.mjs"
 import { TravelConversationAgent } from "../agent/travel-conversation-agent.mjs";
 import { createConversationRepository } from "../persistence/conversation-repository.mjs";
 import { providerStatusSummary } from "../providers/provider-status.mjs";
-import { authenticatedUserId, developmentUserId, guestUserId, GUEST_SESSION_TTL_MS, InMemorySessionStore, SignedSessionStore } from "./session.mjs";
-import { createAuthService, oauthNonceCookieName } from "./auth-providers.mjs";
+import { authenticatedUserId, DesktopAuthCodeStore, developmentUserId, guestUserId, GUEST_SESSION_TTL_MS, InMemorySessionStore, SignedSessionStore } from "./session.mjs";
+import { createAuthService, oauthClientCookieName, oauthNonceCookieName } from "./auth-providers.mjs";
 import { createAmapJsSecurityProxy } from "./amap-js-security-proxy.mjs";
 import { httpError, sendError } from "./http-errors.mjs";
 
@@ -69,6 +69,25 @@ function authResultLocation(returnTo, key, value) {
   return `${url.pathname}${url.search}${url.hash}`;
 }
 
+function desktopAuthConfiguration(runtimeEnv) {
+  const requested = String(runtimeEnv.TRAVEL_AGENT_DESKTOP_AUTH_ENABLED ?? "false").trim().toLowerCase() === "true";
+  const scheme = String(runtimeEnv.TRAVEL_AGENT_DESKTOP_DEEP_LINK_SCHEME ?? "zhuanshu-travel").trim().toLowerCase();
+  const validScheme = /^[a-z][a-z0-9+.-]{1,62}$/.test(scheme);
+  return {
+    requested,
+    enabled: requested && validScheme,
+    scheme: validScheme ? scheme : null,
+    unavailableReason: !requested ? "desktop_auth_disabled" : !validScheme ? "desktop_deep_link_scheme_invalid" : null,
+  };
+}
+
+function desktopAuthResultLocation(config, returnTo, key, value) {
+  const url = new URL(`${config.scheme}://auth/callback`);
+  url.searchParams.set(key, value);
+  url.searchParams.set("returnTo", String(returnTo || "/").slice(0, 1024));
+  return url.toString();
+}
+
 function publicAuthError(error) {
   return ["auth_authorization_denied", "auth_state_invalid", "auth_state_expired", "auth_provider_not_configured", "auth_provider_unavailable"].includes(error?.code)
     ? error.code
@@ -81,6 +100,7 @@ export function createHttpApp({
   conversationAgent,
   sessionStore,
   authService,
+  desktopAuthCodeStore,
   evidenceCompanionService,
   webRoot = resolve(process.cwd(), "dist"),
   developmentAuthEnabled = process.env.NODE_ENV !== "production" && process.env.TRAVEL_AGENT_ALLOW_DEVELOPMENT_AUTH === "true",
@@ -98,9 +118,11 @@ export function createHttpApp({
     ? new SignedSessionStore({ secret: runtimeEnv.TRAVEL_AGENT_SESSION_SECRET })
     : new InMemorySessionStore();
   authService ??= createAuthService({ env: runtimeEnv });
+  desktopAuthCodeStore ??= new DesktopAuthCodeStore({ clock });
   evidenceCompanionService ??= new EvidenceCompanionService({ travelService, env: runtimeEnv, clock });
   const travelConversationAgent = conversationAgent ?? new TravelConversationAgent({ travelService, conversationRepository, env: runtimeEnv });
   const app = express();
+  const desktopAuth = desktopAuthConfiguration(runtimeEnv);
   app.disable("x-powered-by");
   app.use(express.json({ limit: "6mb", type: "application/json" }));
   app.use(express.urlencoded({ extended: false, limit: "32kb" }));
@@ -119,7 +141,7 @@ export function createHttpApp({
     }
     response.setHeader("Access-Control-Allow-Origin", origin);
     response.setHeader("Vary", "Origin");
-    response.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
+    response.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Travel-Client");
     response.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
     if (request.method === "OPTIONS") return response.status(204).end();
     return next();
@@ -173,19 +195,29 @@ export function createHttpApp({
   };
 
   app.get("/api/health", asyncRoute(async (_request, response) => {
-    response.json({ status: "ok", developmentAuthEnabled, storageMode: travelService.store.mode ?? "unknown", workflowExecution: travelService.workflowExecution ?? { workflowExecutionMode: "injected_service_unknown", semanticFanoutEnabled: Boolean(travelService.analysisFanout), backgroundResumeSupported: false, crossInstanceSteerSupported: false } });
+    response.json({ status: "ok", developmentAuthEnabled, desktopAuth, storageMode: travelService.store.mode ?? "unknown", workflowExecution: travelService.workflowExecution ?? { workflowExecutionMode: "injected_service_unknown", semanticFanoutEnabled: Boolean(travelService.analysisFanout), backgroundResumeSupported: false, crossInstanceSteerSupported: false } });
   }));
   app.get("/api/auth/providers", asyncRoute(async (request, response) => {
-    response.json({ ...authService.providerSummary({ origin: requestPublicOrigin(request, runtimeEnv) }), developmentAuthEnabled });
+    response.json({ ...authService.providerSummary({ origin: requestPublicOrigin(request, runtimeEnv) }), developmentAuthEnabled, clients: { web: { available: true }, desktop: desktopAuth } });
   }));
   app.get("/api/auth/:provider/start", asyncRoute(async (request, response) => {
     const provider = String(request.params.provider ?? "");
+    const client = request.query.client === "desktop" ? "desktop" : "web";
+    if (client === "desktop" && !desktopAuth.enabled) throw httpError("desktop_auth_not_configured", 503, { reason: desktopAuth.unavailableReason });
     const authorization = authService.beginWeb({
       provider,
       origin: requestPublicOrigin(request, runtimeEnv),
       returnTo: request.query.returnTo,
+      client,
     });
     response.cookie(oauthNonceCookieName(provider), authorization.nonce, {
+      httpOnly: true,
+      sameSite: authorization.cookieSameSite,
+      secure: authorization.cookieSecure,
+      path: `/api/auth/${provider}/callback`,
+      maxAge: authorization.cookieMaxAge,
+    });
+    response.cookie(oauthClientCookieName(provider), authorization.client ?? client, {
       httpOnly: true,
       sameSite: authorization.cookieSameSite,
       secure: authorization.cookieSecure,
@@ -199,6 +231,8 @@ export function createHttpApp({
     const previousSession = currentSession(request);
     const state = request.body?.state ?? request.query.state;
     const nonceCookie = oauthNonceCookieName(provider);
+    const clientCookie = oauthClientCookieName(provider);
+    const requestedClient = cookieValue(request, clientCookie) === "desktop" ? "desktop" : "web";
     const cookieOptions = { path: `/api/auth/${provider}/callback`, sameSite: provider === "apple" ? "none" : "lax", secure: provider === "apple" || runtimeEnv.NODE_ENV === "production" };
     let returnTo = "/";
     try {
@@ -206,6 +240,13 @@ export function createHttpApp({
       const code = request.body?.code ?? request.query.code ?? request.query.auth_code;
       const completed = await authService.completeWeb({ provider, code, state, nonce: cookieValue(request, nonceCookie) });
       returnTo = completed.returnTo;
+      response.clearCookie(clientCookie, cookieOptions);
+      if ((completed.client ?? requestedClient) === "desktop") {
+        if (!desktopAuth.enabled) throw httpError("desktop_auth_not_configured", 503, { reason: desktopAuth.unavailableReason });
+        const issuedCode = desktopAuthCodeStore.issue({ identity: completed.identity, returnTo });
+        response.clearCookie(nonceCookie, cookieOptions);
+        return response.redirect(303, desktopAuthResultLocation(desktopAuth, returnTo, "code", issuedCode.code));
+      }
       const userId = authenticatedUserId(completed.identity);
       const claim = await claimGuestData(previousSession, userId);
       const issued = sessionStore.issue({
@@ -218,7 +259,10 @@ export function createHttpApp({
       response.redirect(303, authResultLocation(returnTo, "auth", "success"));
     } catch (error) {
       response.clearCookie(nonceCookie, cookieOptions);
-      response.redirect(303, authResultLocation(returnTo, "auth_error", publicAuthError(error)));
+      response.clearCookie(clientCookie, cookieOptions);
+      response.redirect(303, requestedClient === "desktop" && desktopAuth.enabled
+        ? desktopAuthResultLocation(desktopAuth, returnTo, "auth_error", publicAuthError(error))
+        : authResultLocation(returnTo, "auth_error", publicAuthError(error)));
     }
   };
   app.get("/api/auth/:provider/callback", completeWebAuthorization);
@@ -241,12 +285,27 @@ export function createHttpApp({
     response.status(201).json(publicSession({ userId, provider, displayName: identity, expiresAt: issued.expiresAt }, { accessToken: issued.opaqueToken, developmentOnly: true, claim }));
   }));
   app.post("/api/auth/guest-session", asyncRoute(async (request, response) => {
+    const desktopClient = request.headers["x-travel-client"] === "desktop";
+    if (desktopClient && !desktopAuth.enabled) throw httpError("desktop_auth_not_configured", 503, { reason: desktopAuth.unavailableReason });
     const existing = currentSession(request);
-    if (existing) return response.status(200).json(publicSession(existing));
+    if (existing) return response.status(200).json(publicSession(existing, desktopClient ? { accessToken: sessionTokenFromRequest(request) } : {}));
     const userId = guestUserId();
     const issued = sessionStore.issue({ userId, provider: "guest", displayName: null, ttlMs: GUEST_SESSION_TTL_MS });
     response.cookie("travel_session", issued.opaqueToken, sessionCookieOptions(runtimeEnv, issued.expiresAt));
-    return response.status(201).json(publicSession({ userId, provider: "guest", displayName: null, expiresAt: issued.expiresAt }, { developmentOnly: false }));
+    return response.status(201).json(publicSession({ userId, provider: "guest", displayName: null, expiresAt: issued.expiresAt }, { developmentOnly: false, ...(desktopClient ? { accessToken: issued.opaqueToken } : {}) }));
+  }));
+  app.post("/api/auth/desktop-exchange", asyncRoute(async (request, response) => {
+    if (!desktopAuth.enabled) throw httpError("desktop_auth_not_configured", 503, { reason: desktopAuth.unavailableReason });
+    if (request.headers["x-travel-client"] !== "desktop") throw httpError("desktop_auth_client_required", 400);
+    const code = String(request.body?.code ?? "").trim();
+    if (!code || code.length > 512) throw httpError("invalid_authorization_code", 400);
+    const completed = desktopAuthCodeStore.consume(code);
+    if (!completed) throw httpError("desktop_auth_code_invalid_or_expired", 400);
+    const previousSession = currentSession(request);
+    const userId = authenticatedUserId(completed.identity);
+    const claim = await claimGuestData(previousSession, userId);
+    const issued = sessionStore.issue({ userId, provider: completed.identity.provider, displayName: completed.identity.displayName });
+    response.status(201).json(publicSession({ userId, provider: completed.identity.provider, displayName: completed.identity.displayName, expiresAt: issued.expiresAt }, { accessToken: issued.opaqueToken, developmentOnly: false, claim, returnTo: completed.returnTo }));
   }));
   app.post("/api/auth/platform-exchange", asyncRoute(async (request, response) => {
     const previousSession = currentSession(request);

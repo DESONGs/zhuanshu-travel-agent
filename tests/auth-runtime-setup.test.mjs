@@ -91,6 +91,9 @@ test("auth configuration check reports exact callbacks only when every channel h
     alipay: "https://travel.example.com/api/auth/alipay/callback",
     apple: "https://travel.example.com/api/auth/apple/callback",
     platformExchange: "https://travel.example.com/api/auth/platform-exchange",
+    desktopExchange: "https://travel.example.com/api/auth/desktop-exchange",
+    desktopDeepLink: "zhuanshu-travel://auth/callback",
   });
+  assert.equal(report.desktop.status, "disabled_until_desktop_release");
   assert.equal(report.channels.every((channel) => channel.status === "passed_live_smoke"), true);
 });

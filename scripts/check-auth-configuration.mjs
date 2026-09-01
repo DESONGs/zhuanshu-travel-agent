@@ -58,6 +58,10 @@ function channel({ id, fields, smokeKey, manual }) {
 }
 
 const origin = publicOrigin(env.TRAVEL_AGENT_PUBLIC_ORIGIN);
+const desktopRequested = String(env.TRAVEL_AGENT_DESKTOP_AUTH_ENABLED ?? "false").trim().toLowerCase() === "true";
+const desktopScheme = String(env.TRAVEL_AGENT_DESKTOP_DEEP_LINK_SCHEME ?? "zhuanshu-travel").trim().toLowerCase();
+const desktopApiOrigin = publicOrigin(env.TRAVEL_AGENT_DESKTOP_API_ORIGIN || env.TRAVEL_AGENT_PUBLIC_ORIGIN);
+const desktopSchemeValid = /^[a-z][a-z0-9+.-]{1,62}$/.test(desktopScheme);
 const alipayWeb = {
   appId: env.ALIPAY_WEB_APP_ID || env.ALIPAY_APP_ID,
   privateKeyPath: env.ALIPAY_WEB_PRIVATE_KEY_PATH || env.ALIPAY_PRIVATE_KEY_PATH,
@@ -79,6 +83,8 @@ if (String(env.TRAVEL_AGENT_SESSION_SECRET ?? "").length < 32) sharedIssues.push
 if (String(env.TRAVEL_AGENT_AUTH_STATE_SECRET ?? "").length < 32) sharedIssues.push("TRAVEL_AGENT_AUTH_STATE_SECRET must contain at least 32 characters.");
 if (configured(env.TRAVEL_AGENT_SESSION_SECRET) && env.TRAVEL_AGENT_SESSION_SECRET === env.TRAVEL_AGENT_AUTH_STATE_SECRET) sharedIssues.push("Session and OAuth state secrets must be different.");
 if (origin && env.TRAVEL_AGENT_ALLOW_DEVELOPMENT_AUTH === "true") sharedIssues.push("TRAVEL_AGENT_ALLOW_DEVELOPMENT_AUTH must be false before using a public login origin.");
+if (desktopRequested && !desktopApiOrigin) sharedIssues.push("TRAVEL_AGENT_DESKTOP_API_ORIGIN (or TRAVEL_AGENT_PUBLIC_ORIGIN) must be the final HTTPS API origin before desktop OAuth is enabled.");
+if (desktopRequested && !desktopSchemeValid) sharedIssues.push("TRAVEL_AGENT_DESKTOP_DEEP_LINK_SCHEME must be a valid custom URL scheme.");
 for (const [channelId, files] of Object.entries(alipayKeyFiles)) {
   if (files.privateKey.configured && (!files.privateKey.exists || !files.privateKey.safePermissions || !files.privateKey.validKey)) sharedIssues.push(`Alipay ${channelId} private key must be a valid RSA key in a readable file protected with mode 0600.`);
   if (files.publicKey.configured && (!files.publicKey.exists || !files.publicKey.safePermissions || !files.publicKey.validKey)) sharedIssues.push(`Alipay ${channelId} public key must be a valid RSA key in a readable file protected with mode 0600.`);
@@ -100,6 +106,8 @@ const callbackUrls = origin ? {
   alipay: `${origin}/api/auth/alipay/callback`,
   apple: `${origin}/api/auth/apple/callback`,
   platformExchange: `${origin}/api/auth/platform-exchange`,
+  desktopExchange: `${origin}/api/auth/desktop-exchange`,
+  desktopDeepLink: desktopSchemeValid ? `${desktopScheme}://auth/callback` : null,
 } : null;
 const ready = sharedIssues.length === 0 && channels.every((item) => item.status === "passed_live_smoke");
 process.stdout.write(`${JSON.stringify({
@@ -107,6 +115,13 @@ process.stdout.write(`${JSON.stringify({
   status: ready ? "passed" : "needs_manual_configuration",
   sharedIssues,
   channels,
+  desktop: {
+    requested: desktopRequested,
+    status: !desktopRequested ? "disabled_until_desktop_release" : desktopApiOrigin && desktopSchemeValid ? "code_ready_pending_provider_live_smoke" : "needs_manual_configuration",
+    apiOrigin: desktopApiOrigin,
+    deepLink: desktopSchemeValid ? `${desktopScheme}://auth/callback` : null,
+    tokenTransport: "one_time_code_then_bearer_memory_only",
+  },
   callbackUrls,
   alipayKeyFiles,
   applePrivateKey,

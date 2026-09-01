@@ -1,4 +1,14 @@
-const apiBaseUrl = String(import.meta.env.VITE_TRAVEL_API_BASE_URL ?? "").trim().replace(/\/$/, "");
+const desktopBridge = typeof window !== "undefined" ? window.travelDesktop : null;
+const apiBaseUrl = String(desktopBridge?.runtimeConfig?.apiBaseUrl ?? import.meta.env.VITE_TRAVEL_API_BASE_URL ?? "").trim().replace(/\/$/, "");
+let desktopAccessToken = null;
+
+export function setDesktopAccessToken(token) {
+  desktopAccessToken = typeof token === "string" && token.trim() ? token.trim() : null;
+}
+
+export function clearDesktopAccessToken() {
+  desktopAccessToken = null;
+}
 
 export function apiPublicUrl(path) {
   if (!apiBaseUrl) return new URL(path, window.location.origin).toString();
@@ -6,11 +16,13 @@ export function apiPublicUrl(path) {
 }
 
 async function request(path, { method = "GET", body, token, signal } = {}) {
+  const authorizationToken = token ?? desktopAccessToken;
   const response = await fetch(`${apiBaseUrl}${path}`, {
     method,
     headers: {
       ...(body ? { "Content-Type": "application/json" } : {}),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(authorizationToken ? { Authorization: `Bearer ${authorizationToken}` } : {}),
+      ...(desktopBridge ? { "X-Travel-Client": "desktop" } : {}),
     },
     credentials: "same-origin",
     body: body ? JSON.stringify(body) : undefined,
@@ -30,9 +42,10 @@ async function request(path, { method = "GET", body, token, signal } = {}) {
 export const api = {
   health: () => request("/api/health"),
   authProviders: () => request("/api/auth/providers"),
-  authStartUrl: (provider, returnTo = "/") => `${apiBaseUrl}/api/auth/${encodeURIComponent(provider)}/start?returnTo=${encodeURIComponent(returnTo)}`,
+  authStartUrl: (provider, returnTo = "/") => `${apiBaseUrl}/api/auth/${encodeURIComponent(provider)}/start?returnTo=${encodeURIComponent(returnTo)}${desktopBridge ? "&client=desktop" : ""}`,
   createDevelopmentSession: (provider, identity) => request("/api/auth/session", { method: "POST", body: { provider, identity } }),
   createGuestSession: () => request("/api/auth/guest-session", { method: "POST" }),
+  desktopExchange: (code) => request("/api/auth/desktop-exchange", { method: "POST", body: { code } }),
   session: () => request("/api/session"),
   logout: () => request("/api/session", { method: "DELETE" }),
   listTrips: () => request("/api/trips"),
@@ -53,6 +66,15 @@ export const api = {
   translateEvidenceBundle: (tripId, bundleId, targetLanguage) => request(`/api/trips/${encodeURIComponent(tripId)}/evidence/${encodeURIComponent(bundleId)}/translate`, { method: "POST", body: { targetLanguage } }),
   updateReadiness: (tripId, signalId, status) => request(`/api/trips/${encodeURIComponent(tripId)}/readiness`, { method: "POST", body: { signalId, status } }),
   mapUrl: (tripId) => `${apiBaseUrl}/api/trips/${encodeURIComponent(tripId)}/map`,
+  mapBlob: async (tripId, signal = undefined) => {
+    const response = await fetch(`${apiBaseUrl}/api/trips/${encodeURIComponent(tripId)}/map`, {
+      headers: { ...(desktopAccessToken ? { Authorization: `Bearer ${desktopAccessToken}` } : {}), ...(desktopBridge ? { "X-Travel-Client": "desktop" } : {}) },
+      credentials: "same-origin",
+      signal,
+    });
+    if (!response.ok) throw Object.assign(new Error("map_request_failed"), { code: "map_request_failed" });
+    return response.blob();
+  },
   decisions: (tripId) => request(`/api/trips/${encodeURIComponent(tripId)}/decisions`),
   transit: (tripId, nodeId) => request(`/api/trips/${encodeURIComponent(tripId)}/transit/${encodeURIComponent(nodeId)}`),
   refreshMobility: (tripId) => request(`/api/trips/${encodeURIComponent(tripId)}/mobility/refresh`, { method: "POST" }),

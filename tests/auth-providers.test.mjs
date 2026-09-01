@@ -6,7 +6,7 @@ import test from "node:test";
 import { TravelService } from "../src/api/travel-service.mjs";
 import { createAuthService } from "../src/http/auth-providers.mjs";
 import { createHttpApp } from "../src/http/app.mjs";
-import { authenticatedUserId, SignedSessionStore } from "../src/http/session.mjs";
+import { authenticatedUserId, DesktopAuthCodeStore, SignedSessionStore } from "../src/http/session.mjs";
 import { TripStore } from "../travel-agent-pi-package/src/core/index.ts";
 
 const fixedClock = () => new Date("2026-08-17T08:00:00.000Z");
@@ -63,7 +63,7 @@ test("Google authorization uses signed state and verifies the returned identity 
     return new Response("not found", { status: 404 });
   };
   const service = createAuthService({ env: googleEnv(), fetchImpl, clock: fixedClock });
-  const authorization = service.beginWeb({ provider: "google", origin: "http://127.0.0.1:8797", returnTo: "/?from=login" });
+  const authorization = service.beginWeb({ provider: "google", origin: "http://127.0.0.1:8797", returnTo: "/?from=login", client: "desktop" });
   const url = new URL(authorization.authorizationUrl);
   assert.equal(url.origin, "https://accounts.google.com");
   assert.equal(url.searchParams.get("scope"), "openid email profile");
@@ -75,6 +75,7 @@ test("Google authorization uses signed state and verifies the returned identity 
   assert.equal(completed.identity.subject, "google-subject-123");
   assert.equal(completed.identity.displayName, "旅行者 Google");
   assert.equal(completed.returnTo, "/?from=login");
+  assert.equal(completed.client, "desktop");
   assert.deepEqual(calls.map((call) => call.url), ["https://oauth2.googleapis.com/token", "https://www.googleapis.com/oauth2/v3/certs"]);
   await assert.rejects(
     service.completeWeb({ provider: "google", code: "code", state: `${authorization.state}tampered`, nonce: authorization.nonce }),
@@ -181,6 +182,15 @@ test("signed production sessions survive store recreation and reject tampering o
   assert.equal(second.read(issued.opaqueToken), null);
 });
 
+test("desktop OAuth codes are short-lived and consumed exactly once", () => {
+  const store = new DesktopAuthCodeStore({ clock: fixedClock });
+  const issued = store.issue({ identity: { provider: "google", subject: "desktop-subject", displayName: "Desktop User" }, returnTo: "/trip/1" });
+  const consumed = store.consume(issued.code);
+  assert.equal(consumed.identity.subject, "desktop-subject");
+  assert.equal(consumed.returnTo, "/trip/1");
+  assert.equal(store.consume(issued.code), null);
+});
+
 test("HTTP auth routes expose providers, redirect to login, issue Web cookies and return Mini Program bearer sessions", async () => {
   const sessionStore = new SignedSessionStore({ secret: sessionSecret, clock: fixedClock });
   const authService = {
@@ -195,7 +205,7 @@ test("HTTP auth routes expose providers, redirect to login, issue Web cookies an
     travelService: new TravelService({ store }),
     sessionStore,
     authService,
-    runtimeEnv: { NODE_ENV: "development", TRAVEL_AGENT_SESSION_SECRET: sessionSecret },
+    runtimeEnv: { NODE_ENV: "development", TRAVEL_AGENT_SESSION_SECRET: sessionSecret, TRAVEL_AGENT_DESKTOP_AUTH_ENABLED: "true", TRAVEL_AGENT_DESKTOP_DEEP_LINK_SCHEME: "zhuanshu-travel" },
   });
   const server = http.createServer(app);
   server.listen(0, "127.0.0.1");
@@ -223,6 +233,36 @@ test("HTTP auth routes expose providers, redirect to login, issue Web cookies an
     assert.equal(platform.status, 201);
     assert.equal(platformSession.provider, "wechat");
     assert.ok(sessionStore.read(platformSession.accessToken));
+
+    const desktopStart = await fetch(`${origin}/api/auth/google/start?client=desktop&returnTo=%2Ftrip%2Fdesktop`, { redirect: "manual" });
+    const desktopCookies = desktopStart.headers.getSetCookie().map((cookie) => cookie.split(";")[0]).join("; ");
+    assert.match(desktopCookies, /travel_oauth_client_google=desktop/);
+    const desktopCallback = await fetch(`${origin}/api/auth/google/callback?code=code&state=state`, { headers: { cookie: desktopCookies }, redirect: "manual" });
+    assert.equal(desktopCallback.status, 303);
+    const deepLink = new URL(desktopCallback.headers.get("location"));
+    assert.equal(deepLink.protocol, "zhuanshu-travel:");
+    assert.equal(deepLink.hostname, "auth");
+    assert.equal(deepLink.searchParams.has("code"), true);
+    assert.equal(deepLink.searchParams.has("access_token"), false);
+
+    const guestResponse = await fetch(`${origin}/api/auth/guest-session`, { method: "POST", headers: { "x-travel-client": "desktop" } });
+    const desktopGuest = await guestResponse.json();
+    assert.ok(desktopGuest.accessToken);
+    const exchange = await fetch(`${origin}/api/auth/desktop-exchange`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-travel-client": "desktop", authorization: `Bearer ${desktopGuest.accessToken}` },
+      body: JSON.stringify({ code: deepLink.searchParams.get("code") }),
+    });
+    const desktopSession = await exchange.json();
+    assert.equal(exchange.status, 201);
+    assert.equal(desktopSession.provider, "google");
+    assert.ok(sessionStore.read(desktopSession.accessToken));
+    const replay = await fetch(`${origin}/api/auth/desktop-exchange`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-travel-client": "desktop" },
+      body: JSON.stringify({ code: deepLink.searchParams.get("code") }),
+    });
+    assert.equal(replay.status, 400);
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));
   }

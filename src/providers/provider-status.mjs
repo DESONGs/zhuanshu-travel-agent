@@ -32,6 +32,15 @@ function weatherState(env) {
   return "blocked_pending_authorized_weather_provider";
 }
 
+function socialWorkerState(env) {
+  if (env.TRAVEL_AGENT_SOCIAL_WORKER_ENABLED !== "true") return "blocked_by_configuration";
+  if (env.TRAVEL_AGENT_SOCIAL_WORKER_AUDIT_STATUS !== "passed_static_audit") return "blocked_pending_static_audit";
+  if (env.TRAVEL_AGENT_SOCIAL_WORKER_TERMS_STATUS !== "approved_read_only") return "blocked_pending_terms_review";
+  if (!configured(env.TRAVEL_AGENT_SOCIAL_WORKER_ACCOUNT_PROFILE)) return "blocked_missing_dedicated_account";
+  if (env.TRAVEL_AGENT_SOCIAL_WORKER_SMOKE_STATUS !== "passed_read_only_isolated") return "blocked_pending_isolated_smoke";
+  return "worker_ready_pending_provider_routing";
+}
+
 function unavailableAuthState(reason) {
   if (reason === "https_required") return "blocked_https_required";
   if (reason === "secure_session_required") return "blocked_missing_secure_session";
@@ -106,7 +115,7 @@ export function providerStatusSummary(env = process.env) {
       weather: weatherState(env),
       fliggyFlyAi,
       tuniuOfficialMcp,
-      socialReadWorker: "blocked_pending_isolated_worker",
+      socialReadWorker: socialWorkerState(env),
       railway: authorizedInventory,
       flightsAndHotels: authorizedInventory,
     },

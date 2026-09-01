@@ -5,8 +5,9 @@ import {
   ImageSquare, Info, LinkSimple, MapTrifold, Microphone, NavigationArrow, PaperPlaneRight, PersonSimpleWalk, Plus, QrCode, SignOut, Sparkle, User,
   Stairs, StopCircle, Toilet, Train, Trash, WarningCircle, WechatLogo, Wheelchair, X,
 } from "@phosphor-icons/react";
-import { api } from "./api-client.js";
+import { api, clearDesktopAccessToken, setDesktopAccessToken } from "./api-client.js";
 import { OverlaySurface } from "./ui/overlay.jsx";
+import { AuthenticatedMapImage } from "./authenticated-map-image.jsx";
 const LazyTripDecisionMap = lazy(() => import("./trip-map-explorer.jsx").then((module) => ({ default: module.TripDecisionMap })));
 
 const DOMAIN_ITEMS = [
@@ -264,6 +265,11 @@ function LoginScreen({ onSession, developmentAuthEnabled, providerStatus, initia
   const webLoginAvailable = LOGIN_PROVIDERS.some((provider) => availableById.get(provider.id)?.available);
   const startLogin = (provider) => {
     if (!availableById.get(provider.id)?.available) return;
+    if (window.travelDesktop) {
+      window.travelDesktop.beginOAuth(provider.id, "/");
+      setStatus({ loading: true });
+      return;
+    }
     window.location.assign(api.authStartUrl(provider.id));
   };
   const submit = async (event) => {
@@ -652,7 +658,7 @@ function TripMapPreview({ tripId, plan }) {
   const [hidden, setHidden] = useState(false);
   if (!tripId || !plan?.mapPreviewAvailable || hidden) return null;
   const hasRoutes = (plan?.mobility?.legs?.length ?? 0) > 0;
-  return <figure className="trip-map-preview"><img src={api.mapUrl(tripId)} alt={hasRoutes ? "这趟旅行已核验移动路线的地图" : "这趟旅行候选地点的地图分布"} onError={() => setHidden(true)} /><figcaption><MapTrifold weight="duotone" /><span><strong>{hasRoutes ? "地点与移动路线" : "地点分布"}</strong>{hasRoutes ? "蓝色折线是当前推荐移动方式的路线估算。" : "地图只显示当前候选，确认前可继续比较。"}</span></figcaption></figure>;
+  return <figure className="trip-map-preview"><AuthenticatedMapImage tripId={tripId} alt={hasRoutes ? "这趟旅行已核验移动路线的地图" : "这趟旅行候选地点的地图分布"} onError={() => setHidden(true)} /><figcaption><MapTrifold weight="duotone" /><span><strong>{hasRoutes ? "地点与移动路线" : "地点分布"}</strong>{hasRoutes ? "蓝色折线是当前推荐移动方式的路线估算。" : "地图只显示当前候选，确认前可继续比较。"}</span></figcaption></figure>;
 }
 
 function VisitFeedbackSection({ node, onSubmit }) {
@@ -745,6 +751,11 @@ function EvidenceCompanionPanel({ bundle, loading, error, node, shareUrl, onShar
     ?? bundle.sections?.find((section) => section.translatedText)?.translatedText
     ?? null;
   const decisionSummary = translatedToDesired && translatedDecisionSummary ? translatedDecisionSummary : localizedFixedEvidenceCopy(bundle.decisionFit?.summary);
+  const openOriginalSource = (event, source) => {
+    if (!window.travelDesktop || source.sourceType !== "user_supplied_public_share_link") return;
+    event.preventDefault();
+    void window.travelDesktop.openEvidenceSource(source.sourceUrl);
+  };
   const evidenceCheckedAt = (value) => { const date = new Date(value); return Number.isNaN(date.getTime()) ? pick("核验时间待补", "Check time pending") : `${new Intl.DateTimeFormat(locale === "en" ? "en-US" : "zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(date)} ${pick("核验", "checked")}`; };
   const sourceOnlyMedia = bundle.media?.filter((media) => !media.displayUrl && media.sourceUrl) ?? [];
   const displayMedia = bundle.media?.filter((media) => media.displayUrl) ?? [];
@@ -763,7 +774,7 @@ function EvidenceCompanionPanel({ bundle, loading, error, node, shareUrl, onShar
     </section>
     {bundle.claimGroups?.length ? <section className="evidence-companion-section evidence-claims"><header><div><CheckCircle weight="duotone" /></div><span><strong>{pick("哪些信息有依据", "What the evidence supports")}</strong><small>{pick("同源转载不会被算成多数", "Reposts from the same source are not counted as a majority")}</small></span></header><div>{bundle.claimGroups.map((group) => { const translatedClaims = group.claimRefs.map((claimRef) => bundle.sections.find((section) => section.claimRefs?.includes(claimRef))?.translatedText).filter(Boolean); const summary = translatedClaims.length ? translatedClaims.join("; ") : group.summary; return <article key={group.groupId}><span><strong>{summary}</strong><small>{pick(`${group.independentSourceCount} 个独立来源`, `${group.independentSourceCount} independent source${group.independentSourceCount === 1 ? "" : "s"}`)}</small></span>{group.repeatedSourceCount ? <em>{pick(`${group.repeatedSourceCount} 条可能同源`, `${group.repeatedSourceCount} possibly repeated`)}</em> : null}</article>; })}</div></section> : null}
     <section className="evidence-companion-section evidence-decision-fit"><header><div><MapTrifold weight="duotone" /></div><span><strong>{pick("对这趟旅行有什么用", "How this helps this trip")}</strong><small>{localizedFixedEvidenceCopy(bundle.decisionFit.routeReason)}</small></span></header>{bundle.decisionFit.travelerImpacts?.length ? <ul>{bundle.decisionFit.travelerImpacts.map((impact) => <li key={impact}><Heart weight="fill" />{localizedFixedEvidenceCopy(impact)}</li>)}</ul> : null}{bundle.decisionFit.unknowns?.length ? <div className="evidence-unknowns">{bundle.decisionFit.unknowns.map((unknown) => <p key={unknown}><WarningCircle weight="fill" />{localizedFixedEvidenceCopy(unknown)}</p>)}</div> : null}<button type="button" className="button primary evidence-trial-action" onClick={onTrialCandidate} disabled={!canTrial}><MapTrifold />{node.selected ? pick("已在当前旅行中", "Already in this trip") : canTrial ? pick("加入路线试排", "Add to route draft") : pick("暂不能加入路线", "Not route-ready")}</button></section>
-    <section className="evidence-companion-section evidence-sources"><header><div><LinkSimple weight="duotone" /></div><span><strong>{pick("来源与新鲜度", "Sources and freshness")}</strong><small>{pick("每条资料都保留访问边界和核验时间", "Each source keeps its access boundary and checked time")}</small></span></header><div>{bundle.sources?.map((source) => <article key={source.contentItemId}><span><strong>{source.title || consumerProviderLabel(source.provider)}</strong><small>{consumerProviderLabel(source.provider)} · {evidenceCheckedAt(source.checkedAt)}</small></span>{source.sourceUrl ? <a href={source.sourceUrl} target="_blank" rel="noreferrer">{source.sourceType === "user_supplied_public_share_link" ? pick("打开原文", "Open original") : pick("来源说明", "Source notes")}<NavigationArrow /></a> : <em>{source.access === "login_required" ? pick("来源要求登录", "Login required") : pick("无公开跳转", "No public link")}</em>}</article>)}</div>{sourceOnlyMedia.length ? <p className="evidence-source-only"><ImageSquare />{pick("来源图片因显示权限制未在此处复制；请回到原页面查看。", "Source images are not copied here because display rights are not available; view them on the source page.")}</p> : null}</section>
+    <section className="evidence-companion-section evidence-sources"><header><div><LinkSimple weight="duotone" /></div><span><strong>{pick("来源与新鲜度", "Sources and freshness")}</strong><small>{pick("每条资料都保留访问边界和核验时间", "Each source keeps its access boundary and checked time")}</small></span></header><div>{bundle.sources?.map((source) => <article key={source.contentItemId}><span><strong>{source.title || consumerProviderLabel(source.provider)}</strong><small>{consumerProviderLabel(source.provider)} · {evidenceCheckedAt(source.checkedAt)}</small></span>{source.sourceUrl ? <a href={source.sourceUrl} target="_blank" rel="noreferrer" onClick={(event) => openOriginalSource(event, source)}>{source.sourceType === "user_supplied_public_share_link" ? (window.travelDesktop ? pick("同窗打开原文", "Open beside companion") : pick("打开原文", "Open original")) : pick("来源说明", "Source notes")}<NavigationArrow /></a> : <em>{source.access === "login_required" ? pick("来源要求登录", "Login required") : pick("无公开跳转", "No public link")}</em>}</article>)}</div>{sourceOnlyMedia.length ? <p className="evidence-source-only"><ImageSquare />{pick("来源图片因显示权限制未在此处复制；请回到原页面查看。", "Source images are not copied here because display rights are not available; view them on the source page.")}</p> : null}</section>
     <section className="evidence-share-link"><div><LinkSimple weight="duotone" /><span><strong>{pick("补充一条你看到的旅行分享", "Add a travel share link")}</strong><small>{pick("只读取公开可见部分，不使用你的 Cookie 或平台账号。", "Only public content is read; your cookies and platform account are never used.")}</small></span></div><form onSubmit={onResolveShare}><input type="url" required value={shareUrl} onChange={(event) => onShareUrlChange(event.target.value)} placeholder={pick("粘贴小红书、抖音或微信文章链接", "Paste a Xiaohongshu, Douyin or WeChat article link")} /><button type="submit" disabled={resolvingShare}>{resolvingShare ? <CircleNotch className="spin" /> : <NavigationArrow />}{pick("读取公开部分", "Read public part")}</button></form>{isShareBundle ? <button type="button" className="quiet-action evidence-return-node" onClick={onReloadNodeEvidence}><ArrowCounterClockwise />{pick("返回地点已有证据", "Return to place evidence")}</button> : null}</section>
     <footer className="evidence-companion-caveats">{bundle.caveats?.map((caveat) => <p key={caveat}><Info weight="fill" />{localizedFixedEvidenceCopy(caveat)}</p>)}</footer>
   </div>;
@@ -2098,16 +2109,52 @@ export function TravelApp() {
   const [authProviders, setAuthProviders] = useState(null);
   const [authError, setAuthError] = useState(null);
   const [loginOpen, setLoginOpen] = useState(false);
+  const [desktopEvidenceOpen, setDesktopEvidenceOpen] = useState(false);
   useEffect(() => {
     document.documentElement.lang = locale === "en" ? "en" : "zh-CN";
     window.localStorage.setItem("travel-agent-ui-locale", locale);
   }, [locale]);
   useEffect(() => {
+    let active = true;
+    let unsubscribe = null;
     const query = new URLSearchParams(window.location.search);
     const nextAuthError = query.get("auth_error");
     setAuthError(nextAuthError);
-    Promise.all([api.session().catch(() => null), api.health().catch(() => null), api.authProviders().catch(() => null)]).then(async ([restoredSession, nextHealth, nextProviders]) => {
-      const nextSession = restoredSession ?? await api.createGuestSession().catch(() => null);
+    const applyDesktopAuthorization = async (payload) => {
+      if (!payload || !active) return null;
+      if (payload.authError) {
+        setAuthError(payload.authError);
+        setLoginOpen(true);
+        return null;
+      }
+      if (!payload.code) return null;
+      try {
+        const authorized = await api.desktopExchange(payload.code);
+        setDesktopAccessToken(authorized.accessToken);
+        if (active) {
+          setSession(authorized);
+          setLoginOpen(false);
+          setAuthError(null);
+        }
+        return authorized;
+      } catch (error) {
+        if (active) {
+          setAuthError(error.code ?? "auth_login_failed");
+          setLoginOpen(true);
+        }
+        return null;
+      }
+    };
+    const restore = async () => {
+      const [restoredSession, nextHealth, nextProviders] = await Promise.all([api.session().catch(() => null), api.health().catch(() => null), api.authProviders().catch(() => null)]);
+      let nextSession = restoredSession;
+      if (!nextSession) {
+        nextSession = await api.createGuestSession().catch(() => null);
+        if (nextSession?.accessToken) setDesktopAccessToken(nextSession.accessToken);
+      }
+      const pendingDesktopAuthorization = await window.travelDesktop?.takePendingAuthCallback?.();
+      if (pendingDesktopAuthorization) nextSession = await applyDesktopAuthorization(pendingDesktopAuthorization) ?? nextSession;
+      if (!active) return;
       setSession(nextSession);
       setHealth(nextHealth);
       setAuthProviders(nextProviders);
@@ -2118,15 +2165,22 @@ export function TravelApp() {
         const nextQuery = query.toString();
         window.history.replaceState({}, "", `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash}`);
       }
-    });
+    };
+    unsubscribe = window.travelDesktop?.onAuthCallback?.((payload) => { void applyDesktopAuthorization(payload); }) ?? null;
+    void restore();
+    return () => { active = false; unsubscribe?.(); };
   }, []);
+  useEffect(() => window.travelDesktop?.onEvidenceState?.((state) => setDesktopEvidenceOpen(state?.open === true)), []);
   const acceptSession = (nextSession) => { setSession(nextSession); setLoginOpen(false); setAuthError(null); };
   const logout = async () => {
     await api.logout().catch(() => null);
-    setSession(await api.createGuestSession().catch(() => null));
+    clearDesktopAccessToken();
+    const guest = await api.createGuestSession().catch(() => null);
+    if (guest?.accessToken) setDesktopAccessToken(guest.accessToken);
+    setSession(guest);
   };
   const localeContext = useMemo(() => ({ locale, setLocale, pick: (zh, en) => locale === "en" ? en : zh }), [locale]);
   if (session === undefined) return <UiLocaleContext.Provider value={localeContext}><main className="app-loading"><CircleNotch className="spin" />{locale === "en" ? "Restoring session" : "正在恢复会话"}</main></UiLocaleContext.Provider>;
   if (!session) return <UiLocaleContext.Provider value={localeContext}><LoginScreen onSession={acceptSession} developmentAuthEnabled={health?.developmentAuthEnabled === true} providerStatus={authProviders} initialError={authError} /></UiLocaleContext.Provider>;
-  return <UiLocaleContext.Provider value={localeContext}><TravelEditor key={session.userId} session={session} onLogout={logout} onRequestLogin={() => setLoginOpen(true)} />{loginOpen ? <LoginScreen embedded onContinue={() => { setLoginOpen(false); setAuthError(null); }} onSession={acceptSession} developmentAuthEnabled={health?.developmentAuthEnabled === true} providerStatus={authProviders} initialError={authError} /> : null}</UiLocaleContext.Provider>;
+  return <UiLocaleContext.Provider value={localeContext}><TravelEditor key={session.userId} session={session} onLogout={logout} onRequestLogin={() => setLoginOpen(true)} />{desktopEvidenceOpen ? <button type="button" className="desktop-evidence-close" onClick={() => window.travelDesktop.closeEvidenceSource()}><X />{locale === "en" ? "Close original" : "收起原文"}</button> : null}{loginOpen ? <LoginScreen embedded onContinue={() => { setLoginOpen(false); setAuthError(null); }} onSession={acceptSession} developmentAuthEnabled={health?.developmentAuthEnabled === true} providerStatus={authProviders} initialError={authError} /> : null}</UiLocaleContext.Provider>;
 }

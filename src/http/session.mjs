@@ -2,6 +2,7 @@ import { randomBytes, createHash, createHmac, timingSafeEqual } from "node:crypt
 
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 14;
 export const GUEST_SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7;
+export const DESKTOP_AUTH_CODE_TTL_MS = 1000 * 60 * 2;
 
 function hash(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -115,6 +116,43 @@ export class SignedSessionStore {
   revoke(opaqueToken) {
     const session = this.read(opaqueToken);
     if (session) this.revoked.set(hash(opaqueToken), new Date(session.expiresAt).getTime());
+  }
+}
+
+export class DesktopAuthCodeStore {
+  constructor({ clock = () => new Date(), ttlMs = DESKTOP_AUTH_CODE_TTL_MS } = {}) {
+    this.clock = clock;
+    this.ttlMs = ttlMs;
+    this.codes = new Map();
+  }
+
+  cleanup() {
+    const now = this.clock().getTime();
+    for (const [codeHash, entry] of this.codes.entries()) {
+      if (entry.expiresAt <= now) this.codes.delete(codeHash);
+    }
+  }
+
+  issue({ identity, returnTo = "/" }) {
+    this.cleanup();
+    if (!identity?.provider || !identity?.subject) throw new Error("invalid_authenticated_identity");
+    const code = randomBytes(32).toString("base64url");
+    const expiresAt = this.clock().getTime() + this.ttlMs;
+    this.codes.set(hash(code), {
+      identity: { provider: identity.provider, subject: identity.subject, displayName: normalizedDisplayName(identity.displayName) },
+      returnTo: String(returnTo || "/").slice(0, 1024),
+      expiresAt,
+    });
+    return { code, expiresAt: new Date(expiresAt).toISOString() };
+  }
+
+  consume(code) {
+    this.cleanup();
+    const codeHash = hash(String(code ?? ""));
+    const entry = this.codes.get(codeHash);
+    if (!entry) return null;
+    this.codes.delete(codeHash);
+    return { identity: { ...entry.identity }, returnTo: entry.returnTo, expiresAt: new Date(entry.expiresAt).toISOString() };
   }
 }
 

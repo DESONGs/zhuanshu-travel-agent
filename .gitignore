@@ -1,6 +1,9 @@
 node_modules/
 .npm-cache/
 dist/
+.desktop-package-stage/
+release/desktop/
+apps/desktop/dist/
 apps/miniapp/dist/
 apps/miniapp/.swc/
 design/implementation-mobile-route.png

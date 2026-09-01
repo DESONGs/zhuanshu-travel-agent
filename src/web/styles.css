@@ -2253,3 +2253,6 @@ body.resizing-pane { cursor:col-resize; user-select:none; }
 .route-weather-disclosure[open]>summary>span:last-child svg { transform:rotate(180deg); }
 .route-weather-disclosure>div { padding:0 10px 10px; }
 .route-weather-disclosure>div>p { padding-top:8px; border-top:1px solid rgb(104 122 132 / 18%); color:#5d5143; font-size:11px; line-height:1.5; }
+.desktop-evidence-close { min-height:40px; padding:0 12px; position:fixed; z-index:var(--z-modal); right:12px; top:12px; display:inline-flex; align-items:center; gap:6px; border:1px solid #c7d5db; border-radius:999px; color:#365765; background:rgb(255 255 255 / 96%); box-shadow:0 8px 28px rgb(32 55 66 / 18%); font-size:12px; font-weight:800; }
+.desktop-evidence-close:hover,.desktop-evidence-close:focus-visible { border-color:#7e9eaa; background:#fff; }
+.authenticated-map-loading { min-height:180px; display:grid; place-items:center; color:#617782; background:#e9f0f3; font-size:12px; font-weight:700; }
