@@ -67,6 +67,16 @@ Web 地图渲染的补充审计：`leaflet@1.9.4` 的 npm 包无运行依赖；�
 
 E1 没有下载、安装或合入新的第三方仓库。公开链接读取器、Evidence projection 与 UI 均为项目内实现；只复用现有已审计 Provider 和浏览器标准能力。因此本轮没有新增可标记为 `eligible` 的社交 Worker 候选。E4 继续保持 blocked，直到专用账号、平台条款、固定 SHA 静态审计与 `passed_read_only_isolated` 真实 smoke 全部具备。
 
+## 2026-09-01 Electron 与 E4 记录
+
+| 候选 | 固定版本 | 许可 | 安装与写面 | 结论 |
+| --- | --- | --- | --- | --- |
+| `electron` | `44.1.0` | MIT | npm lifecycle 已禁用；官方二进制另行下载并用包内 checksum 校验。运行时可创建 renderer、Session、协议与系统浏览器跳转 | 仅桌面增强壳采用；安全 smoke 通过，生产签名/公证和 AMap 自定义 origin 未通过 |
+| `@electron/packager` | `20.3.0` | BSD-2-Clause | lifecycle 禁用；只消费生成后的桌面 JS、Web bundle 与固定 host JSON，不打包 ENV、Wiki、测试或 runtime data | 允许生成未签名本地包；不能替代三平台发布验收 |
+| OpenCLI / 小红书 MCP / 抖音 CLI | 既有候选 SHA | 见上表 | 本轮未下载、未安装、未执行 | 保持 blocked；项目内 Worker skeleton 不是这些第三方候选的审计通过证据 |
+
+本轮 no-login Worker smoke 只证明写操作、任意 URL、搜索无账号、执行字段均 fail closed；`isolatedSmoke` 仍不能填 `passed_read_only_isolated`，因为没有专用账号和真实读取。
+
 ## 已采用 Provider 审计摘要
 
 ```json

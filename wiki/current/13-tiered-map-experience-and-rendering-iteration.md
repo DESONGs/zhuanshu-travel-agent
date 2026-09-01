@@ -294,3 +294,10 @@ Leaflet 在迁移期继续作为 fallback：高德 JS API 未配置、加载失�
 - 本期 Evidence Companion 文档入口与 baseline 记录提交为 `2dd9a73`（`Document Evidence Companion iteration baseline`）。
 - `guest_trip_expired` 定时炸弹通过向 HTTP 成员校验注入同一 `clock` 修复，没有放宽 Guest 过期规则；baseline 当天完整 `npm run check` 通过。
 - E1 在该 baseline 之后独立落地，不回写 `RouteMapScene`、Mobility、Proposal 或 TripState 的事实所有权。
+
+### 13.5 Electron 自定义 origin 与地图降级（2026-09-01）
+
+- Electron Trusted App 使用 `travelapp://app`，互动地图仍消费同一 `RouteMapScene` 和同一 `/_AMapService` 安全代理；静态地图改为带桌面 Bearer 的受控 fetch，不把 Token 放进图片 URL。
+- 桌面滚轮、触摸缩放和 `+ / −` 控件继续由同一 Web 地图组件提供。高德 JS 未配置时文案明确区分“路线/地点已核验”与“互动底图授权待配置”，不把 Leaflet 降级误写成路线数据失败。
+- 新增 `npm run diagnose:amap-js`，只输出 Key/安全码/Origin/smoke 是否具备，不打印值。当前真实环境仍缺 `AMAP_JS_API_KEY` 和 `AMAP_JS_SECURITY_CODE`，所以 Electron smoke 只证明自定义协议和安全壳，未证明高德 JS 对该 origin 可用。
+- 同日服务端 WebService 复测没有出现 10044：v5 POI、地理编码和天气可返回 `10000`，但两次完整 smoke 分别出现 POI/静态图超时并成为 partial。`env_travel.local` 的服务端状态已降为 `failed_live_smoke_timeout`；恢复前不把历史 passed 标志继续当当前证据。

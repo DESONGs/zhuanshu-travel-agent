@@ -189,3 +189,11 @@ E0 出口不能只是"提交 + 重跑黄金路径"：当前 check 是红的，ba
 - **翻译门已关闭：** 每用户配额、8k 字符上限、模型 token 审计、原文保留和失败降级已进入服务与测试。
 - **真实路径：** Web 自然请求取得真实候选，Evidence 阅读与 DeepSeek 英译可见，住宿 + 外滩 + 本帮菜生成 5 段路线 Trial；393px 无横向溢出，console 无 error，TripState revision/selected nodes 未变化。
 - **仍未关闭：** E2 的 D26/current06 最终修订、桌面登录、高德 JS 自定义 origin live smoke；E4 的专用账号、条款、固定 SHA 与隔离只读 smoke。不能把 E1 交付解释为 Electron 或社交自动发现已经可用。
+
+## 10. 2026-09-01 后续复核
+
+- **D26/current06 已关闭：** Electron 作为可移除增强壳，Tauri 不进入本轮；Web/PWA/Capacitor/小程序不依赖桌面壳。
+- **桌面登录代码门已关闭：** signed OAuth state、系统浏览器、固定 deep link、一次性 code、Guest claim 与内存 Bearer 已有 HTTP 合同测试；真实 Google/微信/支付宝/Apple 回调仍需平台账号。
+- **Electron 安全 Spike 已通过：** 真 Electron 44 进程完成 20 次来源视图开关、20 次未知导航阻断、独立 Session、0 残留 WebContents 和无 token deep link。
+- **AMap 自定义 origin 仍未关闭：** 当前缺 JS Key/security code，只有诊断、代理、Adapter 和诚实 fallback；不能标记 E2 发布 Go。
+- **E4 前半段关闭、外部门仍开：** Worker 本体和 no-login safety smoke 已完成；专用账号、条款、候选固定 SHA 的真实账号隔离 smoke 与 Provider routing 均未完成。

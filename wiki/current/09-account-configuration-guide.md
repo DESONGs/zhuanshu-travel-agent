@@ -490,3 +490,46 @@ npm run smoke:inventory
 - 在目标 Windows、macOS、iOS、Android、微信和支付宝设备完成真实验收。
 
 在这些人工门槛关闭前，可以说明“代码与配置入口已完成”，不能说明“生产渠道已经上线”。
+
+## 12. Electron 桌面壳、deep link 与社交 Worker
+
+### 桌面运行配置
+
+```dotenv
+TRAVEL_AGENT_DESKTOP_AUTH_ENABLED=true
+TRAVEL_AGENT_DESKTOP_DEEP_LINK_SCHEME=zhuanshu-travel
+TRAVEL_AGENT_DESKTOP_API_ORIGIN=https://你的-api-域名
+TRAVEL_AGENT_CORS_ORIGINS=https://你的-web-域名,travelapp://app
+```
+
+生产 OAuth 仍在各平台登记同一 HTTPS 回调：`https://你的-api-域名/api/auth/{provider}/callback`。Electron 只把系统浏览器成功结果转成 `zhuanshu-travel://auth/callback?code=...`；该 code 两分钟、只消费一次，不是 access token。运行 `npm run auth:check` 会同时显示 Web/小程序渠道与桌面 deep link 状态。
+
+本地验证：
+
+```bash
+npm run desktop:typecheck
+npm run desktop:smoke
+npm run desktop:package
+```
+
+`desktop:smoke` 是真实 Electron 进程安全验证；`desktop:package` 只生成未签名包，不能替代 Apple notarization、Windows code signing 或三平台安装测试。Electron 官方安全基准：[Security](https://www.electronjs.org/docs/latest/tutorial/security)、[WebContentsView](https://www.electronjs.org/docs/latest/api/web-contents-view)、[Session](https://www.electronjs.org/docs/latest/api/session)。
+
+### 高德 JS Web Key
+
+在[高德控制台](https://console.amap.com/dev/key/app)创建独立 Web 端 Key 与安全密钥，先登记 Web/PWA HTTPS 域名。Electron 的 `travelapp://app` 不是普通 HTTPS 域名，必须在发布前向高德确认并完成真实加载；未通过时保留 Leaflet/服务端静态图，不切换状态为 `passed_live_smoke`。
+
+```bash
+npm run diagnose:amap-js
+```
+
+### E4 专用账号 Worker
+
+```dotenv
+TRAVEL_AGENT_SOCIAL_WORKER_ENABLED=false
+TRAVEL_AGENT_SOCIAL_WORKER_AUDIT_STATUS=not_run
+TRAVEL_AGENT_SOCIAL_WORKER_TERMS_STATUS=not_reviewed
+TRAVEL_AGENT_SOCIAL_WORKER_ACCOUNT_PROFILE=
+TRAVEL_AGENT_SOCIAL_WORKER_SMOKE_STATUS=not_run
+```
+
+先运行 `npm run smoke:social-worker` 只能证明“无账号时不越界”。启用前仍需项目所有者：审阅小红书/抖音当前平台条款；建立不含个人资料的专用账号和独立浏览器 profile；对固定 SHA 候选完成静态审计；在受限网络、临时 Home、只读文件系统中完成真实只读 smoke。四项全部完成前保持 `false`，不得把 `AUTH_REQUIRED` 当作空搜索结果，也不得绕过 challenge。

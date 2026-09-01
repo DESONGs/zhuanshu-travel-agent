@@ -554,3 +554,23 @@ E0 baseline
 - 真实 Web 自然请求、真实 DeepSeek 翻译、三类候选 5 段 Trial、393×852 响应式与 console error=0 已验证；Trial 期间 revision 与 selected nodes 不变。
 - 当前公开社交链接可得性仍取决于平台登录墙和挑战；E1 的可靠来源是用户链接公开部分、现有 Provider/官方资料与未来的创作者授权资料。
 - E2 前仍需 D26、current/06 正式修订、桌面 OAuth/deep link/Bearer 会话、高德 JS Key 与自定义 origin live smoke；E4 仍需专用账号、条款与固定版本隔离审计。
+
+## 18. 2026-09-01 E2 / E3 / E4 实施记录
+
+### E2 / E3
+
+- D26 选择 `electron@44.1.0` + `@electron/packager@20.3.0`，均固定版本、`--ignore-scripts` 安装；Electron 官方二进制按内置 SHA-256 校验后用于真实 smoke。
+- `apps/desktop` 只包含主进程、可信 preload 和 URL 安全策略。Web Core、API Client、TripState、Evidence、Proposal、Mobility 与 MCP 均未复制。
+- Trusted App / Untrusted Evidence 使用独立 Session；权限、下载、新窗口、任意 URL、跨平台跳转和 IPC sender 均 fail closed。20 次创建/销毁后残留 WebContents 为 0。
+- OAuth 使用系统浏览器、signed state、固定 deep link、两分钟一次性 code 和内存 Bearer；回调 URL 不携带 access token。
+- E1 的公开来源链接在桌面可同窗打开；可信侧继续完成快速翻译和路线 Trial，原页关闭会显式销毁。
+
+### E4
+
+- 新增独立 stdio Worker 和固定 host JSON；只有 `search_social_content / read_social_content / resolve_social_share_url`。
+- 无专用账号时 search 返回 `AUTH_REQUIRED`；公开 read/resolve 复用 E1 SSRF 受限读取器。写操作、任意 URL、Shell/eval/下载和凭据字段全部拒绝。
+- 当前未安装第三方社交仓库，未注册 Provider routing。只有审计、条款、专用 profile 和真实隔离 smoke 全部通过后，状态才能从 blocked 前进。
+
+### 未关闭
+
+`AMAP_JS_API_KEY` / `AMAP_JS_SECURITY_CODE`、生产 OAuth 平台凭据、Electron 签名/公证和社交专用账号均为空。因此本轮证据分为“真实本地 Electron/合同 smoke 已通过”与“外部平台 live smoke 未执行”，不得合并表述。

@@ -5,13 +5,14 @@
 | 入口 | 工程 | 共享能力 | 当前可验证边界 |
 | --- | --- | --- | --- |
 | Web / PWA | React + Vite | HTTP API、旅行状态、路线详情、分层地图、离线 shell | 已构建，可本地真实交互；高德 JS 薄渲染器与 Leaflet/静态图降级均已接线，但高德 JS 仍需独立 Web Key 与浏览器 live smoke。 |
+| macOS / Windows / Linux 桌面壳 | Electron 44 + 同一 React Web Core | 同一 HTTP API、TripState、Evidence Companion；隔离原始来源视图与系统浏览器登录 | E2 安全壳和 E3 同窗阅读代码已完成，真实 Electron 安全 smoke 通过；生产 OAuth、签名/公证、高德自定义 origin live smoke 仍待账号与发布环境。 |
 | iOS | Capacitor | 同一 Web bundle 与 HTTPS API | 工程已生成并可 copy；本机缺完整 Xcode/CocoaPods 时不声称已编译。 |
 | Android | Capacitor | 同一 Web bundle 与 HTTPS API | 工程已生成并完成 asset copy；签名与 SDK 构建由发布环境完成。 |
 | 微信小程序 | 官方原生小程序工程 | HTTP API、`wx.login` 授权码交换、当天原生地图与路线试排 | 当天 marker/polyline、下一段、方式切换和失败保留已进入真实页面代码；真实 AppID、域名白名单、开发工具与真机 smoke 仍需发布主体完成。 |
 | 支付宝小程序 | 官方原生小程序工程 | HTTP API、`my.getAuthCode` 授权码交换、当天原生地图与路线试排 | 当天 marker/polyline、下一段、方式切换和失败保留已进入真实页面代码；真实 AppID、RSA2、开发工具与真机 smoke 仍需发布主体完成。 |
 | MCP | Node stdio | `TravelService` 业务合同 | 可本地调用，不维护第二份状态。 |
 
-桌面与大屏折叠屏使用响应式 Web；不维护与 Web 竞争的独立桌面业务代码。
+桌面浏览器与大屏折叠屏继续使用响应式 Web。Electron 只提供分发、系统浏览器 OAuth/deep link 和隔离原始来源视图，不维护与 Web 竞争的业务 UI、状态或旅行规则。
 
 ## 已锁定技术方案
 
@@ -22,21 +23,20 @@
 1. Web Core 是视觉、交互和客户端状态的主实现；桌面浏览器、PWA、折叠屏和 Capacitor 共享该实现。
 2. iOS/Android 保持 Capacitor 7，本轮不顺带升级；原生能力通过受控 Plugin 接入。
 3. 微信/支付宝继续作为轻量 Chat / Today / Map / 分享与履约入口，不复制桌面工作台。
-4. 小程序增长为多页面完整规划器后才重新评估 Taro；桌面出现商店、自动更新、托盘或文件关联需求后才评估 Tauri 2。
-5. 当前不引入 Flutter、React Native、Electron、Tauri 或 Taro 依赖。
+4. 小程序增长为多页面完整规划器后才重新评估 Taro；桌面当前采用 Electron 增强壳，Tauri 2 只在包体或系统 WebView 约束成为实测瓶颈时重评。
+5. 当前不引入 Flutter、React Native、Tauri 或 Taro；Electron 不获得第二份业务实现权。
 6. “全平台复用”优先共享合同、API Client、View Model、i18n、设计 Token 和验收场景，不强迫所有平台共享同一 DOM。
 
-### Evidence Companion 桌面壳前置门（E2 尚未启动）
+### Evidence Companion 桌面壳状态（E2/E3 代码已落地）
 
-2026-08-31 的 Evidence Companion 调研把 Electron 作为桌面深度阅读候选，不代表本节技术方案已经切换。当前仍不引入 Electron 或 Tauri 依赖；只有以下条件同时满足，才能排期 E2 安全 Spike：
+D26 已按当前需求选择 Electron：`WebContentsView`、独立 Session、自定义协议与现有 Node/React 工程能以更短因果链完成同窗原文；Tauri 2 更轻，但会同时引入 Rust 与三套系统 WebView 差异。当前实现包括：
 
-1. 在 `10-v2-implementation-decisions.md` 新增 D26，完成 Electron 与 Tauri 2 的当前需求比较、采用结论和回滚方式；
-2. 同步修订本文件的桌面交付职责，避免研究文档与现行规范并存两套结论；
-3. 真实验证系统浏览器 OAuth、deep link 回传、Bearer 会话与跨源 API；
-4. 配置独立高德 Web Key / security code，并在候选桌面 origin 完成浏览器 live smoke；
-5. Electron/Tauri 及打包依赖完成固定版本 `third-party-audit-v1`。
+1. Trusted App 使用 `travelapp://app` 与 sandbox/contextIsolation；Untrusted Evidence 使用独立持久 Session，关闭 Node、权限、下载、新窗口、跨平台导航和任意 IPC；
+2. 系统浏览器完成 OAuth，回传只含两分钟一次性 code，桌面再换取仅内存 Bearer；Provider Cookie 和平台 Cookie 不进入 Agent；
+3. 原始小红书/抖音/微信来源可在同窗右侧打开，左侧继续显示可信证据摘要、翻译和路线试排；关闭时显式销毁 WebContents；
+4. 20 次打开/关闭、未知导航阻断、Session 隔离与 deep link 合同已通过真实 Electron smoke。
 
-任一条件未满足时，Evidence Companion 继续使用现有 Web/PWA 证据摘要、快速翻译和系统浏览器跳转；不得用桌面壳页面或构建产物冒充登录、地图或原页阅读已经可用。
+生产发布仍受三项外部门限制：各 OAuth 平台真实回调、高德 Web JS Key 对 `travelapp://app` 的真实授权验证、macOS/Windows 签名与公证。未关闭前只能称为“桌面代码和安全壳通过本地 smoke”，不能称为商店可发布。
 
 ## 数据与同步
 
@@ -52,6 +52,8 @@ Web 首次价值不要求登录。`POST /api/auth/guest-session` 签发随机 Gu
 
 需要保存、跨端、分享或行中恢复时，Web 以 Google 为海外主入口，另提供微信扫码、支付宝扫码和 Apple 登录。`/api/auth/providers` 只返回各渠道是否可用；`/api/auth/:provider/start` 生成带短期签名 state 的官方授权地址，回调校验 OAuth state、OIDC 身份令牌或支付宝 RSA2 响应签名后，才签发本站会话。微信和支付宝小程序继续使用 `/api/auth/platform-exchange`，并向平台交换一次性授权码。
 
+Electron 不复制 OAuth SDK：它在系统浏览器打开同一 `/api/auth/:provider/start?client=desktop`，服务端回调到固定 `zhuanshu-travel://auth/callback`，只携带一次性 code；`POST /api/auth/desktop-exchange` 消费一次后签发 Bearer。桌面 Guest 同样先获得价值，登录时由服务端归并 Guest Trip/Conversation。Bearer 仅存可信 renderer 内存，不写 URL、localStorage、Prompt 或日志。
+
 运行 `npm run auth:setup` 可生成本站会话/state 密钥并补齐本地 ENV 模板，`npm run auth:check` 会分别检查 Google Web、微信 Web、微信小程序、支付宝 Web、支付宝小程序与 Apple Web 的字段、回调、私钥文件权限和 live smoke。支付宝 Web 与小程序允许使用独立 AppID 和密钥；微信网站应用与小程序应绑定到相同开放平台主体，避免同一用户因缺少 UnionID 被拆成两个账号。平台控制台、生产部署和真实验收步骤统一见[部署与配置指南](./09-account-configuration-guide.md)。
 
 生产会话由 `TRAVEL_AGENT_SESSION_SECRET` 签名，Web 只保存在 `HttpOnly`、`SameSite=Lax` cookie 中；原生和小程序通过 `Authorization` header 使用同一受控会话。Token、平台 access token 和 `session_key` 不进入 Agent、Prompt、日志或旅行状态。注销会清除 Cookie 并在当前服务实例撤销会话；轮换会话密钥会使全部现有会话失效。
@@ -61,6 +63,7 @@ Web 首次价值不要求登录。`POST /api/auth/guest-session` 签发随机 Gu
 ## V2 端侧职责
 
 - 桌面 Web：对话可折叠；Trip 工作区先显示四域当前选择，按当前焦点展开一组替代项，地图、时间轴与影响保持同屏。地图默认按 Day 展示，每一段路线与卡片共享焦点、方式、分钟和查询时影响；同一酒店多次到访保留多个序号。单地点完整详情按需展开；容器窄于约 900px 时才改单列。
+- Electron 桌面：复用上述 Web Core；用户主动打开公开分享原文时形成可信伴侣 / 不可信原页左右分栏，Esc 或“收起原文”销毁原页视图。原页没有 Tool、Token、Agent 或旅行提交权。
 - 移动 Web / 原生壳：固定 Chat / Trip / Map 三入口；确认地点后 Map 显示 Today、当前/下一步、准备缺口和变化恢复。地图使用双指缩放、单指拖动与可见缩放控件，仍共用 Web Core 的路线投影。
 - 英文：根据浏览器语言自动选择，并提供中英切换。当前核心执行外壳已本地化；地点英文别名、地址转写和 Provider 长文本仍待统一归一。
 - 小程序：复用上述服务状态并采用轻量 Today，只绘制当前 Day、当前方式和 active leg，并在地图下直接显示“下一段怎么走”；切换方式仍由服务端 Mobility Preview 核验，不复制桌面比较工作台。真实扫码授权、域名白名单、开发工具和真机回跳仍是发布门。
@@ -88,5 +91,6 @@ Web 首次价值不要求登录。`POST /api/auth/guest-session` 签发随机 Gu
 - `AMAP_JS_API_KEY`：高德 Web 平台的浏览器可见 JS Key；不等同于服务端 `AMAP_API_KEY`。
 - `AMAP_JS_SECURITY_CODE`：高德 JS 安全密钥，只由固定 `/_AMapService` 服务端代理使用，不进入浏览器响应。
 - `TRAVEL_AGENT_AMAP_JS_RENDERER_ENABLED`：地图渲染器开关；关闭时保持 Leaflet/静态图降级，不改变路线事实。
+- `TRAVEL_AGENT_DESKTOP_AUTH_ENABLED`、`TRAVEL_AGENT_DESKTOP_DEEP_LINK_SCHEME`、`TRAVEL_AGENT_DESKTOP_API_ORIGIN`：桌面 OAuth、固定 deep link 和 HTTPS API；发布时需把 `travelapp://app` 加入精确 CORS Origin。
 
 平台侧 AppID 为空时只能完成工程构建，不能提审或上线；不得填入演示 AppID 冒充可发布配置。

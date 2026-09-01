@@ -301,4 +301,13 @@ V3 前端方案（`wiki/research/archive/2026-08-29-ui-component-sources-and-fir
 - 真实浏览器自然请求取得吃住行玩候选后，住宿、外滩与本帮菜三类候选共同形成 5 段试排；页面显示 67 分钟、3523 米、约 ¥21，并继续标为“快速试排，不是 AI 优化站序”。试排前后 `trip_5b568d1b` 保持 revision 1、0 个 selected node、0 条持久化 itinerary stop。
 - DeepSeek 英文快速翻译在真实页面返回，原文可展开；393×852 下证据面板无横向溢出，路线 CTA 可见，浏览器 console 无 error。
 - 本次 E1 浏览器用例是两人、少走路目标，不替代 §13 已完成的父亲 600 米硬约束路径。当前真实候选只有一个独立来源时，界面明确显示 1 个来源，不伪造“多来源多数”。
-- E2 Electron、桌面登录、高德 JS 自定义 origin、E3 原页阅读和 E4 专用账号 Worker 均未启动；对应前置门见 06 与本期技术审核。
+- 截至 2026-08-31 E1 交付当时，E2–E4 尚未启动；后续实现状态已由下方 §15 更新，高德 JS 自定义 origin 与外部账号门仍保持独立。
+
+## 15. Evidence Companion E2 / E3 与 E4 受限骨架（2026-09-01）
+
+- **E2 安全壳已进入代码：** Electron 44 只承载同一 Web Core；Trusted App 使用自定义安全协议，Untrusted Evidence 使用独立 Session。Node integration、权限、下载、新窗口、跨平台导航、任意 IPC 和任意外部 URL 均 fail closed。
+- **桌面登录代码已闭环：** 系统浏览器仍走既有 Google/微信/支付宝/Apple 服务端 OAuth；deep link 只返回两分钟一次性 code，`desktop-exchange` 消费一次后签发仅内存 Bearer。Guest Trip/Conversation 在交换时归并，不向 Agent 暴露 Cookie 或 Token。
+- **E3 同窗阅读已进入代码：** E1 可信证据、快速翻译和路线试排保留在左侧；用户主动打开小红书/抖音/微信公开原文时，右侧不可信视图出现。Esc 或“收起原文”会显式销毁该 WebContents。
+- **E4 只完成受限进程骨架与无登录安全 smoke：** Worker 只有 search/read/resolve；无专用账号时 search 固定 `AUTH_REQUIRED`。未合入第三方浏览器仓库，未接 Provider routing，不声称社交自动发现可用。
+
+真实 Electron smoke 已完成 20 次原页视图打开/销毁，未知跨域导航全部拦截、残留 WebContents 为 0，deep link 不含 access token。当前仍未关闭生产 OAuth 回调、高德 JS 对 `travelapp://app` 的 live smoke、macOS/Windows 签名/公证和社交专用账号/条款/隔离账号 smoke；这些外部门不能由本地测试替代。

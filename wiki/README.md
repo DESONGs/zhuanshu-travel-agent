@@ -12,13 +12,13 @@ Travel Agent 的文档总入口。三层结构：
 
 | 文档 | 角色 | 状态 |
 | --- | --- | --- |
-| [PRD v0.2](./research/2026-08-31-travel-evidence-companion-prd.md) | 图文证据产品需求 | E0 / E1 已实现；E2 以后仍受前置门约束 |
-| [初步技术方案 v0.2](./research/2026-08-31-travel-evidence-companion-technical-proposal.md) | E0–E5 分阶段技术方案 | E0 / E1 已落地并记录真实验收 |
+| [PRD v0.2](./research/2026-08-31-travel-evidence-companion-prd.md) | 图文证据产品需求 | E0 / E1 已实现；E2 / E3 代码与本地安全 smoke 已完成，发布门仍开 |
+| [初步技术方案 v0.2](./research/2026-08-31-travel-evidence-companion-technical-proposal.md) | E0–E5 分阶段技术方案 | E0–E3 已形成纵向代码链；E4 仅受限骨架，E5 未开始 |
 | [下一阶段技术调研](./research/2026-08-31-evidence-companion-next-iteration-technical-research.md) | 官方能力、开源候选与 Electron 证据 | 调研收敛 |
-| [技术审核报告](./research/2026-08-31-evidence-companion-technical-review.md) | 对照真实代码的独立审核 | E1 缺口已关闭；3 个 E2 前置门仍有效 |
+| [技术审核报告](./research/2026-08-31-evidence-companion-technical-review.md) | 对照真实代码的独立审核 | D26/桌面登录/安全壳已关闭；AMap/生产 OAuth/签名仍是外部门 |
 | [第三方候选审计登记](./research/third-party-candidate-audits.md) | third-party-audit-v1 持续登记 | 持续维护 |
 
-实施顺序：E0 地图 baseline（已完成）→ E1 无账号图文证据闭环（已完成核心链路）→ E2 Electron 安全 Spike（未排期）→ E3 桌面证据阅读器 → E4 隔离 Worker（仅在审计、条款与专用账号 smoke 通过后）。E2 前必须完成 D26（Electron / Tauri 比较）、同步修订 06、打通桌面登录，并取得高德 JS 配置与浏览器 live smoke。
+实施顺序：E0 地图 baseline（完成）→ E1 无账号图文证据（完成）→ E2 Electron 安全壳（代码与本地安全 smoke 完成）→ E3 同窗原页阅读（代码完成）→ E4 隔离 Worker（仅无登录安全骨架；专用账号/条款/live smoke 未完成）→ E5 待后续。Electron 生产发布仍需高德 JS 自定义 origin、真实 OAuth、签名与公证。
 
 ## 现行规范（current/）
 
@@ -44,9 +44,9 @@ Travel Agent 的文档总入口。三层结构：
 
 - **产品方向：** V2 锁定入境优先、免登录首次价值，agentic 规划智能体为产品核心；吃住行玩在同一 TripState 上联动，不拆四个 Workflow（01、11）。
 - **已落地基线：** V2 纵向路径（Guest Trip、登录合并、候选可见工作台、多点试排、移动端 Today、变化恢复）；Agentic Runtime 四 Changeset；智能规划 M0/A/B（价格三级、分域账本、确定性估算、Agent 预算/推荐工具）；A0 行程正确性门禁与 Plan–Check–Repair；分层地图核心链路；Evidence Companion E0/E1（统一展示合同、证据侧车、受限公开链接、快速翻译、候选与详情入口、路线试排联动）。实施证据见 10、11 §12–§14、12、13。
-- **进行中：** Evidence Companion E2–E5 尚未启动。E2 仍受 D26、current/06 修订、桌面登录、高德 JS live smoke 和第三方安全审计约束；E4 还需要专用账号、条款结论和隔离只读 smoke。
+- **进行中：** Evidence Companion E2/E3 已完成代码与真实本地 Electron 安全 smoke；高德 JS 自定义 origin、生产 OAuth、三平台签名/公证仍未关闭。E4 只有项目内受限 Worker 与 no-login safety smoke，专用账号、条款、固定 SHA 账号审计、Provider routing 与真实隔离读取仍未完成；E5 未启动。
 - **未关闭（C/D 与上线门）：** 全程出行总账、执行事件、租车判断、四端真机、生产 OAuth、实时设施、外宾住宿资格、社交独立证据、Guest 清理、地点英文归一、高德 JS Key 配置（11 §12、13 §13）。
-- **模型与 Provider：** DeepSeek V4 Flash 默认，可按对话切 V4 Pro / Kimi K3；DeepSeek、Kimi、高德、飞猪、途牛真实 smoke 通过。Provider/模型 smoke 不等于用户路径通过；partial 不冒充完整（08）。
+- **模型与 Provider：** DeepSeek V4 Flash 默认，可按对话切 V4 Pro / Kimi K3。DeepSeek、Kimi、飞猪、途牛已有真实 smoke；高德 WebService 在 2026-09-01 复测中鉴权/主要端点仍为 `10000`，但两次完整 smoke 均因 POI/静态图超时成为 partial，本地状态已从旧 `passed_live_smoke` 降级，待网络稳定后重跑。Provider/模型 smoke 不等于用户路径通过；partial 不冒充完整（08）。
 - **不在 V2 交付：** 内容 Feed、创作者激励、商家自助入驻、广告竞价、统一收单、自动退改签、自动购买、完整 B 端后台、六端完全同版。
 
 ## 历史研究归档
