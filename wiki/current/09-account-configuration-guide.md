@@ -243,6 +243,8 @@ TRAVEL_AGENT_AMAP_JS_SMOKE_STATUS=not_run
 - 在控制台配置生产域名白名单，并分别验证 Web/PWA 与 Capacitor 来源；
 - 真实浏览器成功载入、点击路线、缩放和切换方式后，才能把 smoke 状态改为 `passed_live_smoke`。
 
+2026-09-01 当前实测：Web JS SDK 已在 localhost 真实显示高德底图、Marker、Polyline/路线 chip，并通过拖动、可见 `+ / −`、Day 切换、Marker/路线卡联动和交通方式切换；浏览器控制台无新增错误。服务端 WebService 的定向 POI、照片、路线、静态图和天气完整 smoke 也已通过。可是 `/_AMapService` 的独立真实请求仍返回 `10009 USERKEY_PLAT_NOMATCH`，因此 `TRAVEL_AGENT_AMAP_JS_SMOKE_STATUS` 继续保持 `not_run`。请在高德控制台确认：JS Key 的平台必须是 **Web 端（JS API）**，securityJsCode 必须来自同一个 Key；不要把 WebService Key 填到 JS Key，也不要把 `travelapp://app` 当普通域名加入白名单。两项确认后重跑浏览器和 Electron，不通过时依据[高德官方错误码说明](https://lbs.amap.com/api/maps-javascript-api/guide/abc/state)提交工单。
+
 官方入口：[准备与创建 Web 端 Key](https://lbs.amap.com/api/javascript-api-v2/prerequisites)、[安全密钥与服务端代理](https://lbs.amap.com/api/javascript-api-v2/guide/abc/jscode)。
 
 开发模式未配置高德 JS 时可使用带署名的 OpenStreetMap 公共瓦片做本地 QA；生产不会默认依赖该公共服务。需要替代底图时可配置：

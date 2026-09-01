@@ -66,6 +66,7 @@ export function TripDecisionMap({
 }) {
   const english = locale === "en";
   const containerRef = useRef(null);
+  const imperativeMountRef = useRef(null);
   const mapRef = useRef(null);
   const markersRef = useRef(new Map());
   const pathsRef = useRef(new Map());
@@ -107,9 +108,13 @@ export function TripDecisionMap({
       return undefined;
     }
     let cancelled = false;
+    const host = containerRef.current;
+    const imperativeMount = document.createElement("div");
+    imperativeMount.className = "trip-map-sdk-mount";
+    host.replaceChildren(imperativeMount);
+    imperativeMountRef.current = imperativeMount;
     setRendererMode("resolving");
-    containerRef.current.replaceChildren();
-    createAmapSceneRenderer({ container: containerRef.current, stops, legs: drawableLegs, activeNodeId, activeLegId, onFocusNode: (nodeId) => focusNodeCallbackRef.current?.(nodeId), onFocusLeg: (legId) => focusLegCallbackRef.current?.(legId), locale })
+    createAmapSceneRenderer({ container: imperativeMount, stops, legs: drawableLegs, activeNodeId, activeLegId, onFocusNode: (nodeId) => focusNodeCallbackRef.current?.(nodeId), onFocusLeg: (legId) => focusLegCallbackRef.current?.(legId), locale })
       .then((renderer) => {
         if (cancelled) return renderer.destroy();
         amapRendererRef.current = renderer;
@@ -119,7 +124,8 @@ export function TripDecisionMap({
       })
       .catch((error) => {
         if (cancelled) return;
-        containerRef.current?.replaceChildren();
+        if (imperativeMount.parentNode === host) imperativeMount.remove();
+        if (imperativeMountRef.current === imperativeMount) imperativeMountRef.current = null;
         setRendererReason(error?.code ?? "amap_js_renderer_load_failed");
         setRendererMode("leaflet");
         setResolvedSceneKey(key);
@@ -128,13 +134,20 @@ export function TripDecisionMap({
       cancelled = true;
       amapRendererRef.current?.destroy();
       amapRendererRef.current = null;
+      if (imperativeMount.parentNode === host) imperativeMount.remove();
+      if (imperativeMountRef.current === imperativeMount) imperativeMountRef.current = null;
     };
   }, [key, locale]);
 
   useEffect(() => {
     if (rendererMode !== "leaflet" || resolvedSceneKey !== key || !containerRef.current || !tileUrl || !stops.length || interactiveFailed) return undefined;
+    const host = containerRef.current;
+    const imperativeMount = document.createElement("div");
+    imperativeMount.className = "trip-map-sdk-mount";
+    host.replaceChildren(imperativeMount);
+    imperativeMountRef.current = imperativeMount;
     const hasFinePointer = window.matchMedia?.("(any-hover: hover) and (any-pointer: fine)")?.matches === true;
-    const map = L.map(containerRef.current, { zoomControl: false, attributionControl: true, scrollWheelZoom: hasFinePointer, touchZoom: true, doubleClickZoom: true, dragging: true, keyboard: true });
+    const map = L.map(imperativeMount, { zoomControl: false, attributionControl: true, scrollWheelZoom: hasFinePointer, touchZoom: true, doubleClickZoom: true, dragging: true, keyboard: true });
     mapRef.current = map;
     markersRef.current = new Map();
     pathsRef.current = new Map();
@@ -169,7 +182,15 @@ export function TripDecisionMap({
     if (bounds.length === 1) map.setView(bounds[0], 14);
     else map.fitBounds(bounds, { padding: [34, 34], maxZoom: 15 });
     const timer = setTimeout(() => map.invalidateSize(), 80);
-    return () => { clearTimeout(timer); markersRef.current.clear(); pathsRef.current.clear(); map.remove(); mapRef.current = null; };
+    return () => {
+      clearTimeout(timer);
+      markersRef.current.clear();
+      pathsRef.current.clear();
+      map.remove();
+      mapRef.current = null;
+      if (imperativeMount.parentNode === host) imperativeMount.remove();
+      if (imperativeMountRef.current === imperativeMount) imperativeMountRef.current = null;
+    };
   }, [key, interactiveFailed, rendererMode, resolvedSceneKey]);
 
   useEffect(() => {

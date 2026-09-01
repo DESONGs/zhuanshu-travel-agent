@@ -44,9 +44,9 @@ Travel Agent 的文档总入口。三层结构：
 
 - **产品方向：** V2 锁定入境优先、免登录首次价值，agentic 规划智能体为产品核心；吃住行玩在同一 TripState 上联动，不拆四个 Workflow（01、11）。
 - **已落地基线：** V2 纵向路径（Guest Trip、登录合并、候选可见工作台、多点试排、移动端 Today、变化恢复）；Agentic Runtime 四 Changeset；智能规划 M0/A/B（价格三级、分域账本、确定性估算、Agent 预算/推荐工具）；A0 行程正确性门禁与 Plan–Check–Repair；分层地图核心链路；Evidence Companion E0/E1（统一展示合同、证据侧车、受限公开链接、快速翻译、候选与详情入口、路线试排联动）。实施证据见 10、11 §12–§14、12、13。
-- **进行中：** Evidence Companion E2/E3 已完成代码与真实本地 Electron 安全 smoke；高德 JS 自定义 origin、生产 OAuth、三平台签名/公证仍未关闭。E4 只有项目内受限 Worker 与 no-login safety smoke，专用账号、条款、固定 SHA 账号审计、Provider routing 与真实隔离读取仍未完成；E5 未启动。
+- **进行中：** Evidence Companion E2/E3 已完成代码与真实本地 Electron 安全 smoke；localhost 高德 JS 底图、Marker、部分真实路线和交互已通过，但安全代理仍返回 `10009 USERKEY_PLAT_NOMATCH`，所以 JS smoke 维持 `not_run`，Electron 自定义 origin 仍 blocked。生产 OAuth、三平台签名/公证未关闭。E4 只有项目内受限 Worker 与 no-login safety smoke，专用账号、条款、固定 SHA 账号审计、Provider routing 与真实隔离读取仍未完成；E5 未启动。
 - **未关闭（C/D 与上线门）：** 全程出行总账、执行事件、租车判断、四端真机、生产 OAuth、实时设施、外宾住宿资格、社交独立证据、Guest 清理、地点英文归一、高德 JS Key 配置（11 §12、13 §13）。
-- **模型与 Provider：** DeepSeek V4 Flash 默认，可按对话切 V4 Pro / Kimi K3。DeepSeek、Kimi、飞猪、途牛已有真实 smoke；高德 WebService 在 2026-09-01 复测中鉴权/主要端点仍为 `10000`，但两次完整 smoke 均因 POI/静态图超时成为 partial，本地状态已从旧 `passed_live_smoke` 降级，待网络稳定后重跑。Provider/模型 smoke 不等于用户路径通过；partial 不冒充完整（08）。
+- **模型与 Provider：** DeepSeek V4 Flash 默认，可按对话切 V4 Pro / Kimi K3。DeepSeek、Kimi、飞猪、途牛已有真实 smoke；高德 WebService 在 2026-09-01 定向真实 smoke 中四域各 6 条、静态图、天气和 Mobility 全部通过，状态恢复为 `passed_live_smoke`。高德 JS 安全代理仍是独立阻塞，WebService 通过不能替代它。Provider/模型 smoke 不等于用户路径通过；partial 不冒充完整（08）。
 - **不在 V2 交付：** 内容 Feed、创作者激励、商家自助入驻、广告竞价、统一收单、自动退改签、自动购买、完整 B 端后台、六端完全同版。
 
 ## 历史研究归档

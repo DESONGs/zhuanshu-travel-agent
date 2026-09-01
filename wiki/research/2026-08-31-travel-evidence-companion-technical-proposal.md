@@ -573,4 +573,11 @@ E0 baseline
 
 ### 未关闭
 
-`AMAP_JS_API_KEY` / `AMAP_JS_SECURITY_CODE`、生产 OAuth 平台凭据、Electron 签名/公证和社交专用账号均为空。因此本轮证据分为“真实本地 Electron/合同 smoke 已通过”与“外部平台 live smoke 未执行”，不得合并表述。
+`AMAP_JS_API_KEY` / `AMAP_JS_SECURITY_CODE` 已配置，但浏览器安全代理上游仍返回 `10009 USERKEY_PLAT_NOMATCH`，所以高德 JS 完整 live smoke 与 Electron 自定义 origin 仍未关闭。生产 OAuth 平台凭据、Electron 签名/公证和社交专用账号也仍未完成。因此本轮证据继续分为“真实本地 Electron/合同 smoke 已通过”与“外部平台 live smoke 未完成”，不得合并表述。
+
+## 19. 2026-09-01 高德 JS 配置后实施记录
+
+- WebService 与 JS API 使用两套独立 Key。定向上海四域 smoke 返回 play/food/stay/transport 各 6 条、60 张照片，静态图、天气和 Mobility 通过；服务端状态恢复为 `passed_live_smoke`。
+- localhost 高德 JS SDK 真实显示底图、Marker、部分真实 Polyline 和路线 chip；Day、拖动、缩放按钮、Marker/路线卡以及方式切换联动通过。方式切换继续受 600 米同行人约束门控制。
+- 首次真实重算暴露 AMap 销毁 DOM 与 React 提交冲突导致白屏，已用独立 imperative mount 隔离并在新标签复测无 console error/warn。
+- `/_AMapService` 服务端代理会忽略客户端 key/jscode，并且没有向浏览器输出 securityJsCode；但上游返回 `10009 USERKEY_PLAT_NOMATCH`。在核对 Web 端 Key 与同一 Key 的 securityJsCode、并完成 Electron `travelapp://app` 实测前，JS smoke 保持 `not_run`。

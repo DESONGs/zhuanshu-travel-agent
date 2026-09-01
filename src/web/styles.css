@@ -749,6 +749,7 @@ body.resizing-pane { cursor:col-resize; user-select:none; }
 .trip-decision-map { overflow:hidden; border:1px solid #d5dfe3; border-radius:14px; background:#eef3f5; }
 .trip-map-surface { height:clamp(330px,38vw,480px); position:relative; overflow:hidden; background:#e5ecef; }
 .leaflet-trip-map,.amap-trip-map,.trip-map-surface>img { width:100%; height:100%; display:block; }
+.trip-map-sdk-mount { width:100%; height:100%; display:block; }
 .trip-map-surface>img { object-fit:cover; }
 .leaflet-trip-map { position:relative; z-index:0; font-family:"Noto Sans SC",ui-sans-serif,system-ui,sans-serif; }
 .amap-trip-map { position:relative; z-index:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif; }

@@ -281,7 +281,7 @@ Leaflet 在迁移期继续作为 fallback：高德 JS API 未配置、加载失�
 
 ### 13.3 尚未通过的外部环境门
 
-- 当前环境未配置 `AMAP_JS_API_KEY` 与 `AMAP_JS_SECURITY_CODE`，浏览器真实状态为 `amap_js_renderer_not_configured`，因此只验证了 Leaflet fallback 和高德 JS Adapter/代理合同，未声称高德 JS API 浏览器 live smoke 通过。
+- 当前已配置独立 `AMAP_JS_API_KEY` 与 `AMAP_JS_SECURITY_CODE`；localhost 的高德底图、Marker、可绘制路线、方式 chip 和交互已真实运行，但安全代理实请求仍返回 `10009 USERKEY_PLAT_NOMATCH`。因此只能称为“Web JS 基础渲染和部分路线交互通过”，不能称为完整高德 JS live smoke，状态仍为 `not_run`。
 - 微信/支付宝页面代码与 View Model 已在实际页面代码 VM 中运行，但缺少 AppID、开发工具登录和真机，所以不能声称小程序开发工具或真机通过。
 - Capacitor 本轮未做 iOS/Android 设备加载、safe area、触摸和外部导航回跳验收。
 - 动态路线分钟、估价与库存只代表当次查询快照；设施存在不等于实时运行，仍需现场确认。
@@ -299,5 +299,13 @@ Leaflet 在迁移期继续作为 fallback：高德 JS API 未配置、加载失�
 
 - Electron Trusted App 使用 `travelapp://app`，互动地图仍消费同一 `RouteMapScene` 和同一 `/_AMapService` 安全代理；静态地图改为带桌面 Bearer 的受控 fetch，不把 Token 放进图片 URL。
 - 桌面滚轮、触摸缩放和 `+ / −` 控件继续由同一 Web 地图组件提供。高德 JS 未配置时文案明确区分“路线/地点已核验”与“互动底图授权待配置”，不把 Leaflet 降级误写成路线数据失败。
-- 新增 `npm run diagnose:amap-js`，只输出 Key/安全码/Origin/smoke 是否具备，不打印值。当前真实环境仍缺 `AMAP_JS_API_KEY` 和 `AMAP_JS_SECURITY_CODE`，所以 Electron smoke 只证明自定义协议和安全壳，未证明高德 JS 对该 origin 可用。
-- 同日服务端 WebService 复测没有出现 10044：v5 POI、地理编码和天气可返回 `10000`，但两次完整 smoke 分别出现 POI/静态图超时并成为 partial。`env_travel.local` 的服务端状态已降为 `failed_live_smoke_timeout`；恢复前不把历史 passed 标志继续当当前证据。
+- 新增 `npm run diagnose:amap-js`，只输出 Key/安全码/Origin/smoke 是否具备，不打印值。当前配置存在，但 Web 的安全代理校验尚未通过，Electron smoke 因此继续报告 `blocked_missing_amap_js_credentials_or_live_smoke`；这只证明自定义协议和安全壳，没有证明高德 JS 对 `travelapp://app` 可用。
+- 同日服务端 WebService 先出现过 POI/静态图间歇超时；修正 smoke 的宽泛餐饮条件为真实“人民广场 + 本帮菜”等定向条件后，四域各 6 条、60 张照片、静态图、天气和 Mobility 全部真实通过，状态恢复为 `passed_live_smoke`。这不覆盖独立的 JS Key/securityJsCode 门。
+
+### 13.6 高德 JS localhost 真实回归（2026-09-01）
+
+- 上海家庭旅行自然路径保存固定浦东 T2 抵达后，试排住宿、餐饮和博物馆形成 7 站、6 段移动；高德 JS 显示 4 个物理地点、两条当前有真实 geometry 的路线 chip，其余缺失 geometry 继续显式标注，不伪造折线。
+- Marker 点击能回写 active 状态；Day 1 / 全程分别显示 1 / 4 个物理地点；可见 `+ / −` 和地图拖动真实改变视图。自动化控制面未能可靠证明滚轮事件，因此仍以代码启用和后续人工复核为准，不把它写成新通过证据。
+- 机场段从打车切换公交后，路线从 83 分钟、0 米步行、约 ¥148 变为 98 分钟、1360 米步行、约 ¥8，并因超过父亲 600 米目标禁用采用；切回打车后地图 chip 与影响看板同步恢复。
+- 实测发现并修复一次 SDK/React 容器所有权冲突：高德销毁地图后 React 删除已移动节点导致白屏。现在 AMap/Leaflet 只操作 React 稳定宿主中的独立 imperative mount；新标签重复同一路径 console error/warn 为 0。
+- `/_AMapService` 请求不接受客户端 key/jscode，服务端会覆盖并只转发固定高德域；但当前上游返回 `10009 USERKEY_PLAT_NOMATCH`，所以不更新 `TRAVEL_AGENT_AMAP_JS_SMOKE_STATUS`。官方解释是请求 Key 与绑定平台不符，需核对 Key 平台及配对 securityJsCode。

@@ -9,7 +9,18 @@ if (!env.AMAP_API_KEY) {
   const start = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
   const end = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10);
   const provider = new AmapTravelResearchProvider({ apiKey: env.AMAP_API_KEY, apiSecret: env.AMAP_API_SECRET, enabled: true });
-  const result = await provider.research({ brief: { destination: "上海", dates: `${start} 至 ${end}` }, domains: ["play", "food", "stay", "transport"] });
+  const result = await provider.research({
+    brief: { destination: "上海", dates: `${start} 至 ${end}` },
+    domains: ["play", "food", "stay", "transport"],
+    criteria: {
+      byDomain: {
+        play: { namedEntities: ["外滩"] },
+        food: { targetAreas: ["人民广场"], keywords: ["本帮菜"] },
+        stay: { targetAreas: ["人民广场"], keywords: ["酒店"] },
+        transport: { namedEntities: ["上海浦东国际机场"] },
+      },
+    },
+  });
   const counts = Object.fromEntries(Object.entries(result.byDomain ?? {}).map(([domain, items]) => [domain, items.length]));
   const candidates = Object.values(result.byDomain ?? {}).flat();
   const points = candidates.map((candidate) => ({ coordinates: candidate.location?.coordinates })).filter((point) => point.coordinates).slice(0, 10);
